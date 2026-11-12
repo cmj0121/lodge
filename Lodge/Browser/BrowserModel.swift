@@ -78,7 +78,7 @@ final class BrowserModel {
 
     private func refreshSidebar() {
         let sections = SidebarSections(
-            pins: library.links(on: .pins), bookmarks: library.links(on: .bookmarks), tabs: tabs)
+            pins: library.links(on: .pins), bookmarks: library.bookmarks, tabs: tabs)
         if sections != sidebar { sidebar = sections }
     }
 
@@ -249,10 +249,12 @@ final class BrowserModel {
         if let id = tabs.selectedID { addLink(.bookmarks, from: id) }
     }
 
-    /// Drops the link's row; an open tab of it carries on as a loose tab.
+    /// Drops the link's row, or a folder with every row in it; an open tab of a removed link carries on as a
+    /// loose tab.
     func removeLink(_ id: UUID) {
-        library.remove(id)
-        if let tab = tabs.tab(forLink: id) { update(tab.id) { $0.link = nil } }
+        for link in library.remove(id) {
+            if let tab = tabs.tab(forLink: link) { update(tab.id) { $0.link = nil } }
+        }
     }
 
     /// Moves the pin so it ends at `index` among the pins.

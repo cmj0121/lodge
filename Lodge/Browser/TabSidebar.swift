@@ -62,8 +62,8 @@ private struct ExpandedSidebar: View {
                     .padding(.trailing, 4)
                     .padding(.top, 10)
                     .padding(.bottom, 4)
-                    rows(items.bookmarks)
-                    if !items.bookmarks.isEmpty && !items.loose.isEmpty {
+                    rows(items.bookmarkRows)
+                    if !items.bookmarkRows.isEmpty && !items.loose.isEmpty {
                         Divider()
                             .padding(.vertical, 4)
                     }
@@ -88,6 +88,20 @@ private struct ExpandedSidebar: View {
     }
 }
 
+extension SidebarSections {
+    /// Every bookmark as a flat row, depth-first through all folders, until the sidebar draws the tree.
+    fileprivate var bookmarkRows: [SidebarItem] { bookmarks.flatMap(\.rows) }
+}
+
+extension SidebarNode {
+    fileprivate var rows: [SidebarItem] {
+        switch self {
+        case .folder(_, _, _, let children): children.flatMap(\.rows)
+        case .item(let item): [item]
+        }
+    }
+}
+
 /// Icons only: expand, pins, the bookmarks menu and the workspace bar.
 private struct RailSidebar: View {
     let model: BrowserModel
@@ -105,7 +119,7 @@ private struct RailSidebar: View {
                             model: model, item: $0, isSelected: $0.isSelected(selected),
                             favicon: model.favicon(for: $0), shape: .rail)
                     }
-                    if !items.bookmarks.isEmpty || !items.loose.isEmpty {
+                    if !items.bookmarkRows.isEmpty || !items.loose.isEmpty {
                         BookmarksMenu(model: model, items: items)
                     }
                 }
@@ -127,11 +141,11 @@ private struct BookmarksMenu: View {
 
     var body: some View {
         let selected = model.tabs.selectedID
-        let isSelected = (items.bookmarks + items.loose).contains { $0.isSelected(selected) }
+        let isSelected = (items.bookmarkRows + items.loose).contains { $0.isSelected(selected) }
         let shape = ItemButton.Metrics.rail
         Menu {
-            entries(items.bookmarks, selected: selected)
-            if !items.bookmarks.isEmpty && !items.loose.isEmpty {
+            entries(items.bookmarkRows, selected: selected)
+            if !items.bookmarkRows.isEmpty && !items.loose.isEmpty {
                 Divider()
             }
             entries(items.loose, selected: selected)
