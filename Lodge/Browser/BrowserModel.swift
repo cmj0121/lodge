@@ -9,10 +9,10 @@ import WebKit
 final class BrowserModel {
     /// Every open tab. A tab keeps its web view, built when it is first selected, until it closes.
     private(set) var tabs = TabList() {
-        didSet { refreshSidebar() }
+        didSet { didChangeSession() }
     }
     private(set) var library: LinkLibrary {
-        didSet { refreshSidebar() }
+        didSet { didChangeSession() }
     }
     /// The sidebar's entries, each link paired with its open tab, rebuilt only when `tabs` or
     /// `library` change.
@@ -35,16 +35,46 @@ final class BrowserModel {
     @ObservationIgnored let registry = WebViewRegistry()
     @ObservationIgnored private var controllers: [TabID: TabController] = [:]
 
-    /// Starts with `defaultLibrary` and one blank tab.
-    init(defaultLibrary: LinkLibrary = LinkLibrary()) {
-        library = defaultLibrary
-        open(BrowserTab(), load: false)
+    /// Called with the new snapshot whenever the tabs or the library change in a way it stores.
+    @ObservationIgnored var onSnapshotChange: ((SessionSnapshot) -> Void)?
+    /// The snapshot last handed to `onSnapshotChange`, so changes it does not store (loading, history
+    /// buttons) do not call it.
+    @ObservationIgnored private var lastSnapshot: SessionSnapshot?
+
+    /// Starts from `snapshot`, building only its selected tab's web view; the other tabs build theirs when
+    /// first selected. Without one, starts with `defaultLibrary`. Either way an empty window gets a blank tab.
+    init(restoring snapshot: SessionSnapshot? = nil, defaultLibrary: LinkLibrary = LinkLibrary()) {
+        if let snapshot {
+            let restored = snapshot.restored()
+            library = restored.library
+            tabs = restored.tabs
+        } else {
+            library = defaultLibrary
+        }
+        refreshSidebar()
+        if tabs.tabs.isEmpty {
+            open(BrowserTab(), load: false)
+        } else if let selected = tabs.selectedID {
+            ensureView(for: selected)
+        }
+        lastSnapshot = self.snapshot
     }
 
     var selected: BrowserTab? { tabs.selected }
 
     /// The selected page's security; `.none` with no tab selected.
     var selectedSecurity: SiteSecurity { tabs.selectedID.flatMap { security[$0] } ?? .none }
+
+    /// What the session store keeps of the window.
+    var snapshot: SessionSnapshot { SessionSnapshot(tabs: tabs, library: library) }
+
+    private func didChangeSession() {
+        refreshSidebar()
+        let snapshot = self.snapshot
+        guard snapshot != lastSnapshot else { return }
+        lastSnapshot = snapshot
+        onSnapshotChange?(snapshot)
+    }
 
     private func refreshSidebar() {
         let sections = SidebarSections(

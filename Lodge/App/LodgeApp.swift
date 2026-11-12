@@ -3,7 +3,7 @@ import SwiftUI
 
 @main
 struct LodgeApp: App {
-    @State private var browser = BrowserModel()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
         #if DEBUG
@@ -13,11 +13,11 @@ struct LodgeApp: App {
 
     var body: some Scene {
         Window("Lodge", id: "browser") {
-            BrowserView(model: browser)
+            BrowserView(model: appDelegate.browser)
         }
         .windowStyle(.hiddenTitleBar)
         .windowBackgroundDragBehavior(.enabled)
-        .commands { BrowserCommands(model: browser) }
+        .commands { BrowserCommands(model: appDelegate.browser) }
 
         Settings {
             Text("No settings yet.")
