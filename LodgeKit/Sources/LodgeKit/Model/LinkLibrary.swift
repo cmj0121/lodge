@@ -1,7 +1,7 @@
 import Foundation
 
 /// A link the user kept, with the title it shows under.
-public struct SavedLink: Identifiable, Hashable, Sendable {
+public struct SavedLink: Identifiable, Hashable, Codable, Sendable {
     public let id: UUID
     public let url: URL
     public let title: String
@@ -19,8 +19,8 @@ public enum LinkShelf: CaseIterable, Sendable {
     case bookmarks
 }
 
-/// The user's pins and bookmarks, each shelf in the order its links were added. An in-memory stand-in until
-/// the links are persisted.
+/// The user's pins and bookmarks, each shelf in the user's order: links are appended as they are added and can
+/// be moved within their shelf. The default library is empty; it is persisted through the session snapshot.
 public struct LinkLibrary: Equatable, Sendable {
     private var shelves: [LinkShelf: [SavedLink]]
 
@@ -58,6 +58,18 @@ public struct LinkLibrary: Equatable, Sendable {
     public mutating func remove(_ id: UUID) {
         for shelf in LinkShelf.allCases {
             shelves[shelf]?.removeAll { $0.id == id }
+        }
+    }
+
+    /// Moves link `id` within its shelf so it ends at `index` of that shelf (clamped to 0...count-1); an unknown
+    /// id changes nothing.
+    public mutating func move(_ id: UUID, to index: Int) {
+        for shelf in LinkShelf.allCases {
+            guard var links = shelves[shelf], let from = links.firstIndex(where: { $0.id == id }) else { continue }
+            let link = links.remove(at: from)
+            links.insert(link, at: min(max(index, 0), links.count))
+            shelves[shelf] = links
+            return
         }
     }
 }
