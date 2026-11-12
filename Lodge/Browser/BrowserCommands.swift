@@ -1,9 +1,11 @@
 import AppKit
+import LodgeKit
 import SwiftUI
 
 /// Menu bar items and their keyboard shortcuts.
 struct BrowserCommands: Commands {
     let model: BrowserModel
+    @AppStorage(SidebarMode.defaultsKey) private var sidebarMode: SidebarMode = .expanded
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -26,6 +28,10 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("g")
             Button("Find Previous", action: model.findPrevious)
                 .keyboardShortcut("g", modifiers: [.command, .shift])
+        }
+        CommandGroup(replacing: .sidebar) {
+            Button("Toggle Sidebar") { withAnimation(.snappy(duration: 0.25)) { sidebarMode = sidebarMode.toggled } }
+                .keyboardShortcut("s", modifiers: [.command, .control])
         }
         CommandGroup(before: .toolbar) {
             Button("Reload Page", action: model.reload)

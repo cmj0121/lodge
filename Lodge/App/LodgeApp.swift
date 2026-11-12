@@ -9,7 +9,14 @@ struct LodgeApp: App {
         Window("Lodge", id: "browser") {
             BrowserView(model: browser)
         }
-        .windowToolbarStyle(.unified(showsTitle: false))
+        .windowStyle(.hiddenTitleBar)
+        .windowBackgroundDragBehavior(.enabled)
         .commands { BrowserCommands(model: browser) }
+
+        Settings {
+            Text("No settings yet.")
+                .foregroundStyle(.secondary)
+                .padding(40)
+        }
     }
 }

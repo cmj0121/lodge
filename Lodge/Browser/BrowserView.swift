@@ -1,28 +1,60 @@
 import LodgeKit
 import SwiftUI
 
-/// The browser window: vertical tabs in the sidebar, a compact toolbar, the selected tab's page.
+/// The browser window: every control in the left column, and the selected tab's page floating as
+/// a card on the right.
 struct BrowserView: View {
     @Bindable var model: BrowserModel
-    @State private var columns = NavigationSplitViewVisibility.all
+    @AppStorage(SidebarMode.defaultsKey) private var sidebarMode: SidebarMode = .expanded
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columns) {
-            TabSidebar(model: model)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 230, max: 360)
-        } detail: {
-            VStack(spacing: 0) {
-                if model.isFindVisible {
-                    FindBar(model: model)
-                    Divider()
-                }
-                PageArea(model: model)
+        HStack(spacing: 0) {
+            TabSidebar(model: model, mode: sidebarMode) {
+                withAnimation(.snappy(duration: 0.25)) { sidebarMode = sidebarMode.toggled }
             }
-            .toolbar { BrowserToolbar(model: model) }
+            .frame(width: sidebarMode.width)
+            PageCard(model: model, showsAddress: sidebarMode == .rail)
+                .padding([.top, .trailing, .bottom], 8)
+                // The card reaches up beside the window buttons; the column keeps the title bar inset.
+                .ignoresSafeArea(.container, edges: .top)
         }
+        .background(Color(nsColor: .underPageBackgroundColor))
         .navigationTitle(model.selected?.displayTitle ?? "Lodge")
         .environment(\.webViewRegistry, model.registry)
         .frame(minWidth: 800, minHeight: 500)
+    }
+}
+
+/// The page, as a floating card. With the sidebar collapsed it carries the address and navigation
+/// in a header strip.
+private struct PageCard: View {
+    let model: BrowserModel
+    let showsAddress: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if showsAddress {
+                HStack(spacing: 8) {
+                    NavigationButtons(model: model)
+                    AddressBar(model: model)
+                        .frame(maxWidth: 640)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                Divider()
+            }
+            PageArea(model: model)
+                .overlay(alignment: .topTrailing) {
+                    if model.isFindVisible {
+                        FindPopup(model: model)
+                            .padding(12)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .animation(.snappy(duration: 0.2), value: model.isFindVisible)
+        }
+        .floatingSurface(cornerRadius: 10)
     }
 }
 

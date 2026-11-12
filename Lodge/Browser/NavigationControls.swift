@@ -1,23 +1,18 @@
 import LodgeKit
 import SwiftUI
 
-/// Back, forward, the address bar and reload/stop.
-struct BrowserToolbar: ToolbarContent {
+/// Back, forward and reload/stop for the selected tab, as icon buttons.
+struct NavigationButtons: View {
     let model: BrowserModel
 
-    var body: some ToolbarContent {
-        ToolbarItemGroup(placement: .navigation) {
+    var body: some View {
+        HStack(spacing: 12) {
             Button("Back", systemImage: "chevron.backward", action: model.goBack)
                 .disabled(model.selected?.canGoBack != true)
                 .help("Go back (⌘[)")
             Button("Forward", systemImage: "chevron.forward", action: model.goForward)
                 .disabled(model.selected?.canGoForward != true)
                 .help("Go forward (⌘])")
-        }
-        ToolbarItem(placement: .principal) {
-            AddressBar(model: model)
-        }
-        ToolbarItem(placement: .primaryAction) {
             if model.selected?.isLoading == true {
                 Button("Stop", systemImage: "xmark", action: model.stopLoading)
                     .help("Stop loading (⌘.)")
@@ -27,12 +22,16 @@ struct BrowserToolbar: ToolbarContent {
                     .help("Reload this page (⌘R)")
             }
         }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .font(.system(size: 14, weight: .medium))
+        .padding(.horizontal, 4)
     }
 }
 
 /// The address field: shows the page's address, takes a URL or a search, and hosts the load
 /// progress line along its bottom edge.
-private struct AddressBar: View {
+struct AddressBar: View {
     let model: BrowserModel
     @State private var text = ""
     @FocusState private var isFocused: Bool
@@ -62,7 +61,7 @@ private struct AddressBar: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 28)
-        .frame(minWidth: 220, idealWidth: 400, maxWidth: 640)
+        .frame(maxWidth: .infinity)
         .background(.quaternary.opacity(isFocused ? 0.4 : 0.7), in: .rect(cornerRadius: 7))
         .overlay {
             RoundedRectangle(cornerRadius: 7)
@@ -101,47 +100,5 @@ private struct ProgressLine: View {
         }
         .padding(.horizontal, 4)
         .allowsHitTesting(false)
-    }
-}
-
-/// Find in page, shown under the toolbar.
-struct FindBar: View {
-    @Bindable var model: BrowserModel
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Spacer(minLength: 0)
-            if model.findMissed {
-                Text("Not found")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            TextField("Find on page", text: $model.findText)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 240)
-                .focused($isFocused)
-                .onSubmit(model.findNext)
-                .task(id: model.findText) {
-                    guard (try? await Task.sleep(for: .milliseconds(150))) != nil else { return }
-                    model.findIfChanged()
-                }
-                .onExitCommand(perform: model.hideFind)
-            ControlGroup {
-                Button("Previous", systemImage: "chevron.up", action: model.findPrevious)
-                    .help("Previous match (⇧⌘G)")
-                Button("Next", systemImage: "chevron.down", action: model.findNext)
-                    .help("Next match (⌘G)")
-            }
-            .controlGroupStyle(.navigation)
-            .fixedSize()
-            .disabled(model.findText.isEmpty)
-            Button("Done", action: model.hideFind)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.bar)
-        .onAppear { isFocused = true }
-        .onChange(of: model.findFocusRequest) { isFocused = true }
     }
 }
