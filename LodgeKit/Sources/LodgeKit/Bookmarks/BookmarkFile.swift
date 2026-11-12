@@ -8,8 +8,8 @@ public enum BookmarkFile {
         case unreadable
     }
 
-    /// The largest file an import reads, about 20 MB.
-    public static let maxSize = 20 * 1024 * 1024
+    /// The largest file an import reads, about 5 MB.
+    public static let maxSize = 5 * 1024 * 1024
 
     /// The folder title for an import of `url`: the file's name without its extension, "Imported" when blank.
     public static func importTitle(for url: URL) -> String {

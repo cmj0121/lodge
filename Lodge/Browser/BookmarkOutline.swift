@@ -271,7 +271,7 @@ struct BookmarkOutline: NSViewRepresentable {
             _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
             proposedChildIndex index: Int
         ) -> NSDragOperation {
-            guard let dragged = draggedID(info) else { return [] }
+            guard let dragged = draggedID(info, in: outlineView) else { return [] }
             var parent = id(item)
             if index == NSOutlineViewDropOnItemIndex, case .link? = parent, let place = places[parent!] {
                 parent = place.parent
@@ -283,13 +283,16 @@ struct BookmarkOutline: NSViewRepresentable {
         func outlineView(
             _ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int
         ) -> Bool {
-            guard let dragged = draggedID(info) else { return false }
+            guard let dragged = draggedID(info, in: outlineView) else { return false }
             return model.moveBookmark(
                 dragged, into: folderID(id(item)), at: index == NSOutlineViewDropOnItemIndex ? nil : index)
         }
 
-        private func draggedID(_ info: NSDraggingInfo) -> UUID? {
-            info.draggingPasteboard.string(forType: Self.dragType).flatMap(UUID.init(uuidString:))
+        /// The bookmark being dragged, only when the drag started in `outlineView`: another app can put the same
+        /// pasteboard type on a drag of its own.
+        private func draggedID(_ info: NSDraggingInfo, in outlineView: NSOutlineView) -> UUID? {
+            guard (info.draggingSource as AnyObject?) === outlineView else { return nil }
+            return info.draggingPasteboard.string(forType: Self.dragType).flatMap(UUID.init(uuidString:))
         }
 
         // MARK: Context menu

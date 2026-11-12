@@ -53,6 +53,7 @@ struct BrowserCommands: Commands {
             Button("New Folder…") { BookmarkPrompts.newFolder(in: nil, model: model) }
             Divider()
             Button("Import Bookmarks…") { BookmarkTransfer.importBookmarks(into: model) }
+                .disabled(model.isImportingBookmarks)
             Button("Export Bookmarks…") { BookmarkTransfer.exportBookmarks(from: model) }
         }
         CommandGroup(before: .windowList) {

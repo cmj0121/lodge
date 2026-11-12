@@ -312,11 +312,20 @@ final class BrowserModel {
 
     // MARK: Import and export
 
+    /// Whether `importBookmarks(from:)` is running, from its start until the folder is added or the import fails;
+    /// a cancelled import counts until its read has ended.
+    private(set) var isImportingBookmarks = false
+
     /// Reads the bookmark file at `url` off the main actor, then adds it to the root as one open folder named
-    /// after the file. Throws `BookmarkFile.ReadError` or `NetscapeBookmarks.ImportError`, leaving the library
-    /// as it was.
+    /// after the file. Throws `BookmarkFile.ReadError`, `NetscapeBookmarks.ImportError` or, when the calling task
+    /// is cancelled, `CancellationError`, leaving the library as it was. Cancelling reaches the read, but a
+    /// SwiftSoup parse under way runs to its end, and its folder is then dropped.
     func importBookmarks(from url: URL) async throws {
-        let folder = try await Task.detached(priority: .userInitiated) { try BookmarkFile.read(url) }.value
+        isImportingBookmarks = true
+        defer { isImportingBookmarks = false }
+        let read = Task.detached(priority: .userInitiated) { try BookmarkFile.read(url) }
+        let folder = try await withTaskCancellationHandler { try await read.value } onCancel: { read.cancel() }
+        try Task.checkCancellation()
         changeLibrary { library in
             library.insert(folder, in: library.bookmarks.id)
             library.setExpanded(folder.id, true)
