@@ -7,8 +7,11 @@ let package = Package(
     products: [
         .library(name: "LodgeKit", targets: ["LodgeKit"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/scinfu/SwiftSoup.git", .upToNextMajor(from: "2.7.0"))
+    ],
     targets: [
-        .target(name: "LodgeKit"),
+        .target(name: "LodgeKit", dependencies: [.product(name: "SwiftSoup", package: "SwiftSoup")]),
         .testTarget(name: "LodgeKitTests", dependencies: ["LodgeKit"]),
     ]
 )
