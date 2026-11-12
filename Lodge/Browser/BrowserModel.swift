@@ -34,6 +34,19 @@ final class BrowserModel {
 
     @ObservationIgnored let registry = WebViewRegistry()
     @ObservationIgnored private var controllers: [TabID: TabController] = [:]
+    /// Restored tabs whose web view is not built yet; the load that builds one is not a visit.
+    @ObservationIgnored private var restoredTabs: Set<TabID> = []
+    /// Where tabs on the default store record their visits; nil until the history store opens, and in layout
+    /// renders. The store opens after the restored tab may have committed, so the recorder arrives knowing every
+    /// default-store tab's page as already seen, and a restored page's load finishing records nothing.
+    @ObservationIgnored var historyRecorder: HistoryRecorder? {
+        didSet {
+            guard oldValue == nil, let historyRecorder else { return }
+            for tab in tabs.tabs where tab.store == .global {
+                if let url = tab.url { historyRecorder.send(.seen(tab: tab.id, url: url)) }
+            }
+        }
+    }
 
     /// Called with the new snapshot whenever the tabs or the library change in a way it stores.
     @ObservationIgnored var onSnapshotChange: ((SessionSnapshot) -> Void)?
@@ -48,6 +61,7 @@ final class BrowserModel {
             let restored = snapshot.restored()
             library = restored.library
             tabs = restored.tabs
+            restoredTabs = Set(restored.tabs.tabs.map(\.id))
         } else {
             library = defaultLibrary
         }
@@ -157,11 +171,16 @@ final class BrowserModel {
     private func ensureView(for id: TabID, configuration: WKWebViewConfiguration? = nil, load: Bool = true) -> LodgeWebView? {
         guard let tab = tabs[id] else { return nil }
         if let view = registry.webView(for: id) { return view }
+        let isRestoring = restoredTabs.remove(id) != nil
         let view = registry.make(for: id, store: tab.store, configuration: configuration)
         update(id) { $0.isLive = true }
         // Built once the tab is listed, so the controller's initial KVO values reach it.
-        controllers[id] = TabController(tab: id, webView: view, model: self)
-        if load, let url = tab.url { view.load(URLRequest(url: url)) }
+        let controller = TabController(tab: id, webView: view, model: self)
+        controllers[id] = controller
+        if load, let url = tab.url {
+            let navigation = view.load(URLRequest(url: url))
+            if isRestoring { controller.restoreNavigation = navigation }
+        }
         return view
     }
 
@@ -183,6 +202,8 @@ final class BrowserModel {
         guard !dropped.isEmpty else { return }
         for id in dropped {
             controllers[id] = nil
+            restoredTabs.remove(id)
+            historyRecorder?.send(.closed(tab: id))
             if loadProgress[id] != nil { loadProgress[id] = nil }
             if favicons[id] != nil { favicons[id] = nil }
             if security[id] != nil { security[id] = nil }

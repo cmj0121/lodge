@@ -23,14 +23,19 @@ final class SessionStore {
     private lazy var file: SessionFile? = {
         if let directory { return SessionFile(directory: directory) }
         do {
-            let support = try FileManager.default.url(
-                for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            return SessionFile(directory: support.appending(path: "Lodge", directoryHint: .isDirectory))
+            return SessionFile(directory: try Self.appDirectory())
         } catch {
             Self.logger.error("Cannot find Application Support: \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }()
+
+    /// Application Support/Lodge, where the app keeps its files.
+    nonisolated static func appDirectory() throws -> URL {
+        try FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        ).appending(path: "Lodge", directoryHint: .isDirectory)
+    }
 
     /// The saved session; nil when there is none, or when it cannot be read (the file is then set aside).
     func load() -> SessionSnapshot? {

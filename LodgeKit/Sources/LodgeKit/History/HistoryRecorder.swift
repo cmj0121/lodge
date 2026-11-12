@@ -12,7 +12,7 @@ extension HistoryStore: HistoryWriting {}
 /// Turns tab navigation events into history visits. Events are applied one at a time, in the order sent, on a
 /// single task, so a `.title` after a `.committed` always finds the visit it belongs to.
 public final class HistoryRecorder: Sendable {
-    public enum Event: Sendable {
+    public enum Event: Equatable, Sendable {
         case committed(tab: UUID, url: URL, title: String), urlChanged(tab: UUID, url: URL, title: String)
         case seen(tab: UUID, url: URL), title(tab: UUID, title: String), closed(tab: UUID)
     }
@@ -83,8 +83,9 @@ public final class HistoryRecorder: Sendable {
                 tabs[tab]?.visit = try await visit(url, title: title, at: date, store: store)
             case .seen(let tab, let url):
                 tabs[tab, default: TabState()].lastURL = url
+            // A second guard behind `HistoryEventFilter.titleChanged`, for any other sender.
             case .title(let tab, let title):
-                guard let state = tabs[tab], let visit = state.visit, visit.url == state.lastURL else { return }
+                guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let state = tabs[tab], let visit = state.visit, visit.url == state.lastURL else { return }
                 try await store.updateTitle(of: visit.id, to: title)
             case .closed(let tab):
                 tabs[tab] = nil
