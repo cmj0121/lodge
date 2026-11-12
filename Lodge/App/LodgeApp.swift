@@ -3,10 +3,13 @@ import SwiftUI
 
 @main
 struct LodgeApp: App {
+    @State private var browser = BrowserModel()
+
     var body: some Scene {
-        WindowGroup {
-            Color.clear
-                .frame(minWidth: 800, minHeight: 500)
+        Window("Lodge", id: "browser") {
+            BrowserView(model: browser)
         }
+        .windowToolbarStyle(.unified(showsTitle: false))
+        .commands { BrowserCommands(model: browser) }
     }
 }

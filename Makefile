@@ -17,9 +17,9 @@ clean: $(SUBDIR)	# clean-up environment
 	@find . -name '*.sw[po]' -delete
 	rm -rf $(BUILD_DIR) LodgeKit/.build
 
-test:				# run LodgeKit unit tests, then build the app
+test:				# run LodgeKit unit tests, then a Debug build of the app
 	swift test --package-path LodgeKit
-	$(MAKE) build
+	$(XCODEBUILD) -configuration Debug build
 
 uitest:				# run the XCUITest smoke tests
 	$(XCODEBUILD) test
@@ -33,9 +33,10 @@ build:				# build the Release app into build/Lodge.app
 	ditto $(DERIVED_DATA)/Build/Products/Release/Lodge.app $(APP)
 
 install: build		# copy build/Lodge.app into $(PREFIX) (default ~/Applications)
-	mkdir -p $(PREFIX)
-	rm -rf $(PREFIX)/Lodge.app
-	ditto $(APP) $(PREFIX)/Lodge.app
+	@[ -n "$(strip $(PREFIX))" ] || { echo "install: PREFIX must not be empty" >&2; exit 1; }
+	mkdir -p "$(PREFIX)"
+	rm -rf "$(PREFIX)/Lodge.app"
+	ditto "$(APP)" "$(PREFIX)/Lodge.app"
 
 upgrade:			# upgrade all the necessary packages
 	pre-commit autoupdate
