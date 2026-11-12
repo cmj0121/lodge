@@ -46,7 +46,7 @@ public enum SidebarItem: Identifiable, Equatable, Sendable {
         }
     }
 
-    public func isLive(selected: TabID?) -> Bool {
+    public func isSelected(_ selected: TabID?) -> Bool {
         tab.map { $0.id == selected } ?? false
     }
 }
@@ -85,5 +85,14 @@ public struct SidebarSections: Equatable, Sendable {
         }
         let count = targets.count
         return targets[((index + offset) % count + count) % count]
+    }
+
+    /// The open tab to select after `tab` closes: the next entry holding an open tab in sidebar order
+    /// (pins, bookmarks, loose), skipping links with no tab; else the previous one; nil when `tab` is the only one.
+    public func neighbour(ofClosing tab: TabID) -> TabID? {
+        let open = (pins + bookmarks + loose).compactMap(\.tab?.id)
+        guard let index = open.firstIndex(of: tab) else { return nil }
+        if index + 1 < open.count { return open[index + 1] }
+        return index > 0 ? open[index - 1] : nil
     }
 }
