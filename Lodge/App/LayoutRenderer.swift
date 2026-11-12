@@ -28,7 +28,7 @@
             defaults.set(mode.rawValue, forKey: SidebarMode.defaultsKey)
             defer { defaults.removePersistentDomain(forName: suite) }
 
-            let model = BrowserModel()
+            let model = BrowserModel(defaultLibrary: .sample)
             if let bookmark = model.library.links(on: .bookmarks).first { model.openLink(bookmark, load: false) }
             if find {
                 model.showFind()

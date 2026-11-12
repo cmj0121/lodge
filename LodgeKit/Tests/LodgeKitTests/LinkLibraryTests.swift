@@ -68,4 +68,55 @@ import Testing
         #expect(links.allSatisfy { $0.url.scheme == "https" && !$0.title.isEmpty })
         #expect(Set(links.map(\.id)).count == links.count)
     }
+
+    @Test(arguments: [(0, ["B", "A", "C"]), (2, ["A", "C", "B"]), (-3, ["B", "A", "C"]), (9, ["A", "C", "B"])])
+    func movesAPinToAnIndexKeepingTheOrderOfTheRest(index: Int, titles: [String]) {
+        var library = LinkLibrary()
+        library.add(a, title: "A", to: .pins)
+        let middle = library.add(b, title: "B", to: .pins)
+        library.add(c, title: "C", to: .pins)
+        library.add(a, title: "A", to: .bookmarks)
+        library.move(middle.id, to: index)
+        #expect(library.links(on: .pins).map(\.title) == titles)
+        #expect(library.links(on: .bookmarks).map(\.title) == ["A"])
+    }
+
+    @Test func movesABookmarkWithinItsShelf() {
+        var library = LinkLibrary.sample
+        let last = library.links(on: .bookmarks).last!
+        library.move(last.id, to: 0)
+        #expect(library.links(on: .bookmarks).first == last)
+        #expect(library.links(on: .bookmarks).count == LinkLibrary.sample.links(on: .bookmarks).count)
+        #expect(library.links(on: .pins) == LinkLibrary.sample.links(on: .pins))
+    }
+
+    @Test func movingAnUnknownIDChangesNothing() {
+        var library = LinkLibrary.sample
+        library.move(UUID(), to: 0)
+        #expect(library == .sample)
+    }
+
+    @Test func savedLinksRoundTripThroughJSON() throws {
+        let links = LinkLibrary.sample.links(on: .pins)
+        let data = try JSONEncoder().encode(links)
+        #expect(try JSONDecoder().decode([SavedLink].self, from: data) == links)
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        #expect(object.allSatisfy { Set($0.keys) == ["id", "url", "title"] })
+    }
+
+    @Test func libraryRebuildsFromDecodedShelves() throws {
+        let sample = LinkLibrary.sample
+        let pins = try JSONEncoder().encode(sample.links(on: .pins))
+        let bookmarks = try JSONEncoder().encode(sample.links(on: .bookmarks))
+        let rebuilt = LinkLibrary(
+            pins: try JSONDecoder().decode([SavedLink].self, from: pins),
+            bookmarks: try JSONDecoder().decode([SavedLink].self, from: bookmarks)
+        )
+        #expect(rebuilt == sample)
+    }
+
+    @Test func defaultLibraryIsEmpty() {
+        let library = LinkLibrary()
+        #expect(LinkShelf.allCases.allSatisfy { library.links(on: $0).isEmpty })
+    }
 }

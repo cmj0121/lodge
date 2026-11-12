@@ -1,6 +1,6 @@
 import Foundation
 
-/// A live tab as the browser window shows it; the web view itself lives in the app's registry.
+/// A tab as the browser window shows it; its web view, while it has one, lives in the app's registry.
 public struct BrowserTab: Identifiable, Hashable, Sendable {
     public let id: TabID
     public var store: StoreRef
@@ -12,10 +12,13 @@ public struct BrowserTab: Identifiable, Hashable, Sendable {
     public var hasCrashed: Bool
     /// The saved link this tab was opened from, if any.
     public var link: UUID?
+    /// Whether the tab has a web view; a restored tab has none until it is first selected.
+    public var isLive: Bool
 
     public init(
         id: TabID = TabID(), store: StoreRef = .global, url: URL? = nil, title: String = "", isLoading: Bool = false,
-        canGoBack: Bool = false, canGoForward: Bool = false, hasCrashed: Bool = false, link: UUID? = nil
+        canGoBack: Bool = false, canGoForward: Bool = false, hasCrashed: Bool = false, link: UUID? = nil,
+        isLive: Bool = true
     ) {
         self.id = id
         self.store = store
@@ -26,6 +29,7 @@ public struct BrowserTab: Identifiable, Hashable, Sendable {
         self.canGoForward = canGoForward
         self.hasCrashed = hasCrashed
         self.link = link
+        self.isLive = isLive
     }
 
     public var displayTitle: String {
@@ -43,6 +47,12 @@ public struct TabList: Sendable, Equatable {
 
     public init() {}
 
+    /// Restores `tabs`, selecting `selectedID` when it is one of them, else the first tab.
+    public init(tabs: [BrowserTab], selectedID: TabID?) {
+        self.tabs = tabs
+        self.selectedID = tabs.contains { $0.id == selectedID } ? selectedID : tabs.first?.id
+    }
+
     public var selected: BrowserTab? { selectedID.flatMap { self[$0] } }
 
     public subscript(id: TabID) -> BrowserTab? { tabs.first { $0.id == id } }
@@ -55,25 +65,17 @@ public struct TabList: Sendable, Equatable {
         selectedID = tab.id
     }
 
+    /// Selects the tab, keeping every tab open; an unknown id changes nothing.
     public mutating func select(_ id: TabID) {
         if self[id] != nil { selectedID = id }
     }
 
-    /// Removes the tab; when it was selected, nothing is selected.
-    public mutating func close(_ id: TabID) {
+    /// Removes `id`. When it was selected, selects `next` if it is in the list, else nothing.
+    /// Closing a non-selected tab keeps the selection.
+    public mutating func close(_ id: TabID, selecting next: TabID?) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-        if selectedID == id { selectedID = nil }
         tabs.remove(at: index)
-    }
-
-    /// Moves the session from the selected tab to `next`, a tab in the list, or nil for none. The tab
-    /// left drops out of the list; a link's tab drops out too, as its row is the saved
-    /// link, and returning to that link opens a fresh tab. Moving to the selected tab, or to a tab not
-    /// in the list, changes nothing.
-    public mutating func leave(to next: TabID?) {
-        guard next != selectedID, next.map({ self[$0] != nil }) ?? true else { return }
-        if let index = tabs.firstIndex(where: { $0.id == selectedID }) { tabs.remove(at: index) }
-        selectedID = next
+        if selectedID == id { selectedID = next.flatMap { self[$0]?.id } }
     }
 
     /// Applies `change` to the tab; an unknown id changes nothing.
