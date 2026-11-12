@@ -59,6 +59,30 @@ import Testing
         #expect(list.tab(forLink: bookmark.id) == nil)
     }
 
+    @Test func aNavigatedPinKeepsItsRowAndReopensOnItsPinnedURL() {
+        var list = TabList()
+        let pinTab = BrowserTab(url: URL(string: "https://elsewhere.example")!, link: pin.id)
+        list.open(pinTab)
+        #expect(SidebarSections(pins: [pin], bookmarks: [], tabs: list).pins == [.link(pin, .pins, pinTab)])
+        list.close(pinTab.id, selecting: nil)
+        let closed = SidebarSections(pins: [pin], bookmarks: [], tabs: list)
+        #expect(closed.pins == [.link(pin, .pins, nil)])
+        #expect(closed.pins.first?.target == .link(pin))
+    }
+
+    @Test func unpinningLeavesItsOpenTabLoose() {
+        var library = LinkLibrary()
+        let link = library.add(pin.url, title: pin.title, to: .pins)
+        var list = TabList()
+        let pinTab = BrowserTab(link: link.id)
+        list.open(pinTab)
+        library.remove(link.id)
+        list.update(pinTab.id) { $0.link = nil }
+        let sections = SidebarSections(pins: library.links(on: .pins), bookmarks: [], tabs: list)
+        #expect(sections.pins.isEmpty)
+        #expect(sections.loose.map(\.tab?.id) == [pinTab.id])
+    }
+
     @Test func stepsThroughRowsInSidebarOrderAndWraps() {
         var list = TabList()
         let bookmarkTab = BrowserTab(link: bookmark.id)
@@ -88,5 +112,45 @@ import Testing
         let sections = SidebarSections(pins: [], bookmarks: [], tabs: list)
         #expect(sections.target(1, from: loose.id) == .tab(loose.id))
         #expect(SidebarSections(pins: [], bookmarks: [], tabs: TabList()).target(1, from: nil) == nil)
+    }
+
+    @Test func closingSelectsTheNextEntryWithATabSkippingUnopenedLinks() {
+        var list = TabList()
+        let pinTab = BrowserTab(link: pin.id)
+        let bookmarkTab = BrowserTab(link: bookmark.id)
+        let loose = BrowserTab()
+        for tab in [loose, bookmarkTab, pinTab] { list.open(tab) }
+        let sections = SidebarSections(pins: [pin, unopened], bookmarks: [bookmark], tabs: list)
+        #expect(sections.neighbour(ofClosing: pinTab.id) == bookmarkTab.id)
+        #expect(sections.neighbour(ofClosing: bookmarkTab.id) == loose.id)
+    }
+
+    @Test func closingTheLastEntrySelectsThePreviousOne() {
+        var list = TabList()
+        let pinTab = BrowserTab(link: pin.id)
+        let loose = BrowserTab()
+        for tab in [loose, pinTab] { list.open(tab) }
+        let sections = SidebarSections(pins: [pin], bookmarks: [unopened], tabs: list)
+        #expect(sections.neighbour(ofClosing: loose.id) == pinTab.id)
+    }
+
+    @Test func closingTheOnlyOrAnUnknownTabHasNoNeighbour() {
+        var list = TabList()
+        let loose = BrowserTab()
+        list.open(loose)
+        let sections = SidebarSections(pins: [pin], bookmarks: [bookmark], tabs: list)
+        #expect(sections.neighbour(ofClosing: loose.id) == nil)
+        #expect(sections.neighbour(ofClosing: TabID()) == nil)
+    }
+
+    @Test func closeWithTheNeighbourKeepsTheOtherTabsAndSelectsIt() {
+        var list = TabList()
+        let tabs = [BrowserTab(), BrowserTab(), BrowserTab()]
+        for tab in tabs { list.open(tab) }
+        list.select(tabs[1].id)
+        let next = SidebarSections(pins: [], bookmarks: [], tabs: list).neighbour(ofClosing: tabs[1].id)
+        list.close(tabs[1].id, selecting: next)
+        #expect(list.tabs == [tabs[0], tabs[2]])
+        #expect(list.selectedID == tabs[2].id)
     }
 }

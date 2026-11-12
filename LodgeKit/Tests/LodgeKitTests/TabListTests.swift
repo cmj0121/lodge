@@ -30,33 +30,79 @@ import Testing
         #expect(list.selectedID == ids[1])
     }
 
-    @Test func closingTheSelectedTabLeavesNothingSelected() {
+    @Test func selectKeepsEveryTabOpen() {
+        var (list, ids) = list(3)
+        list.select(ids[0])
+        list.select(ids[1])
+        #expect(list.tabs.map(\.id) == ids)
+        #expect(list.selectedID == ids[1])
+    }
+
+    @Test func closingTheSelectedTabSelectsTheGivenNext() {
         var (list, ids) = list(3)
         list.select(ids[1])
-        list.close(ids[1])
+        list.close(ids[1], selecting: ids[0])
         #expect(list.tabs.map(\.id) == [ids[0], ids[2]])
+        #expect(list.selectedID == ids[0])
+    }
+
+    @Test func closingTheSelectedTabWithANextNotInTheListLeavesNothingSelected() {
+        var (list, ids) = list(3)
+        list.close(ids[2], selecting: TabID())
+        #expect(list.tabs.map(\.id) == [ids[0], ids[1]])
+        #expect(list.selectedID == nil)
+        list.select(ids[0])
+        list.close(ids[0], selecting: ids[0])
         #expect(list.selectedID == nil)
     }
 
     @Test func closingAnUnselectedTabKeepsTheSelection() {
         var (list, ids) = list(3)
         list.select(ids[0])
-        list.close(ids[2])
+        list.close(ids[2], selecting: ids[1])
+        #expect(list.tabs.map(\.id) == [ids[0], ids[1]])
         #expect(list.selectedID == ids[0])
     }
 
-    @Test func closingTheOnlyTabLeavesNothingSelected() {
+    @Test func closingTheLastTabEmptiesTheList() {
         var (list, ids) = list(1)
-        list.close(ids[0])
+        list.close(ids[0], selecting: nil)
         #expect(list.tabs.isEmpty)
         #expect(list.selectedID == nil)
     }
 
     @Test func closingAnUnknownTabChangesNothing() {
-        var (list, _) = list(1)
+        var (list, ids) = list(1)
         let before = list
-        list.close(TabID())
+        list.close(TabID(), selecting: ids[0])
         #expect(list == before)
+    }
+
+    @Test func restoringKeepsTheSelectedTabWhenItIsListed() {
+        let tabs = (0..<3).map { _ in BrowserTab(isLive: false) }
+        let list = TabList(tabs: tabs, selectedID: tabs[1].id)
+        #expect(list.tabs == tabs)
+        #expect(list.selectedID == tabs[1].id)
+    }
+
+    @Test func restoringFallsBackToTheFirstTab() {
+        let tabs = (0..<2).map { _ in BrowserTab(isLive: false) }
+        #expect(TabList(tabs: tabs, selectedID: TabID()).selectedID == tabs[0].id)
+        #expect(TabList(tabs: tabs, selectedID: nil).selectedID == tabs[0].id)
+        #expect(TabList(tabs: [], selectedID: TabID()).selectedID == nil)
+    }
+
+    @Test func tabsAreLiveUnlessRestored() {
+        #expect(BrowserTab().isLive)
+        #expect(!BrowserTab(isLive: false).isLive)
+    }
+
+    @Test func liveStateIsTrackedPerTab() {
+        let tabs = [BrowserTab(isLive: false), BrowserTab(isLive: false)]
+        var list = TabList(tabs: tabs, selectedID: tabs[0].id)
+        list.update(tabs[0].id) { $0.isLive = true }
+        #expect(list[tabs[0].id]?.isLive == true)
+        #expect(list[tabs[1].id]?.isLive == false)
     }
 
     @Test func updateChangesOnlyTheGivenTab() throws {
@@ -86,51 +132,5 @@ import Testing
         #expect(tab.displayTitle == "www.example.com")
         tab.title = "Example"
         #expect(tab.displayTitle == "Example")
-    }
-
-    @Test func leavingALooseTabRemovesIt() {
-        let link = SavedLink(url: URL(string: "https://pin.example")!, title: "Pin")
-        var list = TabList()
-        let loose = BrowserTab()
-        list.open(loose)
-        list.leave(to: nil)
-        #expect(list.tabs.isEmpty)
-        #expect(list.selectedID == nil)
-        #expect(SidebarSections(pins: [link], bookmarks: [], tabs: list).loose.isEmpty)
-    }
-
-    @Test func leavingALinkTabKeepsItsRowNotOpen() {
-        let link = SavedLink(url: URL(string: "https://pin.example")!, title: "Pin")
-        var list = TabList()
-        let tab = BrowserTab(link: link.id)
-        list.open(tab)
-        list.leave(to: nil)
-        #expect(list.tab(forLink: link.id) == nil)
-        let sections = SidebarSections(pins: [link], bookmarks: [], tabs: list)
-        #expect(sections.pins == [.link(link, .pins, nil)])
-        #expect(sections.loose.isEmpty)
-    }
-
-    @Test func leavingToAnotherTabDropsOnlyTheSelectedOne() {
-        var (list, ids) = list(3)
-        list.select(ids[0])
-        list.leave(to: ids[2])
-        #expect(list.tabs.map(\.id) == [ids[1], ids[2]])
-        #expect(list.selectedID == ids[2])
-    }
-
-    @Test func leavingToTheSelectedOrAnUnknownTabChangesNothing() {
-        var (list, ids) = list(2)
-        let before = list
-        list.leave(to: ids[1])
-        list.leave(to: TabID())
-        #expect(list == before)
-    }
-
-    @Test func leavingWithNothingSelectedRemovesNothing() {
-        var list = TabList()
-        list.leave(to: nil)
-        #expect(list.tabs.isEmpty)
-        #expect(list.selectedID == nil)
     }
 }
