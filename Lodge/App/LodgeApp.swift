@@ -5,6 +5,12 @@ import SwiftUI
 struct LodgeApp: App {
     @State private var browser = BrowserModel()
 
+    init() {
+        #if DEBUG
+            LayoutRenderer.runIfRequested()
+        #endif
+    }
+
     var body: some Scene {
         Window("Lodge", id: "browser") {
             BrowserView(model: browser)
