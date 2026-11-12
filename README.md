@@ -4,47 +4,50 @@
 
 English | [繁體中文](README.zh-TW.md)
 
-A self-use, workspace-first browser for macOS, iOS and iPadOS: one shared identity underneath, per-workspace
-identities on top, and near-zero cost for the workspaces you leave.
+A self-use, workspace-first browser for macOS, iOS and iPadOS: every workspace is a browser of its own, and only the
+one you are in uses resources.
 
 ## Concept
 
 ```text
-┌───────────────────┐   ┌───────────────────┐   ┌───────────────────────┐
-│ Default workspace │   │    Workspace B    │   │      Workspace A      │
-└─────────┬─────────┘   └─────────┬─────────┘   └───┬───────────────┬───┘
-          │                       │                 │               │
-      all sites               all sites        other sites     github.com
-          │                       │                 │               │
-          ▼                       ▼                 ▼               ▼
-┌───────────────────────────────────────────────────────────┐ ┌─────────────┐
-│                  Global store · account X                 │ │   Store A   │
-│                 shared by every workspace                 │ │  account Y  │
-└───────────────────────────────────────────────────────────┘ └─────────────┘
+┌────────────────────────┐   ┌────────────────────────┐   ┌────────────────────────┐
+│   Default workspace    │   │      Workspace A       │   │      Workspace B       │
+│    built-in browser    │   │    its own browser     │   │    its own browser     │
+└───────────┬────────────┘   └───────────┬────────────┘   └───────────┬────────────┘
+            │                            │                            │
+            ▼                            ▼                            ▼
+┌────────────────────────┐   ┌────────────────────────┐   ┌────────────────────────┐
+│     Default store      │   │        Store A         │   │        Store B         │
+│ pinned tabs live here  │   │  sign-ins · site data  │   │  sign-ins · site data  │
+└────────────────────────┘   └────────────────────────┘   └────────────────────────┘
 ```
 
-| Concept            | Behavior                                                                                  |
-| ------------------ | ----------------------------------------------------------------------------------------- |
-| Default workspace  | Always there; uses the global store, so its sign-ins and site data are shared by all      |
-| Workspace          | Its bindings over Default: bound sites use its store, the rest is global (A: GitHub is Y) |
-| One tab, one store | Stores never merge; links, redirects, popups and sign-ins stay in the tab's store         |
-| Switching          | The workspace you leave hibernates; coming back reloads only the tab on screen            |
-| Moving a tab       | Only the tab moves; cookies, sessions and site data stay; reopens under the new identity  |
-| Credentials        | Passwords and passkeys stay in the OS credential store, shared by all workspaces          |
+| Concept               | Behavior                                                                                 |
+| --------------------- | ---------------------------------------------------------------------------------------- |
+| Default workspace     | The built-in shared browser, always there; pinned tabs belong to it, at hand everywhere  |
+| Custom workspace      | A new browser: every site gets its own site data and sign-ins                            |
+| Own identity          | Sign-ins, cookies and site data stay in the workspace they were made in                  |
+| Own fingerprint       | Every workspace presents a distinct, stable fingerprint to each site                     |
+| One page, one browser | A page stays in its browser; opening it in another workspace carries the address there   |
+| Clear ownership       | Every page shows which browser it belongs to                                             |
+| Resources for now     | Release first, then suspend, then hibernate; coming back wakes only the page on screen   |
+| Work in progress      | Forms, playback and downloads finish or are saved before their resources are handed back |
+| Light to use          | Idle workspaces stay quiet, switching is quick, and you pick up where you left off       |
+| Credentials           | Passwords and passkeys come from the OS credential store, ready in every workspace       |
+| Three platforms       | Mac, iPhone and iPad share one set of rules, each with the controls that suit it         |
+| Clear promise         | Each workspace keeps its own site data and sign-ins, and Lodge says exactly that         |
 
 ## Why not an existing browser
 
-| Capability                            | Lodge | Chrome / Edge | Firefox            | Safari   | Arc      |
-| ------------------------------------- | ----- | ------------- | ------------------ | -------- | -------- |
-| Global identity under every workspace | ✅    | ❌            | ⚠️ containers only | ❌       | ❌       |
-| Hibernate a whole workspace           | ✅    | tab only      | tab only           | tab only | tab only |
-| Same model on iOS / iPadOS            | ✅    | ⚠️            | ❌                 | ✅       | ⚠️       |
-| System-level credentials              | ✅    | ⚠️            | ❌                 | ✅       | ❌       |
+| Capability                      | Lodge | Chrome / Edge | Firefox            | Safari      | Arc      |
+| ------------------------------- | ----- | ------------- | ------------------ | ----------- | -------- |
+| Many browsers in one window     | ✅    | ⚠️ profiles   | ⚠️ containers only | ⚠️ profiles | ✅       |
+| Default pins in every workspace | ✅    | ❌            | ❌                 | ❌          | ❌       |
+| Hibernate a whole workspace     | ✅    | tab only      | tab only           | tab only    | tab only |
+| Same model on iOS / iPadOS      | ✅    | ⚠️            | ❌                 | ✅          | ⚠️       |
+| System-level credentials        | ✅    | ⚠️            | ❌                 | ✅          | ❌       |
 
-Trade-off: built on WebKit, so passkeys, service workers and extensions are limited until Apple grants the browser
-entitlement.
-
-**Non-goals:** merging cookies or moving sessions, notifications, and sync (planned later, serverless).
+Built on WebKit, so passkeys, service workers and extensions follow what Apple opens to browsers.
 
 ## DDD (Dream-Driven Development)
 
