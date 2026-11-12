@@ -310,6 +310,24 @@ final class BrowserModel {
         library.move(id, to: index)
     }
 
+    // MARK: Import and export
+
+    /// Reads the bookmark file at `url` off the main actor, then adds it to the root as one open folder named
+    /// after the file. Throws `BookmarkFile.ReadError` or `NetscapeBookmarks.ImportError`, leaving the library
+    /// as it was.
+    func importBookmarks(from url: URL) async throws {
+        let folder = try await Task.detached(priority: .userInitiated) { try BookmarkFile.read(url) }.value
+        changeLibrary { library in
+            library.insert(folder, in: library.bookmarks.id)
+            library.setExpanded(folder.id, true)
+        }
+    }
+
+    /// Writes every bookmark to `url` as one Netscape bookmark file in UTF-8, replacing it atomically.
+    func exportBookmarks(to url: URL) throws {
+        try Data(NetscapeBookmarks.export(library.bookmarks).utf8).write(to: url, options: .atomic)
+    }
+
     // MARK: Navigation
 
     /// The selected tab's web view, built without loading when the tab has none.

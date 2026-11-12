@@ -51,6 +51,9 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("d")
                 .disabled(model.tabs.selectedID.map(model.canAddLink) != true)
             Button("New Folder…") { BookmarkPrompts.newFolder(in: nil, model: model) }
+            Divider()
+            Button("Import Bookmarks…") { BookmarkTransfer.importBookmarks(into: model) }
+            Button("Export Bookmarks…") { BookmarkTransfer.exportBookmarks(from: model) }
         }
         CommandGroup(before: .windowList) {
             Button("Show Next Tab", action: model.selectNextTab)
