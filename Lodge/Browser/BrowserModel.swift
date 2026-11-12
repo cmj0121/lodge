@@ -3,24 +3,23 @@ import LodgeKit
 import Observation
 import WebKit
 
-/// State and actions of the browser window: the saved links, the one live tab and its web view, find in page.
+/// State and actions of the browser window: the saved links, the open tabs and their web views, find in page.
 @MainActor
 @Observable
 final class BrowserModel {
-    /// The tab list holds at most the live session: leaving a tab, by selecting or opening another,
-    /// drops it from the list and destroys its web view.
+    /// Every open tab. A tab keeps its web view, built when it is first selected, until it closes.
     private(set) var tabs = TabList() {
         didSet { refreshSidebar() }
     }
-    private(set) var library = LinkLibrary.sample {
+    private(set) var library: LinkLibrary {
         didSet { refreshSidebar() }
     }
-    /// The sidebar's entries, each link paired with its live tab, rebuilt only when `tabs` or
+    /// The sidebar's entries, each link paired with its open tab, rebuilt only when `tabs` or
     /// `library` change.
     private(set) var sidebar = SidebarSections()
     /// Load progress per tab, kept apart from `tabs` so progress ticks redraw only the progress line.
     private(set) var loadProgress: [TabID: Double] = [:]
-    /// The live page's security, kept apart from `tabs` like progress; gone with the tab's web view.
+    /// Each page's security, kept apart from `tabs` like progress; gone with the tab.
     private(set) var security: [TabID: SiteSecurity] = [:]
     var findText = ""
     var isFindVisible = false
@@ -36,13 +35,15 @@ final class BrowserModel {
     @ObservationIgnored let registry = WebViewRegistry()
     @ObservationIgnored private var controllers: [TabID: TabController] = [:]
 
-    init() {
-        open(BrowserTab(), load: nil)
+    /// Starts with `defaultLibrary` and one blank tab.
+    init(defaultLibrary: LinkLibrary = LinkLibrary()) {
+        library = defaultLibrary
+        open(BrowserTab(), load: false)
     }
 
     var selected: BrowserTab? { tabs.selected }
 
-    /// The live page's security; `.none` with no live tab.
+    /// The selected page's security; `.none` with no tab selected.
     var selectedSecurity: SiteSecurity { tabs.selectedID.flatMap { security[$0] } ?? .none }
 
     private func refreshSidebar() {
@@ -53,19 +54,23 @@ final class BrowserModel {
 
     // MARK: Tabs
 
-    /// Opens a loose blank tab as the live session.
+    /// Opens a loose blank tab and selects it.
     func newTab() {
-        open(BrowserTab(), load: nil)
+        open(BrowserTab(), load: false)
         addressFocusRequest += 1
     }
 
-    /// Cmd-click on a link: the link opens as the live session, on the opener's store.
+    /// Cmd-click on a link: the link opens in a new selected tab, on the opener's store.
     func open(url: URL, from source: TabID) {
         let store = tabs[source]?.store ?? .global
-        open(BrowserTab(store: store, url: url), load: url)
+        open(BrowserTab(store: store, url: url), load: true)
     }
 
-    func select(_ id: TabID) { changeTabs { $0.leave(to: id) } }
+    /// Selects the tab, building its web view when it has none; every other tab keeps its own.
+    func select(_ id: TabID) {
+        changeTabs { $0.select(id) }
+        ensureView(for: id)
+    }
 
     func selectNextTab() { step(1) }
 
@@ -75,7 +80,7 @@ final class BrowserModel {
         if let target = sidebar.target(offset, from: tabs.selectedID) { activate(target) }
     }
 
-    /// Makes the row's target the live session.
+    /// Selects the row's target.
     func activate(_ target: SidebarSections.Target) {
         switch target {
         case .tab(let id): select(id)
@@ -83,36 +88,56 @@ final class BrowserModel {
         }
     }
 
-    /// Ends the tab's session. A link's row stays, not open.
-    func close(_ id: TabID) { changeTabs { $0.close(id) } }
+    /// Closes the tab and its web view. A link's row stays, not open. Closing the selected tab selects
+    /// its sidebar neighbour; closing the last one leaves a blank tab.
+    func close(_ id: TabID) {
+        let next = tabs.selectedID == id ? sidebar.neighbour(ofClosing: id) : tabs.selectedID
+        changeTabs { $0.close(id, selecting: next) }
+        if tabs.tabs.isEmpty {
+            open(BrowserTab(), load: false)
+        } else if let selected = tabs.selectedID {
+            ensureView(for: selected)
+        }
+    }
 
     func closeSelectedTab() {
         if let id = tabs.selectedID { close(id) }
     }
 
     /// Called by WebKit for popups and `target=_blank`: the new tab runs on the configuration it
-    /// hands over and becomes the live session.
+    /// hands over and opens selected; WebKit loads it.
     func openPopup(from source: TabID, configuration: WKWebViewConfiguration) -> WKWebView? {
         guard let opener = tabs[source] else { return nil }
-        return open(BrowserTab(store: opener.store), configuration: configuration, load: nil)
+        return open(BrowserTab(store: opener.store), configuration: configuration, load: false)
     }
 
+    /// Appends `tab`, selects it and builds its web view, loading `tab.url` when `load` is true.
     @discardableResult
-    private func open(_ tab: BrowserTab, configuration: WKWebViewConfiguration? = nil, load url: URL?) -> LodgeWebView {
-        let view = registry.make(for: tab.id, store: tab.store, configuration: configuration)
-        changeTabs {
-            $0.leave(to: nil)
-            $0.open(tab)
-        }
+    private func open(_ tab: BrowserTab, configuration: WKWebViewConfiguration? = nil, load: Bool) -> LodgeWebView? {
+        var tab = tab
+        tab.isLive = false
+        changeTabs { $0.open(tab) }
+        return ensureView(for: tab.id, configuration: configuration, load: load)
+    }
+
+    /// The tab's web view, building it (registry + TabController) when the tab has none, then marking the tab
+    /// live. Loads `tab.url` when it built the view and `load` is true. Nil for an unknown tab.
+    /// The ONLY place that sets `isLive = true`.
+    @discardableResult
+    private func ensureView(for id: TabID, configuration: WKWebViewConfiguration? = nil, load: Bool = true) -> LodgeWebView? {
+        guard let tab = tabs[id] else { return nil }
+        if let view = registry.webView(for: id) { return view }
+        let view = registry.make(for: id, store: tab.store, configuration: configuration)
+        update(id) { $0.isLive = true }
         // Built once the tab is listed, so the controller's initial KVO values reach it.
-        controllers[tab.id] = TabController(tab: tab.id, webView: view, model: self)
-        if let url { view.load(URLRequest(url: url)) }
+        controllers[id] = TabController(tab: id, webView: view, model: self)
+        if load, let url = tab.url { view.load(URLRequest(url: url)) }
         return view
     }
 
-    /// Every change to `tabs` goes through here: leaving a tab hides find and ends any sheet the tab
-    /// had open, and a tab that drops out loses everything kept for it. Its web view goes on the next
-    /// main-actor turn, so a WebKit callback running on it (a popup's opener) returns first.
+    /// Every change to `tabs` goes through here: a selection change hides find and ends any sheet the
+    /// previous tab had open, and a tab that closes loses everything kept for it. Its web view goes on
+    /// the next main-actor turn, so a WebKit callback running on it (a popup's opener) returns first.
     private func changeTabs(_ change: (inout TabList) -> Void) {
         let previous = tabs.selectedID
         let before = tabs.tabs.map(\.id)
@@ -159,13 +184,13 @@ final class BrowserModel {
 
     // MARK: Links
 
-    /// Makes the link the live session: its tab when it is live, else a fresh tab on the link's URL,
-    /// loaded unless `load` is false (layout renders, so no request goes out).
+    /// Selects the link's open tab, else opens a fresh tab on the link's URL, loaded unless `load` is
+    /// false (layout renders, so no request goes out). The tab keeps the link while it navigates.
     func openLink(_ link: SavedLink, load: Bool = true) {
         if let tab = tabs.tab(forLink: link.id) {
             select(tab.id)
         } else {
-            open(tab(for: link), load: load ? link.url : nil)
+            open(tab(for: link), load: load)
         }
     }
 
@@ -183,7 +208,7 @@ final class BrowserModel {
     }
 
     /// Saves the tab's page on `shelf`. A loose tab becomes that link's tab, so its row moves to the
-    /// shelf and outlives leaving it.
+    /// shelf and outlives closing it.
     func addLink(_ shelf: LinkShelf, from id: TabID) {
         guard let page = savablePage(of: id) else { return }
         let link = library.add(page.url, title: page.tab.displayTitle, to: shelf)
@@ -194,7 +219,7 @@ final class BrowserModel {
         if let id = tabs.selectedID { addLink(.bookmarks, from: id) }
     }
 
-    /// Drops the link's row; a live tab of it carries on as a loose tab.
+    /// Drops the link's row; an open tab of it carries on as a loose tab.
     func removeLink(_ id: UUID) {
         library.remove(id)
         if let tab = tabs.tab(forLink: id) { update(tab.id) { $0.link = nil } }
@@ -202,13 +227,14 @@ final class BrowserModel {
 
     // MARK: Navigation
 
-    private var selectedView: LodgeWebView? { tabs.selectedID.flatMap { registry.webView(for: $0) } }
+    /// The selected tab's web view, built without loading when the tab has none.
+    private var selectedView: LodgeWebView? { tabs.selectedID.flatMap { ensureView(for: $0, load: false) } }
 
-    /// Loads the address into the live tab, or opens a loose tab on it when there is none.
+    /// Loads the address into the selected tab, or opens a loose tab on it when none is selected.
     func load(_ text: String) {
         guard let url = AddressInput.url(from: text) else { return }
-        guard let id = tabs.selectedID, let view = selectedView else {
-            open(BrowserTab(url: url), load: url)
+        guard let id = tabs.selectedID, let view = ensureView(for: id, load: false) else {
+            open(BrowserTab(url: url), load: true)
             return
         }
         update(id) { $0.url = url }
@@ -221,7 +247,7 @@ final class BrowserModel {
     func goForward() { selectedView?.goForward() }
 
     func reload() {
-        guard let id = tabs.selectedID, let view = selectedView else { return }
+        guard let id = tabs.selectedID, let view = ensureView(for: id, load: false) else { return }
         if view.url == nil, let url = tabs[id]?.url {
             view.load(URLRequest(url: url))
         } else {

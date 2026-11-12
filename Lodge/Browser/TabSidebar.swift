@@ -83,7 +83,7 @@ private struct ExpandedSidebar: View {
     private func rows(_ items: [SidebarItem]) -> some View {
         let selected = model.tabs.selectedID
         return ForEach(items) {
-            SidebarRow(model: model, item: $0, isLive: $0.isLive(selected: selected), favicon: model.favicon(for: $0))
+            SidebarRow(model: model, item: $0, isSelected: $0.isSelected(selected), favicon: model.favicon(for: $0))
         }
     }
 }
@@ -102,7 +102,7 @@ private struct RailSidebar: View {
                 VStack(spacing: 4) {
                     ForEach(items.pins) {
                         ItemButton(
-                            model: model, item: $0, isLive: $0.isLive(selected: selected),
+                            model: model, item: $0, isSelected: $0.isSelected(selected),
                             favicon: model.favicon(for: $0), shape: .rail)
                     }
                     if !items.bookmarks.isEmpty || !items.loose.isEmpty {
@@ -119,7 +119,7 @@ private struct RailSidebar: View {
 }
 
 /// The rail's stand-in for the bookmark and loose tab rows: one button whose menu lists them,
-/// filled while one of them is the live session.
+/// filled while one of them is selected.
 private struct BookmarksMenu: View {
     let model: BrowserModel
     let items: SidebarSections
@@ -127,7 +127,7 @@ private struct BookmarksMenu: View {
 
     var body: some View {
         let selected = model.tabs.selectedID
-        let isLive = (items.bookmarks + items.loose).contains { $0.isLive(selected: selected) }
+        let isSelected = (items.bookmarks + items.loose).contains { $0.isSelected(selected) }
         let shape = ItemButton.Metrics.rail
         Menu {
             entries(items.bookmarks, selected: selected)
@@ -136,11 +136,11 @@ private struct BookmarksMenu: View {
             }
             entries(items.loose, selected: selected)
         } label: {
-            Image(systemName: isLive ? "book.fill" : "book")
+            Image(systemName: isSelected ? "book.fill" : "book")
                 .font(.system(size: SidebarMode.railSymbolSize))
-                .foregroundStyle(isLive ? .primary : .secondary)
+                .foregroundStyle(isSelected ? .primary : .secondary)
                 .frame(width: shape.width, height: shape.height)
-                .background(rowBackground(isLive: isLive, isHovered: isHovered, cornerRadius: shape.cornerRadius))
+                .background(rowBackground(isSelected: isSelected, isHovered: isHovered, cornerRadius: shape.cornerRadius))
                 .contentShape(.rect)
         }
         .menuStyle(.button)
@@ -150,13 +150,13 @@ private struct BookmarksMenu: View {
         .onHover { isHovered = $0 }
         .help("Bookmarks")
         .accessibilityLabel("Bookmarks")
-        .accessibilityValue(isLive ? "Open" : "")
+        .accessibilityValue(isSelected ? "Open" : "")
     }
 
     private func entries(_ items: [SidebarItem], selected: TabID?) -> some View {
         ForEach(items) { item in
             Toggle(
-                isOn: Binding(get: { item.isLive(selected: selected) }, set: { _ in model.activate(item.target) })
+                isOn: Binding(get: { item.isSelected(selected) }, set: { _ in model.activate(item.target) })
             ) {
                 Label {
                     Text(item.title)
@@ -264,8 +264,8 @@ extension View {
     }
 }
 
-/// What an item's icon shows, decided once for the sidebar and the rail's bookmarks menu: the live
-/// tab's status, else the first letter of a link that is not open.
+/// What an item's icon shows, decided once for the sidebar and the rail's bookmarks menu: the
+/// open tab's status, else the first letter of a link that is not open.
 private enum IconContent {
     case crashed
     case loading
@@ -290,7 +290,7 @@ private enum IconContent {
     }
 }
 
-/// The item's icon: the live tab's status, else a dimmed letter tile for a link that is not open.
+/// The item's icon: the open tab's status, else a dimmed letter tile for a link that is not open.
 private struct ItemIcon: View {
     let item: SidebarItem
     let image: NSImage?
@@ -340,10 +340,10 @@ private struct LetterIcon: View {
     }
 }
 
-/// The highlight under a row or tile: filled for the live session, faint on hover.
-func rowBackground(isLive: Bool, isHovered: Bool, cornerRadius: CGFloat) -> some View {
+/// The highlight under a row or tile: filled for the selected tab, faint on hover.
+func rowBackground(isSelected: Bool, isHovered: Bool, cornerRadius: CGFloat) -> some View {
     RoundedRectangle(cornerRadius: cornerRadius)
-        .fill(Color.primary.opacity(isLive ? 0.12 : isHovered ? 0.05 : 0))
+        .fill(Color.primary.opacity(isSelected ? 0.12 : isHovered ? 0.05 : 0))
 }
 
 /// Pins as favicon tiles, four to a row.
@@ -358,7 +358,7 @@ private struct PinGrid: View {
         LazyVGrid(columns: Self.columns, spacing: 6) {
             ForEach(items) {
                 ItemButton(
-                    model: model, item: $0, isLive: $0.isLive(selected: selected), favicon: model.favicon(for: $0),
+                    model: model, item: $0, isSelected: $0.isSelected(selected), favicon: model.favicon(for: $0),
                     shape: .pin)
             }
         }
@@ -373,7 +373,7 @@ private struct ItemButton: View {
         let width: CGFloat?
         let height: CGFloat
         let cornerRadius: CGFloat
-        /// Whether the icon sits on a quiet tile of its own while not live.
+        /// Whether the icon sits on a quiet tile of its own while not selected.
         let isTile: Bool
 
         static let pin = Metrics(iconSize: 18, width: nil, height: 40, cornerRadius: 9, isTile: true)
@@ -382,7 +382,7 @@ private struct ItemButton: View {
 
     let model: BrowserModel
     let item: SidebarItem
-    let isLive: Bool
+    let isSelected: Bool
     let favicon: NSImage?
     let shape: Metrics
     @State private var isHovered = false
@@ -395,9 +395,9 @@ private struct ItemButton: View {
                 .frame(maxWidth: shape.width ?? .infinity)
                 .frame(width: shape.width, height: shape.height)
                 .background(
-                    .quaternary.opacity(shape.isTile && !isLive ? 0.5 : 0), in: .rect(cornerRadius: shape.cornerRadius)
+                    .quaternary.opacity(shape.isTile && !isSelected ? 0.5 : 0), in: .rect(cornerRadius: shape.cornerRadius)
                 )
-                .background(rowBackground(isLive: isLive, isHovered: isHovered, cornerRadius: shape.cornerRadius))
+                .background(rowBackground(isSelected: isSelected, isHovered: isHovered, cornerRadius: shape.cornerRadius))
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -407,11 +407,11 @@ private struct ItemButton: View {
     }
 }
 
-/// A bookmark or loose tab with its title; the live one carries a close button.
+/// A bookmark or loose tab with its title; the selected one carries a close button.
 private struct SidebarRow: View {
     let model: BrowserModel
     let item: SidebarItem
-    let isLive: Bool
+    let isSelected: Bool
     let favicon: NSImage?
     @State private var isHovered = false
 
@@ -434,19 +434,19 @@ private struct SidebarRow: View {
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
-                .opacity(isHovered || isLive ? 1 : 0)
+                .opacity(isHovered || isSelected ? 1 : 0)
                 .help("Close tab (⌘W)")
                 .accessibilityLabel("Close \(item.title)")
             }
         }
         .padding(.horizontal, 8)
         .frame(height: 30)
-        .background(rowBackground(isLive: isLive, isHovered: isHovered, cornerRadius: 7))
+        .background(rowBackground(isSelected: isSelected, isHovered: isHovered, cornerRadius: 7))
         .contentShape(.rect)
         .onTapGesture { model.activate(item.target) }
         .help(item.address)
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isLive ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { model.activate(item.target) }
         .accessibilityActions {
             if let tab = item.tab {

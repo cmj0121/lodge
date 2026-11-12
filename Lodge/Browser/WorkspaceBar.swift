@@ -34,7 +34,7 @@ private struct WorkspaceIcon: View {
         Image(systemName: "square.stack.3d.up")
             .foregroundStyle(.primary)
             .frame(width: isRail ? 46 : 28, height: isRail ? 36 : 24)
-            .background(rowBackground(isLive: true, isHovered: false, cornerRadius: isRail ? 10 : 6))
+            .background(rowBackground(isSelected: true, isHovered: false, cornerRadius: isRail ? 10 : 6))
             .help("Workspace: \(defaultWorkspaceName)")
             .accessibilityElement()
             .accessibilityLabel("Workspace: \(defaultWorkspaceName)")
