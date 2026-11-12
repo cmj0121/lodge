@@ -61,20 +61,30 @@ private struct PageCard: View {
 private struct PageArea: View {
     let model: BrowserModel
 
+    private var tab: BrowserTab? { model.selected }
+    /// No tab, or a blank one with nothing on its way.
+    private var showsNewTab: Bool { tab.map { $0.url == nil && !$0.isLoading } ?? true }
+
     var body: some View {
         ZStack {
             Color(nsColor: .textBackgroundColor)
-            if let tab = model.selected {
+            if let tab {
                 WebViewHost(tab: tab.id)
-                if tab.hasCrashed {
-                    CrashedPlaceholder(host: tab.url?.host(), reload: model.reload)
-                } else if tab.url == nil && !tab.isLoading {
-                    ContentUnavailableView(
-                        "New Tab", systemImage: "square.on.square.dashed",
-                        description: Text("Type an address or a search in the address bar."))
-                }
+            }
+            if let tab, tab.hasCrashed {
+                CrashedPlaceholder(host: tab.url?.host(), reload: model.reload)
+            } else if showsNewTab {
+                NewTabPlaceholder()
             }
         }
+    }
+}
+
+private struct NewTabPlaceholder: View {
+    var body: some View {
+        ContentUnavailableView(
+            "New Tab", systemImage: "square.on.square.dashed",
+            description: Text("Type an address or a search in the address bar."))
     }
 }
 

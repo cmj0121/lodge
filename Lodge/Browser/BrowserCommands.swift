@@ -46,6 +46,11 @@ struct BrowserCommands: Commands {
             Button("Forward", action: model.goForward)
                 .keyboardShortcut("]")
         }
+        CommandMenu("Bookmarks") {
+            Button("Bookmark This Tab", action: model.bookmarkSelectedTab)
+                .keyboardShortcut("d")
+                .disabled(model.tabs.selectedID.map(model.canAddLink) != true)
+        }
         CommandGroup(before: .windowList) {
             Button("Show Next Tab", action: model.selectNextTab)
                 .keyboardShortcut(.tab, modifiers: .control)

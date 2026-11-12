@@ -37,15 +37,9 @@ struct AddressBar: View {
     @FocusState private var isFocused: Bool
 
     private var tab: BrowserTab? { model.selected }
-    private var isSecure: Bool { tab?.url?.scheme == "https" }
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: isSecure ? "lock.fill" : "magnifyingglass")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 12)
-                .accessibilityHidden(true)
             TextField("Search or enter address", text: $text)
                 .textFieldStyle(.plain)
                 .focused($isFocused)
@@ -58,8 +52,10 @@ struct AddressBar: View {
                     isFocused = false
                 }
                 .accessibilityLabel("Address")
+            SiteSecurityButton(model: model)
         }
-        .padding(.horizontal, 10)
+        .padding(.leading, 10)
+        .padding(.trailing, 4)
         .frame(height: 28)
         .frame(maxWidth: .infinity)
         .background(.quaternary.opacity(isFocused ? 0.4 : 0.7), in: .rect(cornerRadius: 7))
@@ -81,6 +77,52 @@ struct AddressBar: View {
     }
 
     private var displayedAddress: String { tab?.url?.absoluteString ?? "" }
+}
+
+/// The live page's security at the address bar's end; a click shows its origin and what the icon means.
+private struct SiteSecurityButton: View {
+    let model: BrowserModel
+    @State private var isShowingInfo = false
+
+    private var url: URL? { model.selected?.url }
+    private var security: SiteSecurity { model.selectedSecurity }
+
+    var body: some View {
+        Button {
+            isShowingInfo = true
+        } label: {
+            Image(systemName: security.symbol)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 22, height: 22)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.borderless)
+        .disabled(security == .none)
+        .help("Site information")
+        .accessibilityLabel("Site information")
+        .popover(isPresented: $isShowingInfo, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(url.map { Origin(url: $0).description } ?? "", systemImage: security.symbol)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(security.summary)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .frame(width: 280, alignment: .leading)
+        }
+    }
+
+    private var tint: Color {
+        switch security {
+        case .mixed: .orange
+        case .insecure: .red
+        default: .secondary
+        }
+    }
 }
 
 /// A hairline showing the tab's load progress; it reads the progress itself, so a tick redraws

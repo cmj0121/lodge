@@ -1,5 +1,4 @@
 import Foundation
-import Network
 
 /// Turns what the user typed into the address bar into the URL to load.
 public enum AddressInput {
@@ -27,7 +26,7 @@ public enum AddressInput {
         guard let components = URLComponents(string: "https://" + input), let host = components.host?.lowercased(),
             components.user == nil
         else { return nil }
-        if host == "localhost" || isIPAddress(host) {
+        if host == "localhost" || IPHost(host) != nil {
             return URL(string: "http://" + input)
         }
         let labels = host.split(separator: ".", omittingEmptySubsequences: false)
@@ -35,12 +34,5 @@ public enum AddressInput {
             tld.allSatisfy(\.isLetter)
         else { return nil }
         return components.url
-    }
-
-    private static func isIPAddress(_ host: String) -> Bool {
-        let isDottedQuad = host.split(separator: ".", omittingEmptySubsequences: false).count == 4
-        if isDottedQuad && IPv4Address(host) != nil { return true }
-        guard host.hasPrefix("["), host.hasSuffix("]") else { return false }
-        return IPv6Address(String(host.dropFirst().dropLast())) != nil
     }
 }

@@ -11,9 +11,6 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var dialogGate = DialogGate()
     /// Ends the dialog or file panel sheet this tab has open, answering it with its default.
     private var dismissSheet: (() -> Void)?
-    /// Set when the context menu's "Open Link in New Tab" was chosen; the next popup opens in the
-    /// background, and any other navigation clears it.
-    private var pendingBackgroundOpen = false
     private let favicons: FaviconLoader
 
     init(tab: TabID, webView: LodgeWebView, model: BrowserModel) {
@@ -23,10 +20,15 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
-        webView.onBackgroundOpenChange = { [weak self] in self?.pendingBackgroundOpen = $0 }
         observations = [
             mirror(webView, \.title) { $0.title = $1.title ?? "" },
-            mirror(webView, \.url) { if let url = $1.url { $0.url = url } },
+            webView.observe(\.url, options: .initial) { [weak self] view, _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if let url = view.url { self.model?.update(self.tab) { $0.url = url } }
+                    self.updateSecurity(of: view)
+                }
+            },
             mirror(webView, \.isLoading) { $0.isLoading = $1.isLoading },
             mirror(webView, \.canGoBack) { $0.canGoBack = $1.canGoBack },
             mirror(webView, \.canGoForward) { $0.canGoForward = $1.canGoForward },
@@ -36,7 +38,15 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
                     self.model?.setProgress(view.estimatedProgress, for: self.tab)
                 }
             },
+            webView.observe(\.hasOnlySecureContent, options: .initial) { [weak self] view, _ in
+                MainActor.assumeIsolated { self?.updateSecurity(of: view) }
+            },
         ]
+    }
+
+    /// Reclassifies the page's security from the view's current URL and content.
+    private func updateSecurity(of view: WKWebView) {
+        model?.setSecurity(SiteSecurity(url: view.url, hasOnlySecureContent: view.hasOnlySecureContent), for: tab)
     }
 
     /// Copies a web view property into the tab whenever it changes; `apply` reads the current
@@ -64,18 +74,16 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
         preferences: WKWebpagePreferences
     ) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
-        if navigationAction.targetFrame != nil { pendingBackgroundOpen = false }
         if navigationAction.navigationType == .linkActivated, navigationAction.modifierFlags.contains(.command),
-            let url = navigationAction.request.url, BackgroundOpenPolicy.allows(url)
+            let url = navigationAction.request.url, NewTabPolicy.allows(url)
         {
-            model?.open(url: url, after: tab, inBackground: !navigationAction.modifierFlags.contains(.shift))
+            model?.open(url: url, from: tab)
             return (.cancel, preferences)
         }
         return (.allow, preferences)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        pendingBackgroundOpen = false
         model?.update(tab) { $0.hasCrashed = false }
     }
 
@@ -102,9 +110,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
         for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        let background = pendingBackgroundOpen
-        pendingBackgroundOpen = false
-        return model?.openPopup(from: tab, configuration: configuration, inBackground: background)
+        model?.openPopup(from: tab, configuration: configuration)
     }
 
     func webViewDidClose(_ webView: WKWebView) {

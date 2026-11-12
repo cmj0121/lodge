@@ -3,14 +3,10 @@ import WebKit
 
 /// WKWebView whose context menu offers "Open Link in New Tab" in place of WebKit's
 /// "Open Link in New Window". The item still runs WebKit's own action, so the link arrives through
-/// `createWebViewWith` with the opener's configuration; `onBackgroundOpenChange` tells the UI
-/// delegate beforehand to open that one as a background tab, and withdraws that when a menu opens.
+/// `createWebViewWith` with the opener's configuration and opens as the live tab.
 final class LodgeWebView: WKWebView {
-    var onBackgroundOpenChange: ((Bool) -> Void)?
-
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
-        onBackgroundOpenChange?(false)
         let newWindow = NSUserInterfaceItemIdentifier("WKMenuItemIdentifierOpenLinkInNewWindow")
         guard let index = menu.items.firstIndex(where: { $0.identifier == newWindow }) else { return }
         let original = menu.items[index]
@@ -23,7 +19,6 @@ final class LodgeWebView: WKWebView {
 
     @objc private func openLinkInNewTab(_ sender: NSMenuItem) {
         guard let original = sender.representedObject as? NSMenuItem, let action = original.action else { return }
-        onBackgroundOpenChange?(true)
         NSApp.sendAction(action, to: original.target, from: original)
     }
 }
