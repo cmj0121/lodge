@@ -60,10 +60,11 @@ import Testing
         #expect(library.links(on: .bookmarks) == [bookmark])
     }
 
-    @Test func sampleHasFourPinsAndThreeBookmarksAllHTTPS() {
+    @Test func sampleHasFourPinsThreeRootBookmarksAndAFolderAllHTTPS() {
         let sample = LinkLibrary.sample
         #expect(sample.links(on: .pins).count == 4)
-        #expect(sample.links(on: .bookmarks).count == 3)
+        #expect(sample.bookmarks.children.filter { if case .link = $0 { true } else { false } }.count == 3)
+        #expect(sample.bookmarks.children.filter { if case .folder = $0 { true } else { false } }.count == 1)
         let links = sample.links(on: .pins) + sample.links(on: .bookmarks)
         #expect(links.allSatisfy { $0.url.scheme == "https" && !$0.title.isEmpty })
         #expect(Set(links.map(\.id)).count == links.count)
@@ -81,13 +82,10 @@ import Testing
         #expect(library.links(on: .bookmarks).map(\.title) == ["A"])
     }
 
-    @Test func movesABookmarkWithinItsShelf() {
+    @Test func moveLeavesBookmarksAlone() {
         var library = LinkLibrary.sample
-        let last = library.links(on: .bookmarks).last!
-        library.move(last.id, to: 0)
-        #expect(library.links(on: .bookmarks).first == last)
-        #expect(library.links(on: .bookmarks).count == LinkLibrary.sample.links(on: .bookmarks).count)
-        #expect(library.links(on: .pins) == LinkLibrary.sample.links(on: .pins))
+        library.move(library.links(on: .bookmarks).last!.id, to: 0)
+        #expect(library == .sample)
     }
 
     @Test func movingAnUnknownIDChangesNothing() {
@@ -107,12 +105,19 @@ import Testing
     @Test func libraryRebuildsFromDecodedShelves() throws {
         let sample = LinkLibrary.sample
         let pins = try JSONEncoder().encode(sample.links(on: .pins))
-        let bookmarks = try JSONEncoder().encode(sample.links(on: .bookmarks))
+        let bookmarks = try JSONEncoder().encode(sample.bookmarks)
         let rebuilt = LinkLibrary(
             pins: try JSONDecoder().decode([SavedLink].self, from: pins),
-            bookmarks: try JSONDecoder().decode([SavedLink].self, from: bookmarks)
+            bookmarks: try JSONDecoder().decode(BookmarkFolder.self, from: bookmarks)
         )
         #expect(rebuilt == sample)
+    }
+
+    @Test func flatBookmarksLandInAnOpenRootInOrder() {
+        let links = LinkLibrary.sample.links(on: .pins)
+        let library = LinkLibrary(pins: [], bookmarks: links)
+        #expect(library.bookmarks.children == links.map(BookmarkNode.link))
+        #expect(library.bookmarks.isExpanded)
     }
 
     @Test func defaultLibraryIsEmpty() {

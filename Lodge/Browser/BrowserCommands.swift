@@ -50,6 +50,11 @@ struct BrowserCommands: Commands {
             Button("Bookmark This Tab", action: model.bookmarkSelectedTab)
                 .keyboardShortcut("d")
                 .disabled(model.tabs.selectedID.map(model.canAddLink) != true)
+            Button("New Folder…") { BookmarkPrompts.newFolder(in: nil, model: model) }
+            Divider()
+            Button("Import Bookmarks…") { BookmarkTransfer.importBookmarks(into: model) }
+                .disabled(model.isImportingBookmarks)
+            Button("Export Bookmarks…") { BookmarkTransfer.exportBookmarks(from: model) }
         }
         CommandGroup(before: .windowList) {
             Button("Show Next Tab", action: model.selectNextTab)

@@ -29,6 +29,8 @@
             defer { defaults.removePersistentDomain(forName: suite) }
 
             let model = BrowserModel(defaultLibrary: .sample)
+            // Opens the sample's folder, so the render shows a nested bookmark.
+            for case .folder(let folder) in model.library.bookmarks.children { model.setFolderExpanded(folder.id, true) }
             if let bookmark = model.library.links(on: .bookmarks).first { model.openLink(bookmark, load: false) }
             if find {
                 model.showFind()

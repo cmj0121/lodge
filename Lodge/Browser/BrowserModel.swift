@@ -78,7 +78,7 @@ final class BrowserModel {
 
     private func refreshSidebar() {
         let sections = SidebarSections(
-            pins: library.links(on: .pins), bookmarks: library.links(on: .bookmarks), tabs: tabs)
+            pins: library.links(on: .pins), bookmarks: library.bookmarks, tabs: tabs)
         if sections != sidebar { sidebar = sections }
     }
 
@@ -165,8 +165,9 @@ final class BrowserModel {
         return view
     }
 
-    /// Every change to `tabs` goes through here: a selection change hides find and ends any sheet the
-    /// previous tab had open, and a tab that closes loses everything kept for it. Its web view goes on
+    /// Every change to `tabs` goes through here: a selection change hides find, ends any sheet the
+    /// previous tab had open and opens the folders above the new tab's bookmark, and a tab that closes
+    /// loses everything kept for it. Its web view goes on
     /// the next main-actor turn, so a WebKit callback running on it (a popup's opener) returns first.
     private func changeTabs(_ change: (inout TabList) -> Void) {
         let previous = tabs.selectedID
@@ -176,6 +177,7 @@ final class BrowserModel {
             if isFindVisible { isFindVisible = false }
             clearFindMiss()
             if let previous { controllers[previous]?.didDeselect() }
+            if let link = tabs.selected?.link { changeLibrary { $0.reveal(link) } }
         }
         let dropped = before.filter { tabs[$0] == nil }
         guard !dropped.isEmpty else { return }
@@ -249,15 +251,90 @@ final class BrowserModel {
         if let id = tabs.selectedID { addLink(.bookmarks, from: id) }
     }
 
-    /// Drops the link's row; an open tab of it carries on as a loose tab.
+    /// Drops the link's row, or a folder with every row in it; an open tab of a removed link carries on as a
+    /// loose tab.
     func removeLink(_ id: UUID) {
-        library.remove(id)
-        if let tab = tabs.tab(forLink: id) { update(tab.id) { $0.link = nil } }
+        let removed = Set(library.remove(id))
+        let loosened = tabs.tabs.filter { $0.link.map(removed.contains) == true }.map(\.id)
+        guard !loosened.isEmpty else { return }
+        changeTabs { tabs in
+            for id in loosened { tabs.update(id) { $0.link = nil } }
+        }
+    }
+
+    /// Writes the library only when `change` really changes it, so a no-op stores and redraws nothing.
+    private func changeLibrary(_ change: (inout LinkLibrary) -> Void) {
+        var changed = library
+        change(&changed)
+        if changed != library { library = changed }
+    }
+
+    // MARK: Bookmark folders
+
+    /// Opens or closes the folder in the sidebar; the state is kept with the session.
+    func setFolderExpanded(_ id: UUID, _ isExpanded: Bool) {
+        changeLibrary { $0.setExpanded(id, isExpanded) }
+    }
+
+    /// Appends a folder named `title` (blank: "New Folder") to `parent`, the root for nil, opening `parent`
+    /// so the folder shows. Returns the folder's id; nil for an unknown parent.
+    @discardableResult
+    func newFolder(in parent: UUID? = nil, title: String = "New Folder") -> UUID? {
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        var folder: BookmarkFolder?
+        changeLibrary { library in
+            let parent = parent ?? library.bookmarks.id
+            folder = library.addFolder(name.isEmpty ? "New Folder" : name, in: parent)
+            if folder != nil { library.setExpanded(parent, true) }
+        }
+        return folder?.id
+    }
+
+    /// Retitles a folder or bookmark; a blank title changes nothing.
+    func rename(_ id: UUID, to title: String) {
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        changeLibrary { $0.rename(id, to: name) }
+    }
+
+    /// Moves a bookmark or folder into `folder` at `index` (see `LinkLibrary.moveBookmark`); false when the
+    /// move is refused.
+    @discardableResult
+    func moveBookmark(_ id: UUID, into folder: UUID, at index: Int?) -> Bool {
+        guard library.canMoveBookmark(id, into: folder) else { return false }
+        return library.moveBookmark(id, into: folder, at: index)
     }
 
     /// Moves the pin so it ends at `index` among the pins.
     func movePin(_ id: UUID, to index: Int) {
         library.move(id, to: index)
+    }
+
+    // MARK: Import and export
+
+    /// Whether `importBookmarks(from:)` is running, from its start until the folder is added or the import fails;
+    /// a cancelled import counts until its read has ended.
+    private(set) var isImportingBookmarks = false
+
+    /// Reads the bookmark file at `url` off the main actor, then adds it to the root as one open folder named
+    /// after the file. Throws `BookmarkFile.ReadError`, `NetscapeBookmarks.ImportError` or, when the calling task
+    /// is cancelled, `CancellationError`, leaving the library as it was. Cancelling reaches the read, but a
+    /// SwiftSoup parse under way runs to its end, and its folder is then dropped.
+    func importBookmarks(from url: URL) async throws {
+        isImportingBookmarks = true
+        defer { isImportingBookmarks = false }
+        let read = Task.detached(priority: .userInitiated) { try BookmarkFile.read(url) }
+        let folder = try await withTaskCancellationHandler { try await read.value } onCancel: { read.cancel() }
+        try Task.checkCancellation()
+        changeLibrary { library in
+            library.insert(folder, in: library.bookmarks.id)
+            library.setExpanded(folder.id, true)
+        }
+    }
+
+    /// Writes every bookmark to `url` as one Netscape bookmark file in UTF-8, replacing it atomically.
+    func exportBookmarks(to url: URL) throws {
+        try Data(NetscapeBookmarks.export(library.bookmarks).utf8).write(to: url, options: .atomic)
     }
 
     // MARK: Navigation

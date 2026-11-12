@@ -62,7 +62,13 @@ private struct ExpandedSidebar: View {
                     .padding(.trailing, 4)
                     .padding(.top, 10)
                     .padding(.bottom, 4)
-                    rows(items.bookmarks)
+                    .contentShape(.rect)
+                    .contextMenu {
+                        Button("New Folder…") { BookmarkPrompts.newFolder(in: nil, model: model) }
+                    }
+                    if !items.bookmarks.isEmpty {
+                        BookmarkOutline(model: model, nodes: items.bookmarks)
+                    }
                     if !items.bookmarks.isEmpty && !items.loose.isEmpty {
                         Divider()
                             .padding(.vertical, 4)
@@ -84,6 +90,16 @@ private struct ExpandedSidebar: View {
         let selected = model.tabs.selectedID
         return ForEach(items) {
             SidebarRow(model: model, item: $0, isSelected: $0.isSelected(selected), favicon: model.favicon(for: $0))
+        }
+    }
+}
+
+extension SidebarNode {
+    /// The node's bookmarks, depth-first through every folder, open or closed.
+    fileprivate var bookmarkItems: [SidebarItem] {
+        switch self {
+        case .folder(_, _, _, let children): children.flatMap(\.bookmarkItems)
+        case .item(let item): [item]
         }
     }
 }
@@ -118,8 +134,8 @@ private struct RailSidebar: View {
     }
 }
 
-/// The rail's stand-in for the bookmark and loose tab rows: one button whose menu lists them,
-/// filled while one of them is selected.
+/// The rail's stand-in for the bookmark and loose tab rows: one button whose menu lists them, each
+/// folder as a submenu, filled while one of them is selected.
 private struct BookmarksMenu: View {
     let model: BrowserModel
     let items: SidebarSections
@@ -127,14 +143,14 @@ private struct BookmarksMenu: View {
 
     var body: some View {
         let selected = model.tabs.selectedID
-        let isSelected = (items.bookmarks + items.loose).contains { $0.isSelected(selected) }
+        let isSelected = (items.bookmarks.flatMap(\.bookmarkItems) + items.loose).contains { $0.isSelected(selected) }
         let shape = ItemButton.Metrics.rail
         Menu {
-            entries(items.bookmarks, selected: selected)
+            BookmarkMenuEntries(model: model, nodes: items.bookmarks, selected: selected)
             if !items.bookmarks.isEmpty && !items.loose.isEmpty {
                 Divider()
             }
-            entries(items.loose, selected: selected)
+            ForEach(items.loose) { MenuEntry(model: model, item: $0, selected: selected) }
         } label: {
             Image(systemName: isSelected ? "book.fill" : "book")
                 .font(.system(size: SidebarMode.railSymbolSize))
@@ -152,17 +168,48 @@ private struct BookmarksMenu: View {
         .accessibilityLabel("Bookmarks")
         .accessibilityValue(isSelected ? "Open" : "")
     }
+}
 
-    private func entries(_ items: [SidebarItem], selected: TabID?) -> some View {
-        ForEach(items) { item in
-            Toggle(
-                isOn: Binding(get: { item.isSelected(selected) }, set: { _ in model.activate(item.target) })
-            ) {
-                Label {
-                    Text(item.title)
-                } icon: {
-                    MenuIcon(content: IconContent(item: item, favicon: model.favicon(for: item)))
+/// The bookmarks menu's entries for `nodes`: a bookmark as a checkable entry, a folder as a submenu.
+private struct BookmarkMenuEntries: View {
+    let model: BrowserModel
+    let nodes: [SidebarNode]
+    let selected: TabID?
+
+    var body: some View {
+        ForEach(nodes) { node in
+            switch node {
+            case .folder(_, let title, _, let children):
+                Menu {
+                    if children.isEmpty {
+                        Button("No Bookmarks") {}
+                            .disabled(true)
+                    }
+                    BookmarkMenuEntries(model: model, nodes: children, selected: selected)
+                } label: {
+                    Label(title, systemImage: "folder")
                 }
+            case .item(let item):
+                MenuEntry(model: model, item: item, selected: selected)
+            }
+        }
+    }
+}
+
+/// One bookmark or loose tab in the bookmarks menu, checked while its tab is selected.
+private struct MenuEntry: View {
+    let model: BrowserModel
+    let item: SidebarItem
+    let selected: TabID?
+
+    var body: some View {
+        Toggle(
+            isOn: Binding(get: { item.isSelected(selected) }, set: { _ in model.activate(item.target) })
+        ) {
+            Label {
+                Text(item.title)
+            } icon: {
+                MenuIcon(content: IconContent(item: item, favicon: model.favicon(for: item)))
             }
         }
     }
@@ -453,13 +500,99 @@ private struct PinDrag: ViewModifier {
     }
 }
 
-/// A bookmark or loose tab with its title; the selected one carries a close button.
+/// A loose tab with its title; the selected one carries a close button.
 private struct SidebarRow: View {
     let model: BrowserModel
     let item: SidebarItem
     let isSelected: Bool
     let favicon: NSImage?
     @State private var isHovered = false
+
+    var body: some View {
+        SidebarRowLabel(model: model, item: item, isSelected: isSelected, isHovered: isHovered, favicon: favicon)
+            .contentShape(.rect)
+            .onTapGesture { model.activate(item.target) }
+            .help(item.address)
+            .itemAccessibility(item, isSelected: isSelected, model: model)
+            .sidebarItem(item, model: model, isHovered: $isHovered)
+    }
+}
+
+/// A row of the bookmark tree: a bookmark drawn as the sidebar's other rows are, or a folder with its
+/// disclosure chevron, set in by its depth. The outline beneath takes its clicks, drags, menu, tooltip
+/// and accessibility.
+struct BookmarkTreeRow: View {
+    let model: BrowserModel
+    let rows: BookmarkRows
+    let id: SidebarItem.ID
+
+    var body: some View {
+        let isHovered = rows.hovered == id
+        Group {
+            switch rows.nodes[id] {
+            case .folder(_, let title, let isExpanded, _)?:
+                FolderRowLabel(title: title, isExpanded: isExpanded, isHovered: isHovered)
+            case .item(let item)?:
+                SidebarRowLabel(
+                    model: model, item: item, isSelected: item.isSelected(model.tabs.selectedID), isHovered: isHovered,
+                    favicon: model.favicon(for: item))
+            case nil:
+                EmptyView()
+            }
+        }
+        .padding(.leading, CGFloat(rows.depths[id] ?? 0) * BookmarkOutline.indent)
+        // The outline's row view is the row's one accessibility element.
+        .accessibilityHidden(true)
+    }
+}
+
+/// A folder's look in the tree: its icon, title, and a chevron that turns down while it is open.
+private struct FolderRowLabel: View {
+    let title: String
+    let isExpanded: Bool
+    let isHovered: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(width: SidebarRowLabel.Metrics.iconSize, height: SidebarRowLabel.Metrics.iconSize)
+            Text(title)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                .animation(.snappy(duration: 0.2), value: isExpanded)
+                .frame(width: SidebarRowLabel.Metrics.iconSize, height: SidebarRowLabel.Metrics.iconSize)
+        }
+        .padding(.horizontal, SidebarRowLabel.Metrics.padding)
+        .frame(height: SidebarRowLabel.Metrics.height)
+        .background(
+            rowBackground(isSelected: false, isHovered: isHovered, cornerRadius: SidebarRowLabel.Metrics.cornerRadius))
+    }
+}
+
+/// A bookmark or loose tab's look: icon, title, and a close button while it is open and hovered or selected.
+struct SidebarRowLabel: View {
+    /// Row geometry, shared with the bookmark tree's folder rows and its close-button hit area.
+    enum Metrics {
+        static let height: CGFloat = 30
+        /// Inset of the icon and the close button from the row's edges.
+        static let padding: CGFloat = 8
+        /// Side of the icon and of the close button.
+        static let iconSize: CGFloat = 16
+        static let cornerRadius: CGFloat = 7
+    }
+
+    let model: BrowserModel
+    let item: SidebarItem
+    let isSelected: Bool
+    let isHovered: Bool
+    let favicon: NSImage?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -475,7 +608,7 @@ private struct SidebarRow: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .semibold))
-                        .frame(width: 16, height: 16)
+                        .frame(width: Metrics.iconSize, height: Metrics.iconSize)
                         .contentShape(.rect)
                 }
                 .buttonStyle(.borderless)
@@ -485,21 +618,25 @@ private struct SidebarRow: View {
                 .accessibilityLabel("Close \(item.title)")
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 30)
-        .background(rowBackground(isSelected: isSelected, isHovered: isHovered, cornerRadius: 7))
-        .contentShape(.rect)
-        .onTapGesture { model.activate(item.target) }
-        .help(item.address)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { model.activate(item.target) }
-        .accessibilityActions {
-            if let tab = item.tab {
-                Button("Close Tab") { model.close(tab.id) }
+        .padding(.horizontal, Metrics.padding)
+        .frame(height: Metrics.height)
+        .background(rowBackground(isSelected: isSelected, isHovered: isHovered, cornerRadius: Metrics.cornerRadius))
+    }
+}
+
+extension View {
+    /// A bookmark or tab row as one accessibility button named by its title, activated by default and
+    /// closable while its tab is open.
+    fileprivate func itemAccessibility(_ item: SidebarItem, isSelected: Bool, model: BrowserModel) -> some View {
+        accessibilityElement(children: .combine)
+            .accessibilityLabel(item.title)
+            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction { model.activate(item.target) }
+            .accessibilityActions {
+                if let tab = item.tab {
+                    Button("Close Tab") { model.close(tab.id) }
+                }
             }
-        }
-        .sidebarItem(item, model: model, isHovered: $isHovered)
     }
 }
 
