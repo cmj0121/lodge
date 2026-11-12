@@ -20,6 +20,12 @@ public struct Origin: Hashable, Sendable, CustomStringConvertible {
 
     public var isOpaque: Bool { scheme.isEmpty }
 
+    /// Whether `url` is an http(s) URL with a host: a page on the web.
+    public static func isWeb(_ url: URL) -> Bool {
+        let origin = Origin(url: url)
+        return (origin.scheme == "http" || origin.scheme == "https") && !origin.host.isEmpty
+    }
+
     public var description: String {
         if isOpaque { return "null" }
         guard !host.isEmpty else { return "\(scheme):" }

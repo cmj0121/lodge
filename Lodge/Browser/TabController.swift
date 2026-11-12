@@ -14,10 +14,12 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// Set when the context menu's "Open Link in New Tab" was chosen; the next popup opens in the
     /// background, and any other navigation clears it.
     private var pendingBackgroundOpen = false
+    private let favicons: FaviconLoader
 
     init(tab: TabID, webView: LodgeWebView, model: BrowserModel) {
         self.tab = tab
         self.model = model
+        favicons = FaviconLoader { [weak model] image in model?.setFavicon(image, for: tab) }
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -79,7 +81,12 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         if let url = webView.url { dialogGate.commit(origin: Origin(url: url)) }
+        favicons.pageCommitted(webView.url)
         model?.update(tab) { $0.hasCrashed = false }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        favicons.pageFinished(in: webView)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

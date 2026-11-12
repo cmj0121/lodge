@@ -13,6 +13,8 @@ final class BrowserModel {
     var findText = ""
     var isFindVisible = false
     private(set) var findMissed = false
+    /// Each tab's decoded favicon, kept apart from `tabs` so an icon arriving redraws only its icon.
+    private(set) var favicons: [TabID: NSImage] = [:]
     /// Bumped to ask the window to focus the address bar or the find field.
     private(set) var addressFocusRequest = 0
     private(set) var findFocusRequest = 0
@@ -52,6 +54,7 @@ final class BrowserModel {
         changeTabs { $0.close(id) }
         controllers[id] = nil
         loadProgress[id] = nil
+        favicons[id] = nil
         registry.destroy(id)
         if tabs.tabs.isEmpty { newTab() }
     }
@@ -97,6 +100,11 @@ final class BrowserModel {
         var tab = old
         change(&tab)
         if tab != old { tabs.update(id) { $0 = tab } }
+    }
+
+    func setFavicon(_ image: NSImage?, for id: TabID) {
+        guard tabs[id] != nil else { return }
+        favicons[id] = image
     }
 
     func setProgress(_ progress: Double, for id: TabID) {

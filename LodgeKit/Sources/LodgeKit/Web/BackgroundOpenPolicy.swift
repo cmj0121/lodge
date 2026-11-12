@@ -5,10 +5,6 @@ import Foundation
 /// navigations, so only web URLs and `about:blank` qualify; any other link stays with WebKit.
 public enum BackgroundOpenPolicy {
     public static func allows(_ url: URL) -> Bool {
-        switch url.scheme?.lowercased() {
-        case "http", "https": url.host() != nil
-        case "about": url.absoluteString.lowercased() == "about:blank"
-        default: false
-        }
+        Origin.isWeb(url) || url.absoluteString.lowercased() == "about:blank"
     }
 }
