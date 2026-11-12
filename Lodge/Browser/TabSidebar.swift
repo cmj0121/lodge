@@ -227,15 +227,18 @@ extension BrowserModel {
     }
 }
 
-/// Pin, Bookmark, Remove and Close, as fit the item.
+/// Open, Pin, Bookmark, Unpin or Remove, and Close, as fit the item.
 private struct ItemMenu: View {
     let model: BrowserModel
     let item: SidebarItem
 
     var body: some View {
         switch item {
-        case .link(let link, let shelf, _):
-            Button(shelf == .pins ? "Remove from Pins" : "Remove from Bookmarks") { model.removeLink(link.id) }
+        case .link(let link, let shelf, let tab):
+            if shelf == .pins && tab == nil {
+                Button("Open") { model.openLink(link) }
+            }
+            Button(shelf == .pins ? "Unpin" : "Remove from Bookmarks") { model.removeLink(link.id) }
         case .tab(let tab):
             Button("Pin Tab") { model.addLink(.pins, from: tab.id) }
                 .disabled(!model.canAddLink(from: tab.id))
@@ -365,7 +368,8 @@ private struct PinGrid: View {
     }
 }
 
-/// An item as its icon alone, the title as a tooltip: a pin tile, or an entry in the rail.
+/// A pin as its icon alone, the title as a tooltip: a tile in the grid, or an entry in the rail.
+/// Dragging it onto another pin moves it to that pin's place.
 private struct ItemButton: View {
     struct Metrics {
         let iconSize: CGFloat
@@ -403,7 +407,49 @@ private struct ItemButton: View {
         .buttonStyle(.plain)
         .help(item.title)
         .accessibilityLabel(item.title)
+        .accessibilityActions {
+            // The grid runs left to right, the rail top to bottom.
+            Button(shape.isTile ? "Move Left" : "Move Up") { move(by: -1) }
+            Button(shape.isTile ? "Move Right" : "Move Down") { move(by: 1) }
+        }
         .sidebarItem(item, model: model, isHovered: $isHovered)
+        .modifier(PinDrag(pin: pinID))
+        .dropDestination(for: String.self) { payload, _ in
+            guard let dragged = payload.first.flatMap(UUID.init(uuidString:)), isPin(dragged), let index else {
+                return false
+            }
+            model.movePin(dragged, to: index)
+            return true
+        } isTargeted: {
+            isHovered = $0
+        }
+    }
+
+    private var pinID: UUID? {
+        if case .link(let link, .pins, _) = item { link.id } else { nil }
+    }
+
+    /// This pin's place among the pins.
+    private var index: Int? { model.sidebar.pins.firstIndex { $0.id == item.id } }
+
+    /// Whether a dropped id is a pin's, so a bookmark or stray text moves nothing.
+    private func isPin(_ id: UUID) -> Bool { model.sidebar.pins.contains { $0.id == .link(id) } }
+
+    private func move(by offset: Int) {
+        if let pinID, let index { model.movePin(pinID, to: index + offset) }
+    }
+}
+
+/// Lets a pin be dragged, carrying its link id; anything else stays put.
+private struct PinDrag: ViewModifier {
+    let pin: UUID?
+
+    func body(content: Content) -> some View {
+        if let pin {
+            content.draggable(pin.uuidString)
+        } else {
+            content
+        }
     }
 }
 

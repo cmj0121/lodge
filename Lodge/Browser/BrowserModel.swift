@@ -225,6 +225,11 @@ final class BrowserModel {
         if let tab = tabs.tab(forLink: id) { update(tab.id) { $0.link = nil } }
     }
 
+    /// Moves the pin so it ends at `index` among the pins.
+    func movePin(_ id: UUID, to index: Int) {
+        library.move(id, to: index)
+    }
+
     // MARK: Navigation
 
     /// The selected tab's web view, built without loading when the tab has none.
