@@ -39,6 +39,11 @@
             checkPrivateDownloadRow()
             checkSharedPins(to: directory.appending(path: "layout-shared-pins.png"))
             checkMoveTabs()
+            checkTwoWindows()
+            checkShownElsewhere(in: directory)
+            checkStepSkipsShownElsewhere()
+            checkExternalLinks()
+            renderSettings(to: directory.appending(path: "layout-settings.png"))
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -57,27 +62,28 @@
 
             let coordinator = WorkspaceCoordinator(
                 restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
-            let model = coordinator.active
+            let pane = firstPane(coordinator)
+            let model = pane.model
             // Opens the sample's folder, so the render shows a nested bookmark.
             for case .folder(let folder) in model.library.bookmarks.children { model.setFolderExpanded(folder.id, true) }
-            if let bookmark = model.library.links(on: .bookmarks).first { model.openLink(bookmark, load: false) }
+            if let bookmark = model.library.links(on: .bookmarks).first { pane.openLink(bookmark, load: false) }
             // An in-memory manager over one running sample, so the sidebar shows the Downloads ring.
             let downloads = DownloadManager(directory: nil, defaults: defaults)
             let running = sampleDownloads.filter { $0.state == .running && $0.totalBytes != nil }
             downloads.restore(DownloadList(items: running))
             model.downloads = downloads
             if find {
-                model.showFind()
-                model.findText = "lodge"
+                pane.showFind()
+                pane.window.findText = "lodge"
             }
-            model.isShortcutHelpVisible = shortcutHelp
+            pane.window.isShortcutHelpVisible = shortcutHelp
             switch prompt {
-            case .newTab: model.newTab()
-            case .current: model.focusAddressBar()
+            case .newTab: pane.newTab()
+            case .current: pane.focusAddressBar()
             case nil: break
             }
             snapshot(
-                BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                root(coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
                 appearance: appearance, to: url)
         }
 
@@ -96,24 +102,24 @@
                 for mode in SidebarMode.allCases {
                     defaults.set(mode.rawValue, forKey: SidebarMode.defaultsKey)
                     snapshot(
-                        BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                        root(coordinator).defaultAppStorage(defaults),
                         size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                         to: directory.appending(path: "layout-workspaces-\(mode.rawValue)-\(name).png"))
                 }
                 defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
-                coordinator.window.workspaceEditor = .create
+                coordinator.windows[0].workspaceEditor = .create
                 snapshot(
-                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    root(coordinator).defaultAppStorage(defaults),
                     size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-workspace-sheet-\(name).png"))
-                coordinator.window.workspaceEditor = .changeIcon(work.id)
+                coordinator.windows[0].workspaceEditor = .changeIcon(work.id)
                 snapshot(
-                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    root(coordinator).defaultAppStorage(defaults),
                     size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-workspace-icon-\(name).png"))
-                coordinator.window.workspaceEditor = .rename(work.id)
+                coordinator.windows[0].workspaceEditor = .rename(work.id)
                 snapshot(
-                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    root(coordinator).defaultAppStorage(defaults),
                     size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-workspace-rename-\(name).png"))
             }
@@ -136,18 +142,18 @@
                 for mode in SidebarMode.allCases {
                     defaults.set(mode.rawValue, forKey: SidebarMode.defaultsKey)
                     snapshot(
-                        BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                        root(coordinator).defaultAppStorage(defaults),
                         size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                         to: directory.appending(path: "layout-anonymous-\(mode.rawValue)-\(name).png"))
                 }
                 guard appearance == .aqua else { continue }
                 defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
-                coordinator.window.workspaceEditor = .rename(Workspace.anonymousID)
+                coordinator.windows[0].workspaceEditor = .rename(Workspace.anonymousID)
                 snapshot(
-                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    root(coordinator).defaultAppStorage(defaults),
                     size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-anonymous-sheet.png"))
-                coordinator.window.workspaceEditor = nil
+                coordinator.windows[0].workspaceEditor = nil
                 let notKept = coordinator.history.state == .notKept
                 snapshot(
                     HistoryView(model: coordinator.history), size: NSSize(width: 640, height: 600), title: "History",
@@ -170,7 +176,7 @@
                 restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
             guard (try? coordinator.create(name: "Work", symbol: WorkspaceSymbols.all[1])) != nil else { return }
             snapshot(
-                BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                root(coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
                 to: url)
             if coordinator.registry.hasViews(on: .global) { print("Default kept its web views after the switch") }
         }
@@ -184,7 +190,7 @@
             let made: Workspace? = autoreleasepool {
                 guard let doomed = try? coordinator.create(name: "Doomed", symbol: WorkspaceSymbols.all[1])
                 else { return nil }
-                snapshot(BrowserRoot(coordinator: coordinator), size: NSSize(width: 800, height: 500), to: url)
+                snapshot(root(coordinator), size: NSSize(width: 800, height: 500), to: url)
                 return doomed
             }
             guard let doomed = made else { return }
@@ -249,8 +255,9 @@
 
             let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
             coordinator.switchTo(Workspace.anonymousID)
-            let model = coordinator.active
-            guard let tab = model.selected, case .ephemeral = tab.store,
+            let pane = firstPane(coordinator)
+            let model = pane.model
+            guard let tab = pane.selected, case .ephemeral = tab.store,
                 let store = coordinator.registry.existingDataStore(for: tab.store)
             else { return report("Anonymous tab has its own store", false) }
             wait { await store.httpCookieStore.setCookie(cookie("kept")) }
@@ -273,14 +280,14 @@
 
             let secret = "anonymous-secret.example"
             let bookmark = URL(string: "https://kept-bookmark.example/")!
-            guard let blank = model.selected else { return report("Anonymous session leaves no URLs", false) }
+            guard let blank = pane.selected else { return report("Anonymous session leaves no URLs", false) }
             model.update(blank.id) { $0.url = bookmark }
             model.addLink(.bookmarks, from: blank.id)
-            model.openLink(SavedLink(url: URL(string: "https://\(secret)/page")!, title: "Secret"), load: false)
+            pane.openLink(SavedLink(url: URL(string: "https://\(secret)/page")!, title: "Secret"), load: false)
             let downloads = DownloadList(items: [
                 DownloadItem(
                     sourceURL: URL(string: "https://\(secret)/file.zip"), fileName: "file.zip", state: .finished,
-                    startedAt: .now, store: model.selected?.store),
+                    startedAt: .now, store: pane.selected?.store),
             ])
             let session = (try? coordinator.snapshot.encoded()).map { String(decoding: $0, as: UTF8.self) } ?? ""
             let saved = (try? JSONEncoder().encode(downloads.persistable())).map { String(decoding: $0, as: UTF8.self) }
@@ -293,7 +300,8 @@
         /// Checks in the background, printing ok or FAILED, that a private download still running when its anonymous
         /// tab closes leaves no row once it ends and its store is dropped. Downloads a `data:` URL into a temporary
         /// folder, removed afterwards; it does not download unless that folder can be accessed, and a file that lands
-        /// anywhere else fails the check (it is left there, as only its planned name is known).
+        /// anywhere else fails the check; the check does not know where such a file went, so it is not removed.
+        /// A failure names each condition that did not hold.
         private static func checkPrivateDownloadRow() {
             let name = "Anonymous download ended after its tab closed leaves no row"
             func report(_ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
@@ -322,43 +330,46 @@
             let coordinator = WorkspaceCoordinator(
                 restoring: nil, session: nil, appDirectory: nil, downloads: downloads)
             coordinator.switchTo(Workspace.anonymousID)
-            guard let tab = coordinator.active.selected, case .ephemeral = tab.store else { return report(false) }
+            guard let tab = firstPane(coordinator).selected, case .ephemeral = tab.store else { return report(false) }
             let config = WKWebViewConfiguration()
             config.websiteDataStore = coordinator.registry.dataStore(for: tab.store)
             let view = WKWebView(frame: .zero, configuration: config)
-            var started: WKDownload?
-            Task { started = await view.startDownload(using: URLRequest(url: URL(string: "data:text/plain,lodge")!)) }
+            var started = false
+            // Handed to the manager inside WebKit's callback, so it is the delegate before the download can end.
+            view.startDownload(using: URLRequest(url: URL(string: "data:text/plain,lodge")!)) { download in
+                MainActor.assumeIsolated {
+                    downloads.start(download, store: tab.store, site: nil, userInitiated: true, isMainFrame: true)
+                    started = true
+                }
+            }
             var deadline = Date.now.addingTimeInterval(5)
-            while started == nil, Date.now < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01)) }
-            guard let download = started else { return report(false) }
-            downloads.start(download, store: tab.store, site: nil, userInitiated: true, isMainFrame: true)
+            while !started, Date.now < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01)) }
+            guard started else { return report(false) }
             // Closed before the download can end: only the download holds the store now.
             coordinator.active.close(tab.id)
             coordinator.registry.detach(tab: tab.id)
             let heldByDownload = coordinator.registry.isHeld(tab.store)
-            // Where the file goes, seen while its row runs (the row goes with its store as the download ends).
-            var saved: URL?
+            // The row goes with its store as the download ends, so where the file went is read from the folder.
+            func landed() -> Bool {
+                (try? files.contentsOfDirectory(atPath: folder.path(percentEncoded: false)))?
+                    .contains { !$0.hasSuffix(".lodgedownload") } == true
+            }
             deadline = Date.now.addingTimeInterval(10)
-            while !downloads.hasUnseenEnded || coordinator.registry.isHeld(tab.store), Date.now < deadline {
-                if let row = downloads.list.items.first(where: { $0.store == tab.store }),
-                    let directory = row.directory
-                {
-                    saved = row.fileURL ?? directory.appending(path: row.fileName)
-                }
+            while !downloads.hasUnseenEnded || coordinator.registry.isHeld(tab.store) || !landed(), Date.now < deadline {
                 RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.005))
             }
-            func identity(_ url: URL) -> (any NSObjectProtocol)? {
-                try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier
-            }
-            let inFolder =
-                saved.flatMap { identity($0.deletingLastPathComponent()) }.map { $0.isEqual(identity(folder)) }
-                == true
+            let inFolder = landed()
             if !inFolder { print("\(name): the test file may have been saved in the Downloads folder") }
-            let landed = (try? files.contentsOfDirectory(atPath: folder.path(percentEncoded: false)))?
-                .contains { !$0.hasSuffix(".lodgedownload") }
-            report(
-                heldByDownload && downloads.hasUnseenEnded && !coordinator.registry.isHeld(tab.store)
-                    && !downloads.list.items.contains { $0.store == tab.store } && inFolder && landed == true)
+            let conditions = [
+                ("held by the download after the tab closed", heldByDownload),
+                ("download ended", downloads.hasUnseenEnded),
+                ("store dropped", !coordinator.registry.isHeld(tab.store)),
+                ("no row left", !downloads.list.items.contains { $0.store == tab.store }),
+                ("file in the temporary folder", inFolder),
+            ]
+            let failed = conditions.filter { !$0.1 }.map(\.0)
+            if !failed.isEmpty { print("\(name): did not hold: \(failed.joined(separator: ", "))") }
+            report(failed.isEmpty)
         }
 
         /// Draws a custom workspace showing Default's sample pins, then checks in the background, printing ok or FAILED
@@ -377,9 +388,10 @@
             guard let work = try? coordinator.create(name: "Work", symbol: "briefcase") else {
                 return report("Custom workspace shows Default's pins", false)
             }
-            let model = coordinator.active
+            let pane = firstPane(coordinator)
+            let model = pane.model
             snapshot(
-                BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                root(coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
                 to: url)
             report(
                 "Custom workspace shows Default's pins",
@@ -387,20 +399,20 @@
                     && model.sidebar.pins.allSatisfy { $0.tab == nil } && model.library.links(on: .pins).isEmpty)
 
             let page = URL(string: "about:blank#pinned")!
-            guard let tab = model.selected else { return report("Pinning in a custom workspace adds to Default", false) }
+            guard let tab = pane.selected else { return report("Pinning in a custom workspace adds to Default", false) }
             model.update(tab.id) { $0.url = page }
-            model.togglePinSelectedTab()
+            pane.togglePinSelectedTab()
             let defaultPins = coordinator.pins
             report(
                 "Pinning in a custom workspace adds to Default",
                 defaultPins.count == LinkLibrary.sample.links(on: .pins).count + 1 && defaultPins.last?.url == page
-                    && model.selected?.link == nil && model.library.links(on: .pins).isEmpty
-                    && coordinator.activeWorkspace.id == work.id && model.isSelectedTabPinned
+                    && pane.selected?.link == nil && model.library.links(on: .pins).isEmpty
+                    && coordinator.activeWorkspace.id == work.id && pane.isSelectedTabPinned
                     && model.sidebar.pins.count == defaultPins.count)
 
             guard let pin = defaultPins.last else { return report("Opening a pin switches to Default", false) }
-            model.activate(.link(pin))
-            let home = coordinator.active
+            pane.activate(.link(pin))
+            let home = firstPane(coordinator)
             report(
                 "Opening a pin switches to Default",
                 coordinator.activeWorkspace.id == Workspace.defaultID && home.selected?.link == pin.id
@@ -424,8 +436,9 @@
                 return report("Move puts the tab in the destination", false)
             }
             coordinator.switchTo(Workspace.defaultID)
-            let home = coordinator.active
-            guard let tab = home.selected, let workModel = coordinator.model(for: work.id) else {
+            let pane = firstPane(coordinator)
+            let home = pane.model
+            guard let tab = pane.selected, let workModel = coordinator.model(for: work.id) else {
                 return report("Move puts the tab in the destination", false)
             }
             let moved = URL(string: "about:blank#moved")!
@@ -438,24 +451,24 @@
 
             report(
                 "Move puts the tab in the destination",
-                coordinator.move(tab: tab.id, to: work.id) && workModel.selected?.url == moved
-                    && workModel.selected?.link == nil && workModel.tabs.tabs.count == 1 && home.tabs[tab.id] == nil
+                coordinator.move(tab: tab.id, to: work.id) && remembered(coordinator, workModel)?.url == moved
+                    && remembered(coordinator, workModel)?.link == nil && workModel.tabs.tabs.count == 1 && home.tabs[tab.id] == nil
                     && coordinator.activeWorkspace.id == Workspace.defaultID)
             report(
                 "Moved tab runs on the destination's store",
-                workModel.selected?.store == work.store && work.store != tab.store
-                    && workModel.selected?.isLive == false)
+                remembered(coordinator, workModel)?.store == work.store && work.store != tab.store
+                    && remembered(coordinator, workModel)?.isLive == false)
 
-            guard let keep = home.selected, let keptURL = keep.url else { return report("Open keeps the original", false) }
+            guard let keep = pane.selected, let keptURL = keep.url else { return report("Open keeps the original", false) }
             report(
                 "Open keeps the original",
                 coordinator.open(tab: keep.id, in: work.id) && home.tabs[keep.id] != nil
-                    && workModel.tabs.tabs.count == 2 && workModel.selected?.url == keptURL
-                    && workModel.selected?.id != keep.id)
+                    && workModel.tabs.tabs.count == 2 && remembered(coordinator, workModel)?.url == keptURL
+                    && remembered(coordinator, workModel)?.id != keep.id)
             report("Open in the same workspace is refused", !coordinator.open(tab: keep.id, in: Workspace.defaultID))
 
             guard let anonymous = coordinator.model(for: Workspace.anonymousID),
-                coordinator.move(tab: keep.id, to: Workspace.anonymousID), let arrived = anonymous.selected
+                coordinator.move(tab: keep.id, to: Workspace.anonymousID), let arrived = remembered(coordinator, anonymous)
             else { return report("Move into Anonymous gets a new browser", false) }
             let others = [home, workModel, anonymous].flatMap(\.tabs.tabs).filter { $0.id != arrived.id }.map(\.store)
             var isEphemeral = false
@@ -465,11 +478,11 @@
                 isEphemeral && !others.contains(arrived.store) && anonymous.tabs.tabs.count == 1
                     && arrived.url == keptURL && home.tabs[keep.id] == nil)
 
-            guard let opener = home.selected,
+            guard let opener = pane.selected,
                 home.openPopup(from: opener.id, configuration: WKWebViewConfiguration()) != nil,
-                let first = home.selected,
+                let first = pane.selected,
                 home.openPopup(from: first.id, configuration: WKWebViewConfiguration()) != nil,
-                let second = home.selected, second.id != first.id, first.id != opener.id
+                let second = pane.selected, second.id != first.id, first.id != opener.id
             else { return report("Move from a popup closes only its chain", false) }
             home.update(first.id) { $0.url = URL(string: "about:blank#popup")! }
             let before = workModel.tabs.tabs.count
@@ -477,9 +490,366 @@
                 "Move from a popup closes only its chain",
                 coordinator.move(tab: first.id, to: work.id) && home.tabs[opener.id] != nil
                     && home.tabs[first.id] == nil && home.tabs[second.id] == nil
-                    && workModel.tabs.tabs.count == before + 1 && workModel.selected?.url?.fragment == "popup"
-                    && workModel.selected?.store == work.store)
+                    && workModel.tabs.tabs.count == before + 1 && remembered(coordinator, workModel)?.url?.fragment == "popup"
+                    && remembered(coordinator, workModel)?.store == work.store)
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+        }
+
+        /// Two browser windows on one coordinator, each in its own off-screen `NSWindow`, checked in the background and
+        /// printed ok or FAILED for each: ⌘N's window shows a new blank tab of the active workspace with the prompt
+        /// open; each window's web view is in that window and no tab is shown twice, after a switch, a pin opened from
+        /// the second window and deleting the workspace both are on; switching moves and closes no tab but the blanks
+        /// the windows made; the saved session brings both windows back with their tabs and frames, the frame on a
+        /// visible screen; closing a window keeps its tabs. Pages are `about:blank`, so no request goes out.
+        private static func checkTwoWindows() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            let first = coordinator.windows[0]
+            guard let firstTab = coordinator.selections.shown(in: first.id) else {
+                return report("New window shows a new tab of the active workspace", false)
+            }
+            coordinator.active.update(firstTab) { $0.url = URL(string: "about:blank#one")! }
+            coordinator.newWindow()
+            let second = coordinator.windows[0]
+            let secondTab = coordinator.selections.shown(in: second.id)
+            report(
+                "New window shows a new tab of the active workspace",
+                second !== first && coordinator.windows.count == 2 && secondTab != nil && secondTab != firstTab
+                    && secondTab.flatMap { coordinator.active.tabs[$0] }?.url == nil
+                    && second.locationPrompt == .newTab && coordinator.selections.shown(in: first.id) == firstTab
+                    && coordinator.lastActiveBrowserWindow === second)
+            guard let secondTab else { return }
+            coordinator.active.update(secondTab) { $0.url = URL(string: "about:blank#two")! }
+            second.locationPrompt = nil
+
+            let hosts = [first, second].map { host(root(coordinator, $0), size: NSSize(width: 900, height: 600)) }
+            defer { for window in hosts { window.close() } }
+            settle(0.5)
+            func isPlaced() -> Bool {
+                let shown = [first, second].map { coordinator.selections.shown(in: $0.id) }
+                return zip([first, second], hosts).allSatisfy { window, host in
+                    window.nsWindow === host
+                        && coordinator.selections.shown(in: window.id)
+                            .flatMap { coordinator.registry.webView(for: $0) }?.window === host
+                } && Set(shown.compactMap { $0 }).count == 2
+            }
+            /// Each window's web view in that window, once SwiftUI has redrawn both (up to 3 s).
+            func placed() -> Bool {
+                let deadline = Date.now.addingTimeInterval(3)
+                while !isPlaced(), Date.now < deadline { settle(0.05) }
+                return isPlaced()
+            }
+            report("Two windows on one workspace show their own tabs", placed())
+
+            let homeTabs = Set(coordinator.active.tabs.tabs.map(\.id))
+            // Its own pools, so Work's web views this run loop never drains are freed before its data store is removed.
+            let made: Workspace? = autoreleasepool { try? coordinator.create(name: "Work", symbol: "briefcase") }
+            guard let work = made, let workModel = coordinator.model(for: work.id)
+            else { return report("Switching moves every window", false) }
+            settle()
+            let home = coordinator.model(for: Workspace.defaultID)
+            report(
+                "Switching moves every window",
+                coordinator.activeWorkspaceID == work.id && placed()
+                    && [first, second].allSatisfy {
+                        coordinator.selections.shown(in: $0.id).map { workModel.tabs[$0] != nil } == true
+                    }
+                    && home.map { Set($0.tabs.tabs.map(\.id)) } == homeTabs)
+
+            let pinned = BrowserTab(url: URL(string: "about:blank#pinned")!, title: "Pinned")
+            coordinator.pin(from: pinned)
+            guard let pin = coordinator.pins.last else { return report("Opening a pin moves every window", false) }
+            coordinator.pane(for: second).activate(.link(pin))
+            settle()
+            let pinTab = coordinator.selections.shown(in: second.id).flatMap { home?.tabs[$0] }
+            report(
+                "Opening a pin moves every window",
+                coordinator.activeWorkspaceID == Workspace.defaultID && placed() && pinTab?.link == pin.id
+                    && coordinator.selections.shown(in: first.id) == firstTab
+                    && home.map { homeTabs.isSubset(of: Set($0.tabs.tabs.map(\.id))) } == true)
+
+            autoreleasepool { coordinator.switchTo(work.id) }
+            settle()
+            var deleted: Bool?
+            Task { deleted = await coordinator.delete(work.id) }
+            let deadline = Date.now.addingTimeInterval(10)
+            while deleted == nil, Date.now < deadline { settle(0.05) }
+            settle()
+            report(
+                "Deleting the active workspace moves every window to Default",
+                deleted == true && coordinator.activeWorkspaceID == Workspace.defaultID && placed()
+                    && coordinator.selections.shown(in: first.id) == firstTab
+                    && coordinator.selections.shown(in: second.id) == pinTab?.id)
+
+            let saved = (try? coordinator.snapshot.encoded()).flatMap { try? SessionSnapshot.decode($0) }
+            let restored = saved.map {
+                WorkspaceCoordinator(restoring: $0, session: nil, appDirectory: nil, downloads: nil)
+            }
+            let expectedFrames = [second, first].map { $0.nsWindow.map { SessionSnapshot.WindowFrame($0.frame) } }
+            let restoredTabs = restored.map { restored in
+                restored.windows.map { restored.selections.shown(in: $0.id) }
+            }
+            var onScreen = false
+            if let restored, restored.windows.count == 2 {
+                let window = restored.windows[0]
+                let restoredHost = host(root(restored, window), size: NSSize(width: 900, height: 600))
+                settle()
+                let frame = restoredHost.frame
+                onScreen = NSScreen.screens.contains { $0.visibleFrame.contains(frame) }
+                restoredHost.close()
+            }
+            report(
+                "Relaunch restores each window's tab and frame",
+                saved?.windows.map(\.frame) == expectedFrames && expectedFrames.allSatisfy { $0 != nil }
+                    && restoredTabs == [pinTab?.id, firstTab]
+                    && (NSScreen.screens.isEmpty || onScreen))
+
+            hosts[1].close()
+            settle()
+            report(
+                "Closing a window keeps its tabs",
+                coordinator.windows.count == 1 && coordinator.windows[0] === first
+                    && coordinator.lastActiveBrowserWindow === first && pinTab.map { home?.tabs[$0.id] != nil } == true
+                    && coordinator.snapshot.windows.count == 1)
+        }
+
+        /// Two windows on Default's sample library, checked in the background and printed ok or FAILED for each: from
+        /// the second window, a sidebar click, a bookmark open, a History entry and a pin open on the tab the first
+        /// window shows each ask to bring the first window forward (a hook stands in, so nothing activates), leave
+        /// both windows' tabs as they were and open no second tab; the second window marks that tab and the first
+        /// does not. Draws the second window's sidebar with a marked bookmark row, then a marked pin, in light and
+        /// dark. Nothing loads: tabs open unloaded and the History URL is on `.invalid`.
+        private static func checkShownElsewhere(in directory: URL) {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            let suite = "dev.lodge.render-layout"
+            let defaults = UserDefaults(suiteName: suite)!
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            defer { defaults.removePersistentDomain(forName: suite) }
+
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+            let first = coordinator.windows[0]
+            let model = coordinator.active
+            guard let bookmark = model.library.links(on: .bookmarks).first, let pin = model.library.links(on: .pins).first
+            else { return report("Sidebar click on another window's tab brings it forward", false) }
+            coordinator.pane(for: first).openLink(bookmark, load: false)
+            guard let shown = coordinator.selections.shown(in: first.id) else {
+                return report("Sidebar click on another window's tab brings it forward", false)
+            }
+            let page = URL(string: "https://lodge.invalid/shown")!
+            model.update(shown) { $0.url = page }
+            coordinator.newWindow()
+            let second = coordinator.windows[0]
+            second.locationPrompt = nil
+            var asked: [WindowState] = []
+            coordinator.bringForwardHook = { asked.append($0) }
+
+            /// Runs `action` from the second window: true when it asked for the first window alone and changed no
+            /// window's tab and no tab count.
+            func bringsFirstForward(_ action: (BrowserPane) -> Void) -> Bool {
+                let before = [first, second].map { coordinator.selections.shown(in: $0.id) }
+                let count = model.tabs.tabs.count
+                asked = []
+                action(coordinator.pane(for: second))
+                return asked.count == 1 && asked[0] === first && model.tabs.tabs.count == count
+                    && [first, second].map { coordinator.selections.shown(in: $0.id) } == before
+            }
+
+            let otherPane = coordinator.pane(for: second)
+            report(
+                "Only the other window marks the tab",
+                otherPane.isShownElsewhere(shown) && !coordinator.pane(for: first).isShownElsewhere(shown)
+                    && otherPane.selectedID.map(otherPane.isShownElsewhere) == false)
+            report("Sidebar click on another window's tab brings it forward", bringsFirstForward { $0.select(shown) })
+            report(
+                "Opening a bookmark another window shows brings it forward",
+                bringsFirstForward { $0.activate(.link(bookmark)) })
+            report(
+                "A History entry another window shows brings it forward",
+                bringsFirstForward { $0.open(historyURL: page) })
+            renderShownElsewhere(coordinator, second, defaults: defaults, in: directory, name: "shown-elsewhere")
+
+            coordinator.pane(for: first).openLink(pin, load: false)
+            report(
+                "Opening a pin another window shows brings it forward",
+                coordinator.selections.shown(in: first.id).flatMap { model.tabs[$0] }?.link == pin.id
+                    && bringsFirstForward { $0.activate(.link(pin)) })
+            renderShownElsewhere(coordinator, second, defaults: defaults, in: directory, name: "shown-elsewhere-pin")
+        }
+
+        private static func renderShownElsewhere(
+            _ coordinator: WorkspaceCoordinator, _ window: WindowState, defaults: UserDefaults, in directory: URL,
+            name: String
+        ) {
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                snapshot(
+                    root(coordinator, window).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                    appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-\(name)-\(appearance == .aqua ? "light" : "dark").png"))
+            }
+        }
+
+        /// Stepping through tabs in a second window passes over the tab the first window shows, printed ok or FAILED:
+        /// with three tabs it lands on the third and brings no window forward; with only the two shown tabs it stays
+        /// put. Pages are `about:blank` and never load.
+        private static func checkStepSkipsShownElsewhere() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            let first = coordinator.windows[0]
+            let model = coordinator.active
+            guard let shown = coordinator.selections.shown(in: first.id) else {
+                return report("Stepping passes over another window's tab", false)
+            }
+            model.update(shown) { $0.url = URL(string: "about:blank#one")! }
+            coordinator.newWindow()
+            let second = coordinator.windows[0]
+            second.locationPrompt = nil
+            guard let own = coordinator.selections.shown(in: second.id) else {
+                return report("Stepping passes over another window's tab", false)
+            }
+            var asked = 0
+            coordinator.bringForwardHook = { _ in asked += 1 }
+
+            let lone = coordinator.pane(for: second)
+            lone.selectNextTab()
+            lone.selectPreviousTab()
+            report(
+                "Stepping with only another window's tab stays put",
+                asked == 0 && coordinator.selections.shown(in: second.id) == own
+                    && coordinator.selections.shown(in: first.id) == shown)
+
+            let third = BrowserTab(url: URL(string: "about:blank#three")!, title: "Three")
+            _ = model.append(third, load: false)
+            // The direction whose next entry is the first window's tab, so the step has to pass over it.
+            let offset = model.sidebar.target(1, from: own) == .tab(shown) ? 1 : -1
+            let pane = coordinator.pane(for: second)
+            if offset == 1 { pane.selectNextTab() } else { pane.selectPreviousTab() }
+            report(
+                "Stepping passes over another window's tab",
+                model.sidebar.target(offset, from: own) == .tab(shown) && asked == 0
+                    && coordinator.selections.shown(in: second.id) == third.id
+                    && coordinator.selections.shown(in: first.id) == shown)
+        }
+
+        /// Links from other apps (D7), printed ok or FAILED for each: a link arriving before the restored window is on
+        /// screen waits, then loads into that window's blank tab once it registers; from Anonymous a link still opens
+        /// in Default; with two windows on a custom workspace every window moves to Default, the link opens once, as
+        /// a new tab shown in the last active window, and all windows are brought forward. Bringing forward is a hook
+        /// here, so the app is never activated. Pages are `about:blank`, so no request goes out.
+        private static func checkExternalLinks() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            /// WebKit reports an `about:blank#x` page back as `about:blank%23x`, so the address is compared decoded.
+            func tabs(_ coordinator: WorkspaceCoordinator, with url: URL) -> [BrowserTab] {
+                let wanted = url.absoluteString.removingPercentEncoding
+                return coordinator.model(for: Workspace.defaultID)?.tabs.tabs.filter {
+                    $0.url?.absoluteString.removingPercentEncoding == wanted
+                } ?? []
+            }
+
+            let cold = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            var coldForward = 0
+            cold.bringAllForwardOverride = { coldForward += 1 }
+            let window = cold.windows[0]
+            let blank = cold.selections.shown(in: window.id)
+            let queued = URL(string: "about:blank#queued")!
+            cold.openExternal([queued])
+            cold.openRestoredWindows()
+            settle(0.1)
+            let waited = tabs(cold, with: queued).isEmpty && coldForward == 0
+            let coldHost = host(root(cold, window), size: NSSize(width: 900, height: 600))
+            defer { coldHost.close() }
+            let deadline = Date.now.addingTimeInterval(3)
+            while tabs(cold, with: queued).isEmpty, Date.now < deadline { settle(0.05) }
+            let opened = tabs(cold, with: queued)
+            report(
+                "A link before the windows are restored waits, then opens",
+                waited && window.nsWindow === coldHost && opened.count == 1 && opened.first?.id == blank
+                    && cold.selections.shown(in: window.id) == blank && cold.active.tabs.tabs.count == 1
+                    && coldForward == 1)
+
+            cold.switchTo(Workspace.anonymousID)
+            let fromAnonymous = URL(string: "about:blank#anonymous")!
+            cold.openExternal([fromAnonymous])
+            let shown = cold.selections.shown(in: window.id)
+            report(
+                "A link from Anonymous opens in Default",
+                cold.activeWorkspaceID == Workspace.defaultID && tabs(cold, with: fromAnonymous).count == 1
+                    && shown == tabs(cold, with: fromAnonymous).first?.id && coldForward == 2)
+
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            var forward = 0
+            coordinator.bringAllForwardOverride = { forward += 1 }
+            let first = coordinator.windows[0]
+            if let home = coordinator.selections.shown(in: first.id) {
+                coordinator.active.update(home) { $0.url = URL(string: "about:blank#home")! }
+            }
+            coordinator.openRestoredWindows()
+            let second = coordinator.newWindow()
+            second.locationPrompt = nil
+            let hosts = [first, second].map { host(root(coordinator, $0), size: NSSize(width: 900, height: 600)) }
+            defer { for host in hosts { host.close() } }
+            settle(0.5)
+            let made: Workspace? = autoreleasepool { try? coordinator.create(name: "Work", symbol: "briefcase") }
+            guard let work = made else { return report("A link moves every window to Default", false) }
+            settle()
+            let before = coordinator.model(for: Workspace.defaultID)?.tabs.tabs.map(\.id) ?? []
+            let link = URL(string: "about:blank#link")!
+            let last = coordinator.lastActiveBrowserWindow
+            coordinator.openExternal([link])
+            settle()
+            let linkTabs = tabs(coordinator, with: link)
+            let after = coordinator.model(for: Workspace.defaultID)?.tabs.tabs.map(\.id) ?? []
+            report(
+                "A link moves every window to Default",
+                coordinator.activeWorkspaceID == Workspace.defaultID && work.id != Workspace.defaultID
+                    && [first, second].allSatisfy {
+                        coordinator.selections.shown(in: $0.id)
+                            .map { coordinator.model(for: Workspace.defaultID)?.tabs[$0] != nil } == true
+                    })
+            report(
+                "A link opens one new tab in the last active window, all windows forward",
+                linkTabs.count == 1 && !before.contains(linkTabs[0].id) && after.contains(linkTabs[0].id)
+                    && last.map { coordinator.selections.shown(in: $0.id) } == linkTabs[0].id && forward == 1)
+            settle()
+        }
+
+        /// The Settings window, its download choices read from a defaults suite of its own, removed afterwards.
+        private static func renderSettings(to url: URL) {
+            let suiteName = "dev.lodge.selfcheck.\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            snapshot(
+                SettingsView(model: DownloadSettingsModel(defaults: defaults)).frame(height: 300),
+                size: NSSize(width: 480, height: 300),
+                title: "Settings", to: url)
+        }
+
+        /// An off-screen window hosting `view`, never shown; it is not freed on closing, so closing it is safe.
+        private static func host(_ view: some View, size: NSSize) -> NSWindow {
+            let window = NSWindow(
+                contentRect: NSRect(origin: .zero, size: size),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: view)
+            window.setFrame(NSRect(origin: NSPoint(x: -10_000, y: -10_000), size: size), display: false)
+            return window
+        }
+
+        /// The first window's view of the active workspace.
+        private static func firstPane(_ coordinator: WorkspaceCoordinator) -> BrowserPane {
+            coordinator.pane(for: coordinator.windows[0])
+        }
+
+        private static func root(_ coordinator: WorkspaceCoordinator, _ window: WindowState? = nil) -> BrowserRoot {
+            BrowserRoot(coordinator: coordinator, window: window ?? coordinator.windows[0])
+        }
+
+        /// The tab a window remembers in the model's workspace: what it shows there on switching to it.
+        private static func remembered(_ coordinator: WorkspaceCoordinator, _ model: BrowserModel) -> BrowserTab? {
+            coordinator.selections.remembered(in: model.workspaceID).flatMap { model.tabs[$0] }
         }
 
         /// Which location prompt a render opens: ⌘T's empty one or ⌘L's on the selected page.

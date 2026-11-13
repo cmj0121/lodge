@@ -9,10 +9,9 @@ enum BookmarkTransfer {
     /// Asks for one bookmark HTML file, then adds it to the bookmarks as a folder named after the file, with a
     /// progress sheet on the window meanwhile. Its Cancel cancels the import and closes the sheet at once, without
     /// waiting for a parse already under way: that result is dropped and no alert follows. Once the folder has been
-    /// added, Cancel only closes the sheet. The panel, the sheet and any alert all use the window key at the start.
-    static func importBookmarks(into model: BrowserModel) {
+    /// added, Cancel only closes the sheet. The panel, the sheet and any alert all go on `window` (modal without one).
+    static func importBookmarks(into model: BrowserModel, on window: NSWindow?) {
         guard !model.isImportingBookmarks else { return }
-        let window = window
         let panel = NSOpenPanel()
         panel.message = "Choose a bookmark file exported from a browser."
         panel.prompt = "Import"
@@ -38,14 +37,13 @@ enum BookmarkTransfer {
     }
 
     /// Asks where to save, then writes every bookmark there as one bookmark HTML file.
-    static func exportBookmarks(from model: BrowserModel) {
+    static func exportBookmarks(from model: BrowserModel, on window: NSWindow?) {
         let panel = NSSavePanel()
         panel.message = "Other browsers can import this file."
         panel.prompt = "Export"
         panel.nameFieldStringValue = "Lodge Bookmarks.html"
         panel.allowedContentTypes = [.html]
         panel.canCreateDirectories = true
-        let window = window
         present(panel, on: window) { url in
             // On the next turn, so an alert's sheet does not start while the panel's is still ending.
             Task {
@@ -86,8 +84,6 @@ enum BookmarkTransfer {
         }
         return alert
     }
-
-    private static var window: NSWindow? { NSApp.keyWindow ?? NSApp.mainWindow }
 
     /// Runs the panel as a sheet on `window`, or modal when there is none, and hands on the chosen file.
     private static func present(_ panel: NSSavePanel, on window: NSWindow?, then handle: @escaping (URL) -> Void) {

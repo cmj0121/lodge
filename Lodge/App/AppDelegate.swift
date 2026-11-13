@@ -30,9 +30,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        coordinator.openRestoredWindows()
         openHistory()
         restoreDownloads()
         installKeyMonitor()
+    }
+
+    private static let linkLogger = Logger(subsystem: "dev.lodge", category: "links")
+
+    /// Links from other apps (D7), also the one that launched Lodge, which arrives before `didFinishLaunching`: web
+    /// pages open in Default, anything else is ignored. The log has only counts, never a URL.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let links = ExternalLink.filter(urls)
+        Self.linkLogger.info(
+            "Opening \(links.accepted.count, privacy: .public) links from another app, ignoring \(links.ignored, privacy: .public)")
+        coordinator.openExternal(links.accepted)
+    }
+
+    /// D5: closing the last window leaves the app running.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// A Dock click with no browser window opens a new one (D1); with one, the front one comes forward. SwiftUI is
+    /// told not to, as it would open a window of its own.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if let window = coordinator.windows.first {
+            if !flag { coordinator.bringForward(window) }
+        } else {
+            coordinator.newWindow()
+        }
+        return false
+    }
+
+    /// Windows closing as the app quits stay in the saved session.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        coordinator.prepareForQuit()
+        return .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -52,8 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let isShortcutHelp = event.characters == "/" && flags == [.command]
             guard isZoomInAlias || isShortcutHelp else { return event }
             let handled = MainActor.assumeIsolated {
-                guard let self, self.isBrowserWindowKey else { return false }
-                let browser = self.coordinator.active
+                guard let browser = self?.coordinator.keyPane else { return false }
                 if isZoomInAlias {
                     guard browser.canZoomIn else { return false }
                     browser.zoomIn()
@@ -75,12 +106,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             view = current.superview
         }
         return false
-    }
-
-    /// The key window shows the selected tab's web view, so it is the browser window.
-    private var isBrowserWindowKey: Bool {
-        guard let key = NSApp.keyWindow, let id = coordinator.active.tabs.selectedID else { return false }
-        return coordinator.registry.webView(for: id)?.window === key
     }
 
     /// Loads downloads.json off the main actor, interrupting what was running at the last quit and deleting the

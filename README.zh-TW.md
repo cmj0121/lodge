@@ -35,6 +35,8 @@
 | 資源用在當下         | 先釋放，再暫停，最後休眠；回來時只喚醒畫面上的那個頁面                    |
 | 進行中的工作         | 表單、播放、下載會先完成或保存，再讓出資源                                |
 | 輕盈好用             | 沒在用的 workspace 安靜無聲，切換快速，回來就能接著做                     |
+| 多個視窗             | ⌘N 再開一個共用同一組 workspace 的視窗；各自顯示自己的 tab，重開後還原    |
+| 預設瀏覽器           | 在 Settings › General 設為預設；其他 app 的連結以新的 Default tab 開啟    |
 | Credential           | 密碼和 passkey 來自 OS 的 credential store，在每個 workspace 都能使用     |
 | 三個平台             | Mac、iPhone、iPad 共用同一套規則，各自用最適合的方式操作                  |
 | 清楚的承諾           | 每個 workspace 的網站資料與登入各自分開，Lodge 就照這樣說明               |

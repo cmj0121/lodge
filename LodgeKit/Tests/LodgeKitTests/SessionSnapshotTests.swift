@@ -17,17 +17,17 @@ import Testing
         let loose = BrowserTab(store: .workspace(UUID()), url: URL(string: "https://loose.example")!, title: "Loose")
         let blank = BrowserTab()
         let marked = BrowserTab(url: bookmark.url, title: "Marked", link: bookmark.id)
-        let tabs = TabList(tabs: [linked, loose, blank, marked], selectedID: loose.id)
+        let tabs = TabList(tabs: [linked, loose, blank, marked])
         let library = LinkLibrary(pins: [pin, pin2], bookmarks: [bookmark])
 
-        let snapshot = SessionSnapshot.defaultOnly(tabs: tabs, library: library)
+        let snapshot = SessionSnapshot.defaultOnly(tabs: tabs, library: library, selectedTab: loose.id)
         let decoded = try roundTrip(snapshot)
         #expect(decoded == snapshot)
         #expect(decoded.version == SessionSnapshot.currentVersion)
 
         let restored = decoded.defaultRestored()
         #expect(restored.tabs.tabs.map(\.id) == [linked.id, loose.id, blank.id, marked.id])
-        #expect(restored.tabs.selectedID == loose.id)
+        #expect(restored.selectedTab == loose.id)
         #expect(restored.tabs.tabs.map(\.link) == [pin2.id, nil, nil, bookmark.id])
         #expect(restored.tabs.tab(forLink: pin2.id)?.id == linked.id)
         #expect(restored.tabs.tab(forLink: bookmark.id)?.id == marked.id)
@@ -41,7 +41,7 @@ import Testing
     @Test func restoredTabsAreNotLiveAndCarryNoRuntimeState() {
         let tab = BrowserTab(
             url: pin.url, isLoading: true, canGoBack: true, canGoForward: true, hasCrashed: true, isLive: true)
-        let restored = SessionSnapshot.defaultOnly(tabs: TabList(tabs: [tab], selectedID: tab.id), library: LinkLibrary())
+        let restored = SessionSnapshot.defaultOnly(tabs: TabList(tabs: [tab]), library: LinkLibrary(), selectedTab: tab.id)
             .defaultRestored().tabs.tabs
         #expect(restored.map(\.isLive) == [false])
         #expect(restored.map(\.isLoading) == [false])
@@ -52,19 +52,17 @@ import Testing
 
     @Test func dropsALinkNamingNoSavedLink() {
         let tab = BrowserTab(url: pin.url, link: UUID())
-        let restored = SessionSnapshot.defaultOnly(tabs: TabList(tabs: [tab], selectedID: tab.id), library: LinkLibrary(pins: [pin]))
+        let restored = SessionSnapshot.defaultOnly(tabs: TabList(tabs: [tab]), library: LinkLibrary(pins: [pin]), selectedTab: tab.id)
             .defaultRestored()
         #expect(restored.tabs.tabs.map(\.link) == [nil])
         #expect(restored.tabs.tabs.map(\.url) == [pin.url])
     }
 
     @Test(arguments: [TabID?.none, TabID()])
-    func unknownSelectionFallsToTheFirstTab(selected: TabID?) {
-        let first = BrowserTab()
-        var snapshot = SessionSnapshot.defaultOnly(
-            tabs: TabList(tabs: [first, BrowserTab()], selectedID: nil), library: LinkLibrary())
+    func unknownSelectionRestoresAsNone(selected: TabID?) {
+        var snapshot = SessionSnapshot.defaultOnly(tabs: TabList(tabs: [BrowserTab(), BrowserTab()]), library: LinkLibrary())
         snapshot.workspaces[0].content.selectedTab = selected
-        #expect(snapshot.defaultRestored().tabs.selectedID == first.id)
+        #expect(snapshot.defaultRestored().selectedTab == nil)
     }
 
     @Test func emptyTabsRestoreAnEmptyList() throws {
@@ -100,8 +98,7 @@ import Testing
         let (root, nested) = tree()
         let paired = BrowserTab(url: nested.url, title: "Nested page", link: nested.id)
         let dangling = BrowserTab(url: pin.url, link: UUID())
-        let snapshot = SessionSnapshot.defaultOnly(
-            tabs: TabList(tabs: [paired, dangling], selectedID: paired.id), library: LinkLibrary(bookmarks: root))
+        let snapshot = SessionSnapshot.defaultOnly(tabs: TabList(tabs: [paired, dangling]), library: LinkLibrary(bookmarks: root), selectedTab: paired.id)
         let restored = try roundTrip(snapshot).defaultRestored()
         #expect(restored.tabs.tabs.map(\.link) == [nested.id, nil])
         #expect(restored.tabs.tab(forLink: nested.id)?.id == paired.id)
@@ -180,7 +177,7 @@ import Testing
             UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!,
             UUID(uuidString: "B0000000-0000-0000-0000-000000000002")!,
         ])
-        #expect(restored.tabs.selectedID == UUID(uuidString: "C0000000-0000-0000-0000-000000000002")!)
+        #expect(restored.selectedTab == UUID(uuidString: "C0000000-0000-0000-0000-000000000002")!)
 
         let rewritten = try roundTrip(decoded)
         #expect(rewritten == decoded)
@@ -271,7 +268,7 @@ import Testing
         let restored = decoded.defaultRestored()
         #expect(restored.tabs.tabs.map(\.title) == ["Pinned", "Stray"])
         #expect(restored.tabs.tabs.map(\.store) == [.global, .global])
-        #expect(restored.tabs.selectedID == UUID(uuidString: "C0000000-0000-0000-0000-000000000002")!)
+        #expect(restored.selectedTab == UUID(uuidString: "C0000000-0000-0000-0000-000000000002")!)
         #expect(restored.tabs.tabs.map(\.link) == [UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!, nil])
         #expect(restored.library.links(on: .pins).map(\.title) == ["Pin"])
         #expect(restored.library.links(on: .bookmarks).map(\.title) == ["Mark"])
@@ -291,7 +288,7 @@ import Testing
         -> SessionSnapshot.WorkspaceContent
     {
         SessionSnapshot.WorkspaceContent(
-            tabs: TabList(tabs: tabs, selectedID: selected ?? tabs.first?.id), library: LinkLibrary(pins: pins))
+            tabs: TabList(tabs: tabs), library: LinkLibrary(pins: pins), selectedTab: selected ?? tabs.first?.id)
     }
 
     private func entry(_ workspace: Workspace, _ content: SessionSnapshot.WorkspaceContent = .empty)
@@ -325,7 +322,7 @@ import Testing
 
         let restored = try #require(decoded.content(of: work.id)).restored(store: work.store)
         #expect(restored.tabs.tabs.map(\.id) == [workTab.id, blank.id])
-        #expect(restored.tabs.selectedID == blank.id)
+        #expect(restored.selectedTab == blank.id)
         #expect(restored.tabs.tabs.allSatisfy { $0.store == .workspace(work.id) && !$0.isLive })
         let homeRestored = try #require(decoded.content(of: home.id)).restored(store: home.store)
         #expect(homeRestored.tabs.tabs.map(\.link) == [nil])
@@ -414,9 +411,9 @@ import Testing
         let workLibrary = LinkLibrary(pins: [], bookmarks: [iconned])
         let snapshot = SessionSnapshot(
             workspaces: [
-                entry(.default, .init(tabs: TabList(), library: defaultLibrary)),
-                entry(work, .init(tabs: TabList(), library: workLibrary)),
-                entry(.anonymous, .init(tabs: TabList(), library: anonymousLibrary)),
+                entry(.default, .init(tabs: TabList(), library: defaultLibrary, selectedTab: nil)),
+                entry(work, .init(tabs: TabList(), library: workLibrary, selectedTab: nil)),
+                entry(.anonymous, .init(tabs: TabList(), library: anonymousLibrary, selectedTab: nil)),
             ], windows: [], pendingDeletions: [])
         let decoded = try roundTrip(snapshot)
         let defaultContent = try #require(decoded.content(of: Workspace.defaultID))
@@ -432,7 +429,7 @@ import Testing
         let tab = BrowserTab(url: bookmark.url, title: "Secret", link: bookmark.id)
         let marked = SavedLink(url: bookmark.url, title: "Marked", icon: png)
         let anonymousContent = SessionSnapshot.WorkspaceContent(
-            tabs: TabList(tabs: [tab], selectedID: tab.id), library: LinkLibrary(pins: [pin], bookmarks: [marked]))
+            tabs: TabList(tabs: [tab]), library: LinkLibrary(pins: [pin], bookmarks: [marked]), selectedTab: tab.id)
         let snapshot = SessionSnapshot(
             workspaces: [entry(.default), entry(.anonymous, anonymousContent)], windows: [], pendingDeletions: [])
         let decoded = try roundTrip(snapshot)
@@ -458,9 +455,10 @@ import Testing
     @Test func restoredWithoutAStoreGivesNoTabsOnlyTheLibrary() {
         let tab = BrowserTab(url: bookmark.url, link: bookmark.id)
         let content = SessionSnapshot.WorkspaceContent(
-            tabs: TabList(tabs: [tab], selectedID: tab.id), library: LinkLibrary(pins: [], bookmarks: [bookmark]))
+            tabs: TabList(tabs: [tab]), library: LinkLibrary(pins: [], bookmarks: [bookmark]), selectedTab: tab.id)
         let restored = content.restored(store: nil)
         #expect(restored.tabs == TabList())
+        #expect(restored.selectedTab == nil)
         #expect(restored.library.links(on: .bookmarks) == [bookmark])
     }
 
@@ -479,8 +477,8 @@ import Testing
         let homeTab = BrowserTab(url: homePin.url, link: homePin.id)
         let markedTab = BrowserTab(url: bookmark.url, link: bookmark.id)
         let homeContent = SessionSnapshot.WorkspaceContent(
-            tabs: TabList(tabs: [homeTab, markedTab], selectedID: homeTab.id),
-            library: LinkLibrary(pins: [homePin, pin2], bookmarks: [bookmark]))
+            tabs: TabList(tabs: [homeTab, markedTab]),
+            library: LinkLibrary(pins: [homePin, pin2], bookmarks: [bookmark]), selectedTab: homeTab.id)
         let snapshot = SessionSnapshot(
             workspaces: [
                 entry(.default, content([], pins: [pin])),
@@ -564,7 +562,140 @@ import Testing
         let unknown = SessionSnapshot(
             workspaces: [entry(.default), entry(work)], windows: [window(UUID()), window(work.id)],
             pendingDeletions: [])
-        #expect(unknown.windows == [window(Workspace.defaultID), window(work.id)])
+        #expect(unknown.windows == [window(Workspace.defaultID), window(Workspace.defaultID)])
+    }
+
+    @Test func everyWindowTakesTheFirstWindowsWorkspace() {
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(.default), entry(work), entry(home)],
+            windows: [window(work.id), window(home.id), window(Workspace.defaultID)], pendingDeletions: [])
+        #expect(snapshot.windows.map(\.activeWorkspace) == [work.id, work.id, work.id])
+    }
+
+    @Test func windowSelectionAndFrameRoundTrip() throws {
+        let tabs = [BrowserTab(), BrowserTab()]
+        let frame = SessionSnapshot.WindowFrame(x: 10, y: 20, width: 900, height: 600)
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(.default), entry(work, content(tabs))],
+            windows: [
+                .init(activeWorkspace: work.id, selectedTab: tabs[1].id, frame: frame),
+                .init(activeWorkspace: work.id, selectedTab: tabs[0].id),
+            ], pendingDeletions: [])
+        let decoded = try roundTrip(snapshot)
+        #expect(decoded == snapshot)
+        #expect(decoded.windows.map(\.selectedTab) == [tabs[1].id, tabs[0].id])
+        #expect(decoded.windows.map(\.frame) == [frame, nil])
+        #expect(decoded.version == 4)
+    }
+
+    @Test func dropsASelectedTabOfAnotherWorkspaceUnknownOrAlreadyKept() {
+        let workTabs = [BrowserTab(), BrowserTab()]
+        let homeTab = BrowserTab()
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(.default), entry(work, content(workTabs)), entry(home, content([homeTab]))],
+            windows: [
+                .init(activeWorkspace: work.id, selectedTab: workTabs[1].id),
+                .init(activeWorkspace: home.id, selectedTab: homeTab.id),
+                .init(activeWorkspace: work.id, selectedTab: TabID()),
+                .init(activeWorkspace: work.id, selectedTab: workTabs[1].id),
+                .init(activeWorkspace: work.id, selectedTab: workTabs[0].id),
+            ], pendingDeletions: [])
+        #expect(snapshot.windows.map(\.selectedTab) == [workTabs[1].id, nil, nil, nil, workTabs[0].id])
+    }
+
+    @Test func anonymousWindowsKeepNoSelectedTab() throws {
+        let tab = BrowserTab()
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(.default), entry(.anonymous, content([tab]))],
+            windows: [.init(activeWorkspace: Workspace.anonymousID, selectedTab: tab.id)], pendingDeletions: [])
+        #expect(snapshot.windows == [window(Workspace.anonymousID)])
+        #expect(try roundTrip(snapshot).windows == [window(Workspace.anonymousID)])
+    }
+
+    @Test(arguments: [
+        SessionSnapshot.WindowFrame(x: .nan, y: 0, width: 900, height: 600),
+        SessionSnapshot.WindowFrame(x: 0, y: .infinity, width: 900, height: 600),
+        SessionSnapshot.WindowFrame(x: 0, y: 0, width: -.infinity, height: 600),
+        SessionSnapshot.WindowFrame(x: 0, y: 0, width: 0.5, height: 600),
+        SessionSnapshot.WindowFrame(x: 0, y: 0, width: 900, height: 0),
+    ])
+    func dropsAnUnusableFrame(frame: SessionSnapshot.WindowFrame) {
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(.default)], windows: [.init(activeWorkspace: Workspace.defaultID, frame: frame)],
+            pendingDeletions: [])
+        #expect(snapshot.windows == [window(Workspace.defaultID)])
+    }
+
+    @Test func keepsAOneByOneFrameAnywhere() {
+        let frame = SessionSnapshot.WindowFrame(x: -5000, y: 3000, width: 1, height: 1)
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(.default)], windows: [.init(activeWorkspace: Workspace.defaultID, frame: frame)],
+            pendingDeletions: [])
+        #expect(snapshot.windows.map(\.frame) == [frame])
+    }
+
+    @Test func anOlderV4FileReadsWithNoSelectedTabOrFrame() throws {
+        let tab = BrowserTab()
+        let older = SessionSnapshot(
+            workspaces: [entry(.default), entry(work, content([tab]))], windows: [window(work.id)],
+            pendingDeletions: [])
+        let data = try older.encoded()
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let windows = try #require(object["windows"] as? [[String: Any]])
+        #expect(windows.map { $0.keys.sorted() } == [["activeWorkspace"]])
+        let decoded = try SessionSnapshot.decode(data)
+        #expect(decoded.windows.map(\.selectedTab) == [nil])
+        #expect(decoded.windows.map(\.frame) == [nil])
+        #expect(decoded.content(of: work.id)?.selectedTab == tab.id)
+    }
+
+    @Test func aNewerV4FileReadsInAnOlderBuildAsItsWindowsWorkspaces() throws {
+        let tabs = [BrowserTab(), BrowserTab()]
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(.default), entry(work, content(tabs, selected: tabs[0].id))],
+            windows: [
+                .init(activeWorkspace: work.id, selectedTab: tabs[1].id, frame: .init(x: 0, y: 0, width: 900, height: 600)),
+                .init(activeWorkspace: work.id, selectedTab: tabs[0].id),
+            ], pendingDeletions: [])
+        let old = try JSONDecoder().decode(OlderV4Session.self, from: snapshot.encoded())
+        #expect(old.version == 4)
+        #expect(old.windows.map(\.activeWorkspace) == [work.id, work.id])
+        #expect(old.workspaces.map(\.workspace) == [.default, work, .anonymous])
+        #expect(old.workspaces[1].content.selectedTab == tabs[0].id)
+    }
+
+    @Test func anOverCapFileKeepsItsFirstWindowsInOrder() throws {
+        let frames = (0..<(SessionSnapshot.maxWindows + 8)).map {
+            SessionSnapshot.WindowFrame(x: Double($0), y: 0, width: 900, height: 600)
+        }
+        var snapshot = SessionSnapshot(workspaces: [entry(.default)], windows: [], pendingDeletions: [])
+        snapshot.windows = frames.map { .init(activeWorkspace: Workspace.defaultID, frame: $0) }
+        let decoded = try roundTrip(snapshot)
+        #expect(decoded.windows.count == SessionSnapshot.maxWindows)
+        #expect(decoded.windows.map(\.frame) == Array(frames.prefix(SessionSnapshot.maxWindows)))
+    }
+
+    @Test func theCapCutsBeforeTheWindowRules() {
+        let tabs = [BrowserTab(), BrowserTab()]
+        let cap = SessionSnapshot.maxWindows
+        var windows = (0..<(cap + 1)).map { _ in
+            SessionSnapshot.WindowSnapshot(
+                activeWorkspace: work.id, frame: .init(x: 0, y: 0, width: 0, height: 0))
+        }
+        windows[0].activeWorkspace = UUID()
+        windows[cap - 1].selectedTab = tabs[0].id
+        windows[cap].selectedTab = tabs[1].id
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(.default, content(tabs))], windows: windows, pendingDeletions: [])
+        #expect(snapshot.windows.count == cap)
+        #expect(snapshot.windows.allSatisfy { $0.activeWorkspace == Workspace.defaultID && $0.frame == nil })
+        #expect(snapshot.windows.map(\.selectedTab) == Array(repeating: nil, count: cap - 1) + [tabs[0].id])
+    }
+
+    @Test func windowsAtTheCapAreAllKept() {
+        let windows = Array(repeating: window(Workspace.defaultID), count: SessionSnapshot.maxWindows)
+        let snapshot = SessionSnapshot(workspaces: [entry(.default)], windows: windows, pendingDeletions: [])
+        #expect(snapshot.windows == windows)
     }
 
     @Test func normalizesAFileWhenRead() throws {
@@ -577,16 +708,28 @@ import Testing
     }
 }
 
+/// The v4 shape before windows carried a selected tab and frame.
+private struct OlderV4Session: Decodable {
+    struct Window: Decodable { var activeWorkspace: UUID }
+    var version: Int
+    var workspaces: [SessionSnapshot.WorkspaceSnapshot]
+    var windows: [Window]
+    var pendingDeletions: [UUID]
+}
+
 extension SessionSnapshot {
     /// Default alone, holding `tabs` and `library`, in one window on Default.
-    static func defaultOnly(tabs: TabList, library: LinkLibrary) -> SessionSnapshot {
+    static func defaultOnly(tabs: TabList, library: LinkLibrary, selectedTab: TabID? = nil) -> SessionSnapshot {
         SessionSnapshot(
-            workspaces: [WorkspaceSnapshot(workspace: .default, content: WorkspaceContent(tabs: tabs, library: library))],
+            workspaces: [
+                WorkspaceSnapshot(
+                    workspace: .default, content: WorkspaceContent(tabs: tabs, library: library, selectedTab: selectedTab))
+            ],
             windows: [WindowSnapshot(activeWorkspace: Workspace.defaultID)], pendingDeletions: [])
     }
 
     /// Default's content, on `.global`.
-    func defaultRestored() -> (tabs: TabList, library: LinkLibrary) {
+    func defaultRestored() -> (tabs: TabList, library: LinkLibrary, selectedTab: TabID?) {
         (content(of: Workspace.defaultID) ?? .empty).restored(store: .global)
     }
 }

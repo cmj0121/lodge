@@ -6,14 +6,14 @@ import UniformTypeIdentifiers
 /// The sidebar's Downloads button (D2): the download icon, a ring while downloads run, and a dot while something
 /// ended unseen (D5). It opens the Downloads popover, as ⌘J does.
 struct DownloadsButton: View {
-    @Bindable var model: BrowserModel
+    @Bindable var window: WindowState
     let manager: DownloadManager
     let isRail: Bool
 
     var body: some View {
         let progress = manager.list.overallProgress
         Button {
-            model.isDownloadsVisible.toggle()
+            window.isDownloadsVisible.toggle()
         } label: {
             DownloadsButtonLabel(
                 progress: progress, hasUnseen: manager.hasUnseenEnded,
@@ -24,7 +24,7 @@ struct DownloadsButton: View {
         .help(ShortcutCatalog.tooltip("Downloads", for: .toggleDownloads))
         .accessibilityLabel("Downloads")
         .accessibilityValue(DownloadsButtonLabel.accessibilityValue(progress, hasUnseen: manager.hasUnseenEnded))
-        .popover(isPresented: $model.isDownloadsVisible, arrowEdge: .trailing) {
+        .popover(isPresented: $window.isDownloadsVisible, arrowEdge: .trailing) {
             DownloadsPopover(manager: manager)
         }
     }

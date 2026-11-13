@@ -6,15 +6,47 @@ import os
 import WebKit
 
 /// Owns the workspaces, one `BrowserModel` per workspace (built when first needed, until then its saved content
-/// waits dormant), the window and which workspace it shows, the shared web view registry, and the session they are
-/// saved to.
+/// waits dormant), the browser windows and the tab each shows (`WindowSelections`: every window is on the active
+/// workspace), the shared web view registry, and the session they are saved to.
 @MainActor
 @Observable
 final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     private(set) var workspaces: WorkspaceList
-    let window: WindowState
-    /// The window menus and keys act in; the only one for now.
-    var keyWindow: WindowState { window }
+    /// Which tab each browser window shows, and the active workspace.
+    private(set) var selections: WindowSelections
+    var activeWorkspaceID: UUID { selections.active }
+    /// The browser windows, key first, in `selections.windows` order.
+    private(set) var windows: [WindowState]
+    /// The browser window that is key; nil while History, Settings or a panel is.
+    private(set) var keyBrowserWindow: WindowState?
+    /// The browser window last key; History or Settings becoming key does not change it.
+    private(set) var lastActiveBrowserWindow: WindowState?
+    /// The pane menus act in; nil (items disabled) with no browser window.
+    var commandPane: BrowserPane? { lastActiveBrowserWindow.map(pane(for:)) }
+    /// The pane the key monitor acts in, only while a browser window is key.
+    var keyPane: BrowserPane? { keyBrowserWindow.map(pane(for:)) }
+    @ObservationIgnored private var windowObservers: [ObjectIdentifier: [any NSObjectProtocol]] = [:]
+    @ObservationIgnored private var keyObserver: (any NSObjectProtocol)?
+    /// Opens a browser window scene for the id; installed from `BrowserCommands`' `openWindow`. Installing it opens,
+    /// on the next main turn (it is installed during a view update), the windows asked for before it was there.
+    @ObservationIgnored var windowOpener: ((WindowID) -> Void)? {
+        didSet { DispatchQueue.main.async { [weak self] in self?.openPendingWindows() } }
+    }
+    /// Windows were asked for (launch's restored ones, ⌘N or a Dock click) before `windowOpener` was installed.
+    @ObservationIgnored private var windowsPending = false
+    /// Quitting: windows closing now stay in the session.
+    @ObservationIgnored private var isQuitting = false
+    /// `openRestoredWindows` ran: the first window registering from then on opens the links waiting for it.
+    @ObservationIgnored private var isRestoringWindows = false
+    /// Links from other apps open at once; until the first restored window registers they wait in `pendingExternal`.
+    @ObservationIgnored private var opensExternalNow = false
+    @ObservationIgnored private var pendingExternal: [URL] = []
+    #if DEBUG
+        /// Layout self-checks: stands in for bringing a window forward, so a check never activates the app.
+        @ObservationIgnored var bringForwardHook: ((WindowState) -> Void)?
+        /// Self-checks only: called in place of bringing the windows forward, so a check never activates the app.
+        @ObservationIgnored var bringAllForwardOverride: (() -> Void)?
+    #endif
 
     @ObservationIgnored let registry: WebViewRegistry
     @ObservationIgnored private var models: [UUID: BrowserModel] = [:]
@@ -27,7 +59,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
 
     /// The History window's model: it shows the key window's workspace's visits, and a visit opens there.
     @ObservationIgnored private(set) lazy var history = HistoryModel { [unowned self] url in
-        active.open(historyURL: url)
+        commandPane?.open(historyURL: url)
     }
 
     /// Each workspace's open history file; a workspace is missing while its file opens, when it could not open,
@@ -42,7 +74,9 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     /// The history recorder of a workspace being deleted, from when its model goes until its file closes.
     @ObservationIgnored private var deletingRecorders: [UUID: HistoryRecorder] = [:]
 
-    /// Starts from `snapshot` (nil: Default alone, with `defaultLibrary`), showing its window's workspace.
+    /// Starts from `snapshot` (nil: Default alone, with `defaultLibrary`) with its windows, each on its saved tab and
+    /// waiting for its saved frame, all showing the first window's workspace; `openRestoredWindows` puts them on
+    /// screen.
     init(
         restoring snapshot: SessionSnapshot?, session: SessionStore?, appDirectory: URL?,
         downloads: DownloadManager?, registry: WebViewRegistry = WebViewRegistry(),
@@ -50,7 +84,17 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     ) {
         let list = snapshot?.workspaceList ?? WorkspaceList()
         workspaces = list
-        window = WindowState(activeWorkspace: list.resolve(snapshot?.windows.first?.activeWorkspace))
+        selections = WindowSelections(active: list.resolve(snapshot?.windows.first?.activeWorkspace))
+        let saved = snapshot?.windows ?? []
+        let restoredWindows = (saved.isEmpty ? [.init(activeWorkspace: list.default.id)] : saved)
+            .map { window in
+                let state = WindowState()
+                state.pendingFrame = window.frame
+                return (state: state, selectedTab: window.selectedTab)
+            }
+        let states = restoredWindows.map(\.state)
+        windows = states
+        lastActiveBrowserWindow = states.first
         dormant = Dictionary(
             (snapshot?.workspaces ?? []).map { ($0.workspace.id, $0.content) }, uniquingKeysWith: { first, _ in first })
         pendingDeletions = snapshot?.pendingDeletions ?? []
@@ -64,7 +108,14 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
             if let store { registry.hold(download: id, on: store) } else { registry.releaseHold(download: id) }
         }
         registry.storeDropped = { [weak downloads] store in downloads?.forget(store: store) }
-        active.didShow(in: window)
+        let model = active
+        let tabs = model.selectionTabs
+        var restored = selections
+        let change = restored.restore(
+            restoredWindows.map { ($0.state.id, $0.selectedTab) }, fallback: model.savedSelection, in: tabs)
+        model.appendBlanks(change.create)
+        selections = restored
+        show(model)
     }
 
     /// The data store a download's Retry runs on: a listed workspace's, nil once the workspace is gone; an anonymous
@@ -75,10 +126,15 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         return registry.dataStore(for: store)
     }
 
-    var activeWorkspace: Workspace { workspaces[window.activeWorkspace] ?? workspaces.default }
+    var activeWorkspace: Workspace { workspaces[activeWorkspaceID] ?? workspaces.default }
 
-    /// The shown workspace's model: what menus, the key monitor and the History window act on.
+    /// The active workspace's model, which every browser window shows.
     var active: BrowserModel { model(of: activeWorkspace) }
+
+    /// The window's view of the active workspace.
+    func pane(for window: WindowState) -> BrowserPane {
+        BrowserPane(model: active, window: window, coordinator: self)
+    }
 
     /// The workspace's model, built from its dormant content when first asked for; nil for an unknown workspace.
     func model(for id: UUID) -> BrowserModel? {
@@ -89,33 +145,48 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         if let model = models[workspace.id] { return model }
         let model = BrowserModel(
             workspace: workspace.id, store: workspace.store, restoring: dormant.removeValue(forKey: workspace.id),
-            registry: registry, window: window,
+            registry: registry,
             defaultLibrary: workspace.id == Workspace.defaultID ? defaultLibrary : LinkLibrary())
         model.downloads = downloads
+        model.placement = self
         if let store = historyStores[workspace.id] { model.historyRecorder = HistoryRecorder(store: store) }
         models[workspace.id] = model
         if workspace.id == Workspace.defaultID {
-            model.onContentChange = { [weak self] _ in
+            model.onContentChange = { [weak self] in
                 self?.didChange()
                 self?.pinsDidChange()
             }
         } else {
-            model.onContentChange = { [weak self] _ in self?.didChange() }
+            model.onContentChange = { [weak self] in self?.didChange() }
             model.sharedPins = self
             model.sharedPinsDidChange()
         }
         return model
     }
 
-    /// What the session store keeps: the workspaces in bar order with each one's content, the window's workspace and
-    /// the deletions still under way.
+    /// What the session store keeps: the workspaces in bar order with each one's content, the windows (key first)
+    /// with the tab each shows and its frame, and the deletions still under way. A built workspace's selected tab is
+    /// the first window's (key first) remembering one there, else the one it was restored with, while open (D8).
+    /// At most `SessionSnapshot.maxWindows` windows are kept, key first: the rest are not restored, though their
+    /// tabs stay in the workspace.
     var snapshot: SessionSnapshot {
-        SessionSnapshot(
+        let active = activeWorkspaceID
+        return SessionSnapshot(
             workspaces: workspaces.workspaces.map { workspace in
-                SessionSnapshot.WorkspaceSnapshot(
-                    workspace: workspace, content: models[workspace.id]?.content ?? dormant[workspace.id] ?? .empty)
+                let content = models[workspace.id].map { model in
+                    let selected = (selections.remembered(in: workspace.id) ?? model.savedSelection)
+                    return model.content(selectedTab: selected.flatMap { model.tabs[$0] != nil ? $0 : nil })
+                }
+                return SessionSnapshot.WorkspaceSnapshot(
+                    workspace: workspace, content: content ?? dormant[workspace.id] ?? .empty)
             },
-            windows: [SessionSnapshot.WindowSnapshot(activeWorkspace: window.activeWorkspace)],
+            windows: windows.isEmpty
+                ? [SessionSnapshot.WindowSnapshot(activeWorkspace: active)]
+                : windows.map { window in
+                    SessionSnapshot.WindowSnapshot(
+                        activeWorkspace: active, selectedTab: selections.shown(in: window.id),
+                        frame: window.nsWindow.map { SessionSnapshot.WindowFrame($0.frame) } ?? window.pendingFrame)
+                },
             pendingDeletions: pendingDeletions)
     }
 
@@ -126,18 +197,56 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
 
     // MARK: Switching
 
-    /// Shows the workspace in the window: the window's find, prompt and overlay close, the workspace's selected tab
-    /// comes back, and the one it replaces gives up its web views. An unknown or already shown workspace changes
-    /// nothing.
+    /// Shows the workspace in every window: each window's find, prompt and overlay close, each window takes its tab
+    /// there (D3), and the workspace it replaces gives up its web views. An unknown or already active workspace
+    /// changes nothing.
     func switchTo(_ id: UUID) {
-        guard let target = workspaces[id], target.id != window.activeWorkspace else { return }
+        guard let target = workspaces[id], target.id != activeWorkspaceID else { return }
+        enter(target, closingBlanks: true)
+    }
+
+    /// Every window leaves the active workspace and takes a tab of `target`; the blanks the windows owned there
+    /// close unless `closingBlanks` is false (the workspace is being deleted). A workspace no window has shown yet
+    /// starts the key window on the tab it was restored with.
+    private func enter(_ target: Workspace, closingBlanks: Bool) {
         let old = active
-        window.closeTransientSurfaces()
-        window.activeWorkspace = target.id
-        model(of: target).didShow(in: window)
+        for window in windows { window.closeTransientSurfaces() }
+        let model = model(of: target)
+        let leaving = old.selectionTabs
+        let tabs = model.selectionTabs
+        var next = selections
+        if next.remembered(in: target.id) == nil, let saved = openSavedSelection(of: model), let key = next.windows.first {
+            next.opened(saved, in: target.id, window: key.id)
+        }
+        let change = next.enter(tabs, leaving: leaving)
+        model.appendBlanks(change.create)
+        selections = next
+        if closingBlanks { old.remove(Set(change.close)) }
+        old.isShown = false
+        show(model)
         showActiveHistory()
         Task { await old.releaseViews() }
         didChange()
+    }
+
+    /// The tab the workspace was restored with, while it is still open.
+    private func openSavedSelection(of model: BrowserModel) -> TabID? {
+        model.savedSelection.flatMap { model.tabs[$0] != nil ? $0 : nil }
+    }
+
+    /// For `open(tab:in:)`: the tab a window would take on switching to a workspace no window has shown yet (`enter`
+    /// seeds the key window with the saved one, else D3 gives the first in sidebar order).
+    private func entryTab(of model: BrowserModel) -> TabID? {
+        openSavedSelection(of: model) ?? model.selectionTabs.order.first
+    }
+
+    /// The model is now on screen: each window's tab gets its web view.
+    private func show(_ model: BrowserModel) {
+        model.isShown = true
+        model.didShow()
+        for window in windows {
+            if let tab = selections.shown(in: window.id) { model.view(for: tab) }
+        }
     }
 
     /// ⌘1–⌘9: 1 is Default, 2…9 the next workspaces in order; an empty slot does nothing.
@@ -175,6 +284,284 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     }
 }
 
+// MARK: Windows and selection
+
+extension WorkspaceCoordinator: WindowPlacement {
+    func window(for id: WindowID) -> WindowState? {
+        windows.first { $0.id == id }
+    }
+
+    func window(for nsWindow: NSWindow?) -> WindowState? {
+        guard let nsWindow else { return nil }
+        return windows.first { $0.nsWindow === nsWindow }
+    }
+
+    /// The window for a scene SwiftUI opened with this id: the registry's, else (it should not happen) a new window
+    /// adopted as ⌘N would make it.
+    func windowState(for id: WindowID) -> WindowState {
+        window(for: id) ?? addWindow()
+    }
+
+    /// Launch: puts every restored window on screen, the first (the key window at quit) last so it ends up in front;
+    /// waits for `windowOpener` when it is not installed yet.
+    func openRestoredWindows() {
+        isRestoringWindows = true
+        windowsPending = true
+        openPendingWindows()
+    }
+
+    /// Opens every window not on screen yet, once `windowOpener` is there.
+    private func openPendingWindows() {
+        guard windowsPending, let windowOpener else { return }
+        windowsPending = false
+        for window in windows.reversed() where window.nsWindow == nil { windowOpener(window.id) }
+    }
+
+    /// ⌘N and a Dock click with no window (D1, D5): a new window in front, on a new blank tab of the active workspace
+    /// with the location prompt open; opened once `windowOpener` is installed when it is not yet.
+    @discardableResult
+    func newWindow() -> WindowState {
+        let window = addWindow()
+        if let windowOpener {
+            windowOpener(window.id)
+        } else {
+            windowsPending = true
+        }
+        return window
+    }
+
+    @discardableResult
+    private func addWindow() -> WindowState {
+        let window = WindowState()
+        window.locationPrompt = .newTab
+        let model = active
+        var next = selections
+        let change = next.addWindow(window.id)
+        model.appendBlanks(change.create)
+        selections = next
+        windows.insert(window, at: 0)
+        lastActiveBrowserWindow = window
+        if let tab = selections.shown(in: window.id) { model.view(for: tab) }
+        didChange()
+        return window
+    }
+
+    /// Brings the window to the front, key, with the app active.
+    func bringForward(_ window: WindowState) {
+        #if DEBUG
+            if let bringForwardHook { return bringForwardHook(window) }
+        #endif
+        window.nsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
+    /// Brings every browser window forward, the key-first order kept, the first one key.
+    func bringAllForward() {
+        #if DEBUG
+            if let bringAllForwardOverride { return bringAllForwardOverride() }
+        #endif
+        for window in windows.dropFirst().reversed() { window.nsWindow?.orderFront(nil) }
+        windows.first?.nsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
+    /// The app is quitting: the windows that close from here on stay in the session.
+    func prepareForQuit() {
+        isQuitting = true
+    }
+
+    /// The window is on screen in `nsWindow`: it takes its saved frame (on the next main turn, after SwiftUI's first
+    /// sizing), from now on it becoming key makes it the key browser window (and the first in `selections`), any other
+    /// window becoming key leaves no key browser window, moving or resizing it saves the session, and closing it
+    /// removes it (its tabs stay).
+    func register(_ window: WindowState, nsWindow: NSWindow) {
+        guard window.nsWindow !== nsWindow, windows.contains(where: { $0 === window }) else { return }
+        if let old = window.nsWindow { stopObserving(ObjectIdentifier(old)) }
+        window.nsWindow = nsWindow
+        if let frame = window.pendingFrame {
+            window.pendingFrame = nil
+            DispatchQueue.main.async { [weak nsWindow] in
+                let screens = NSScreen.screens.map { SessionSnapshot.WindowFrame($0.visibleFrame) }
+                guard let nsWindow, let clamped = frame.clamped(to: screens) else { return }
+                nsWindow.setFrame(clamped.rect, display: true)
+            }
+        }
+        let center = NotificationCenter.default
+        let save: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.didChange() }
+        }
+        windowObservers[ObjectIdentifier(nsWindow)] = [
+            center.addObserver(forName: NSWindow.didResignKeyNotification, object: nsWindow, queue: .main) {
+                [weak self, weak window] _ in
+                MainActor.assumeIsolated {
+                    if let self, self.keyBrowserWindow === window { self.keyBrowserWindow = nil }
+                }
+            },
+            center.addObserver(forName: NSWindow.didMoveNotification, object: nsWindow, queue: .main, using: save),
+            // Zoom, tiling and full screen resize without a live resize.
+            center.addObserver(forName: NSWindow.didResizeNotification, object: nsWindow, queue: .main) {
+                [weak self, weak nsWindow] _ in
+                MainActor.assumeIsolated {
+                    if let nsWindow, !nsWindow.inLiveResize { self?.didChange() }
+                }
+            },
+            center.addObserver(
+                forName: NSWindow.didEndLiveResizeNotification, object: nsWindow, queue: .main, using: save),
+            center.addObserver(forName: NSWindow.willCloseNotification, object: nsWindow, queue: .main) {
+                [weak self, weak window, weak nsWindow] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let nsWindow else { return }
+                    self.stopObserving(ObjectIdentifier(nsWindow))
+                    guard let window, window.nsWindow === nsWindow else { return }
+                    self.didClose(window)
+                }
+            },
+        ]
+        if keyObserver == nil {
+            keyObserver = center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) {
+                [weak self] notification in
+                let key = (notification.object as? NSWindow).map(ObjectIdentifier.init)
+                MainActor.assumeIsolated { self?.didBecomeKey(key) }
+            }
+        }
+        if nsWindow.isKeyWindow { didBecomeKey(ObjectIdentifier(nsWindow)) }
+        if isRestoringWindows, !opensExternalNow {
+            opensExternalNow = true
+            // Registering happens during a view update; the tabs open on the next main turn.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let urls = pendingExternal
+                pendingExternal = []
+                openExternal(urls)
+            }
+        }
+    }
+
+    /// Links from another app (D7), already only web pages: each opens as a new tab of Default shown in the last
+    /// active browser window (loaded into its blank tab when it shows one), a new window when none is open; every
+    /// window switches to Default (also from Anonymous) and all come forward. Until the first window restored at
+    /// launch is on screen they wait, and open once it is.
+    func openExternal(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        guard opensExternalNow else {
+            pendingExternal += urls
+            return
+        }
+        switchTo(Workspace.defaultID)
+        let window: WindowState
+        if let last = lastActiveBrowserWindow {
+            window = last
+        } else {
+            window = newWindow()
+            window.locationPrompt = nil
+        }
+        let pane = pane(for: window)
+        for url in urls { pane.openExternal(url) }
+        bringAllForward()
+    }
+
+    /// D5: the window leaves the registry and its remembered tabs; a blank it made and still owns closes, every
+    /// other tab stays. While quitting it stays, so the session keeps it.
+    private func didClose(_ window: WindowState) {
+        if keyBrowserWindow === window { keyBrowserWindow = nil }
+        guard !isQuitting else { return }
+        window.nsWindow = nil
+        let model = active
+        let change = selections.removeWindow(window.id, in: model.selectionTabs)
+        windows.removeAll { $0 === window }
+        if lastActiveBrowserWindow === window { lastActiveBrowserWindow = windows.first }
+        model.remove(Set(change.close))
+        didChange()
+    }
+
+    private func stopObserving(_ nsWindow: ObjectIdentifier) {
+        for observer in windowObservers.removeValue(forKey: nsWindow) ?? [] {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    private func didBecomeKey(_ key: ObjectIdentifier?) {
+        guard let key, let window = windows.first(where: { $0.nsWindow.map(ObjectIdentifier.init) == key }) else {
+            keyBrowserWindow = nil
+            return
+        }
+        keyBrowserWindow = window
+        lastActiveBrowserWindow = window
+        selections.makeKey(window.id)
+        if let index = windows.firstIndex(where: { $0 === window }), index != 0 {
+            windows.insert(windows.remove(at: index), at: 0)
+        }
+    }
+
+    /// Shows the tab in the window (D4); another window showing it is left as it is, and so is this window.
+    func select(_ tab: TabID, in window: WindowState) -> SelectOutcome {
+        let tabs = active.selectionTabs
+        var outcome = SelectOutcome.unknown
+        updateSelections {
+            outcome = $0.select(tab, in: window.id, of: tabs)
+            return SelectionChange()
+        }
+        return outcome
+    }
+
+    /// The tab just opened in `model` for `window`, which shows it when `model` is the active workspace's and
+    /// remembers it there otherwise.
+    func opened(_ tab: TabID, in model: BrowserModel, window: WindowState) {
+        opened(tab, in: model.workspaceID, window: window)
+    }
+
+    private func opened(_ tab: TabID, in workspace: UUID, window: WindowState) {
+        guard workspace == activeWorkspaceID else {
+            selections.opened(tab, in: workspace, window: window.id)
+            didChange()
+            return
+        }
+        updateSelections {
+            $0.opened(tab, in: workspace, window: window.id)
+            return SelectionChange()
+        }
+    }
+
+    func isShown(_ tab: TabID) -> Bool { selections.shownTabs.contains(tab) }
+
+    func didOpen(_ tab: TabID, in workspace: UUID, from source: TabID?) {
+        let window = source.flatMap { selections.window(showing: $0) }.flatMap(window(for:)) ?? lastActiveBrowserWindow
+        if let window { opened(tab, in: workspace, window: window) }
+    }
+
+    func willClose(_ tabs: Set<TabID>, of model: BrowserModel) {
+        let order = model.selectionTabs
+        guard model.workspaceID == activeWorkspaceID else {
+            _ = selections.closing(tabs, in: order)
+            return
+        }
+        updateSelections { $0.closing(tabs, in: order) }
+    }
+
+    /// Runs `change` on the active workspace's selections: the blanks it asks for are appended first, then every
+    /// window whose tab changed hides find and shows its new tab, and the session is saved.
+    @discardableResult
+    private func updateSelections(_ change: (inout WindowSelections) -> SelectionChange) -> SelectionChange {
+        let before = selections
+        var next = before
+        let result = change(&next)
+        let model = active
+        model.appendBlanks(result.create)
+        selections = next
+        guard selections != before else { return result }
+        let shown = selections.shownTabs
+        for window in windows {
+            let previous = before.shown(in: window.id)
+            let tab = selections.shown(in: window.id)
+            guard tab != previous else { continue }
+            window.dismissFind()
+            model.didSelect(tab, previous: previous, previousStillShown: previous.map(shown.contains) == true)
+        }
+        didChange()
+        return result
+    }
+}
+
 // MARK: Moving tabs
 
 extension WorkspaceCoordinator {
@@ -186,7 +573,20 @@ extension WorkspaceCoordinator {
         guard let source = model(holding: id), let tab = source.tabs[id], let url = tab.url,
             destination != source.workspaceID, let target = model(for: destination)
         else { return false }
-        target.receive(url: url, title: tab.title)
+        guard let window = lastActiveBrowserWindow else {
+            _ = target.receive(url: url, title: tab.title)
+            return true
+        }
+        // The tab the window shows there, or would show on switching there, gives way to the page when blank, so no
+        // empty New Tab row is left behind.
+        let replaced =
+            selections.windows.first { $0.id == window.id }?.remembered[destination]
+            ?? (selections.remembered(in: destination) == nil ? entryTab(of: target) : nil)
+        let received = target.receive(url: url, title: tab.title)
+        opened(received, in: destination, window: window)
+        if let replaced, let blank = target.tabs[replaced], blank.url == nil, !blank.isLoading {
+            target.close(replaced)
+        }
         return true
     }
 
@@ -225,7 +625,7 @@ protocol SharedPins: AnyObject {
     /// Removes the pin from Default; Default's tab of it becomes loose.
     func unpin(_ id: UUID)
     func movePin(_ id: UUID, to index: Int)
-    /// Switches the window to Default and opens the pin there, or selects its open tab.
+    /// Switches every window to Default and opens the pin in `window`, or shows its open tab there.
     func openPin(_ link: SavedLink, from window: WindowState)
 }
 
@@ -253,9 +653,9 @@ extension WorkspaceCoordinator: SharedPins {
     func movePin(_ id: UUID, to index: Int) { defaultModel.movePin(id, to: index) }
 
     func openPin(_ link: SavedLink, from window: WindowState) {
-        guard window === self.window else { return }
+        guard windows.contains(where: { $0 === window }) else { return }
         switchTo(Workspace.defaultID)
-        defaultModel.openLink(link)
+        pane(for: window).openLink(link)
     }
 
     /// Default's content changed: every built model of another workspace shows its pins again.
@@ -281,7 +681,7 @@ extension WorkspaceCoordinator {
     func openHistoryStore(for id: UUID) async {
         guard let workspace = workspaces[id] else { return }
         let opening = openHistory(of: workspace)
-        if id == window.activeWorkspace { showActiveHistory() }
+        if id == activeWorkspaceID { showActiveHistory() }
         await opening?.value
     }
 
@@ -295,7 +695,7 @@ extension WorkspaceCoordinator {
         await recorder?.drain()
         guard let store = historyStores.removeValue(forKey: id) else { return }
         // The History window stops observing it first, or closing fails.
-        if id == window.activeWorkspace { history.show(nil, state: .unavailable) }
+        if id == activeWorkspaceID { history.show(nil, state: .unavailable) }
         await history.stoppedFollowing()
         try store.close()
     }
@@ -351,7 +751,7 @@ extension WorkspaceCoordinator {
             Self.historyLogger.error("History is unavailable: \(error.localizedDescription, privacy: .public)")
             historyFailures.insert(id)
         }
-        if id == window.activeWorkspace { showActiveHistory() }
+        if id == activeWorkspaceID { showActiveHistory() }
     }
 
     /// Shows the active workspace's history in the History window: loading while its file opens.
@@ -401,7 +801,9 @@ extension WorkspaceCoordinator {
 
     func removeFromList(_ id: UUID) {
         guard let workspace = workspaces[id] else { return }
-        if window.activeWorkspace == id { switchTo(Workspace.defaultID) }
+        // destroyViews closes its tabs.
+        if activeWorkspaceID == id { enter(workspaces.default, closingBlanks: false) }
+        selections.forget(workspace: id)
         if let store = workspace.store { deletingStores[id] = store }
         _ = try? workspaces.remove(id)
         if !pendingDeletions.contains(id) { pendingDeletions.append(id) }
@@ -415,6 +817,7 @@ extension WorkspaceCoordinator {
         dormant[id] = nil
         guard let model = models.removeValue(forKey: id) else { return }
         model.onContentChange = nil
+        model.placement = nil
         if let recorder = model.historyRecorder { deletingRecorders[id] = recorder }
         model.historyRecorder = nil
         registry.detach(tabs: model.tabs.tabs.map(\.id))

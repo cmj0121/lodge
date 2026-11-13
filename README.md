@@ -35,6 +35,8 @@ one you are in uses resources.
 | Resources for now     | Release first, then suspend, then hibernate; coming back wakes only the page on screen   |
 | Work in progress      | Forms, playback and downloads finish or are saved before their resources are handed back |
 | Light to use          | Idle workspaces stay quiet, switching is quick, and you pick up where you left off       |
+| Several windows       | ⌘N opens a window on the same workspaces; each shows its own tab and returns on relaunch |
+| Default browser       | Settings › General makes Lodge the default; links from other apps open in a Default tab  |
 | Credentials           | Passwords and passkeys come from the OS credential store, ready in every workspace       |
 | Three platforms       | Mac, iPhone and iPad share one set of rules, each with the controls that suit it         |
 | Clear promise         | Each workspace keeps its own site data and sign-ins, and Lodge says exactly that         |

@@ -266,7 +266,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     /// The window to hang a sheet on, only while this tab is the one on screen and has no sheet open.
     private func visibleWindow(of webView: WKWebView) -> NSWindow? {
-        guard dismissSheet == nil, model?.tabs.selectedID == tab else { return nil }
+        guard dismissSheet == nil, model?.placement?.isShown(tab) == true else { return nil }
         return webView.window
     }
 

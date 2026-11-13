@@ -6,6 +6,8 @@ import Foundation
 /// favicons, security) is not stored.
 public struct SessionSnapshot: Codable, Equatable, Sendable {
     public static let currentVersion = 4
+    /// Each restored window opens an `NSWindow`, so a corrupt file cannot hang launch with thousands of them.
+    public static let maxWindows = 32
 
     public struct Tab: Codable, Equatable, Sendable {
         public var id: TabID
@@ -25,12 +27,13 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         /// The root folder, with every folder's expand state.
         public var bookmarks: BookmarkFolder
 
-        public static let empty = WorkspaceContent(tabs: TabList(), library: LinkLibrary())
+        public static let empty = WorkspaceContent(tabs: TabList(), library: LinkLibrary(), selectedTab: nil)
 
-        public init(tabs: TabList, library: LinkLibrary) {
+        /// `selectedTab` is the one an older build restores, and the fallback for the first window (D8).
+        public init(tabs: TabList, library: LinkLibrary, selectedTab: TabID?) {
             self.init(
                 tabs: tabs.tabs.map { Tab(id: $0.id, url: $0.url, title: $0.title, link: $0.link) },
-                selectedTab: tabs.selectedID, pins: library.links(on: .pins), bookmarks: library.bookmarks)
+                selectedTab: selectedTab, pins: library.links(on: .pins), bookmarks: library.bookmarks)
         }
 
         init(tabs: [Tab], selectedTab: TabID?, pins: [SavedLink], bookmarks: BookmarkFolder) {
@@ -56,18 +59,19 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             return content
         }
 
-        /// Tabs on `store`, isLive false, dangling link dropped, unknown selection → first tab. A nil `store`
-        /// (Anonymous) gives no tabs, only the library.
-        public func restored(store: StoreRef?) -> (tabs: TabList, library: LinkLibrary) {
+        /// Tabs on `store`, isLive false, dangling link dropped; `selectedTab` only when it is one of them. A nil
+        /// `store` (Anonymous) gives no tabs and no selection, only the library.
+        public func restored(store: StoreRef?) -> (tabs: TabList, library: LinkLibrary, selectedTab: TabID?) {
             let library = LinkLibrary(pins: pins, bookmarks: bookmarks)
-            guard let store else { return (TabList(), library) }
+            guard let store else { return (TabList(), library, nil) }
             let links = Set((pins + bookmarks.links).map(\.id))
             let restored = tabs.map {
                 BrowserTab(
                     id: $0.id, store: store, url: $0.url, title: $0.title,
                     link: $0.link.flatMap { links.contains($0) ? $0 : nil }, isLive: false)
             }
-            return (TabList(tabs: restored, selectedID: selectedTab), library)
+            let selected = restored.contains { $0.id == selectedTab } ? selectedTab : nil
+            return (TabList(tabs: restored), library, selected)
         }
     }
 
@@ -81,11 +85,17 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         }
     }
 
+    /// The optional fields are left out when nil, so a file stays readable by a v4 build that predates them.
     public struct WindowSnapshot: Codable, Equatable, Sendable {
         public var activeWorkspace: UUID
+        /// Wins over `WorkspaceContent.selectedTab` at restore.
+        public var selectedTab: TabID?
+        public var frame: WindowFrame?
 
-        public init(activeWorkspace: UUID) {
+        public init(activeWorkspace: UUID, selectedTab: TabID? = nil, frame: WindowFrame? = nil) {
             self.activeWorkspace = activeWorkspace
+            self.selectedTab = selectedTab
+            self.frame = frame
         }
     }
 
@@ -99,7 +109,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     /// Bar order: Default first, then the custom workspaces, then Anonymous with its bookmarks only. Only Default
     /// has pins.
     public var workspaces: [WorkspaceSnapshot]
-    /// At least one; an unknown active workspace reads as Default.
+    /// One to `maxWindows`, all on the same workspace; an unknown active workspace reads as Default.
     public var windows: [WindowSnapshot]
     /// Disjoint from `workspaces`; never Default or Anonymous.
     public var pendingDeletions: [UUID]
@@ -108,8 +118,11 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     /// `anonymized()`); duplicate ids, stray `.anonymous` and pending ids dropped. Pins fold into Default: its own
     /// pins in order, then each custom workspace's in bar order unless that URL is already pinned (the first id is
     /// kept); custom workspaces' pins become [] and their tabs linked to one of them lose the link. Pending drops
-    /// Default and Anonymous; empty windows → [Default]; unknown active → Default (Anonymous is valid). Only
-    /// Anonymous bookmarks keep an icon, and only a `LinkIcon.isValid` one.
+    /// Default and Anonymous; empty windows → [Default]; unknown active → Default (Anonymous is valid), and every
+    /// window takes the first window's. A window keeps its `selectedTab` only when it is a tab of that workspace
+    /// and no earlier window kept it, and its `frame` only when finite and at least 1×1. Only Anonymous bookmarks
+    /// keep an icon, and only a `LinkIcon.isValid` one. Only the first `maxWindows` windows are kept, cut in file
+    /// order before the window rules above, so a window past the cap never takes a `selectedTab`.
     public init(workspaces: [WorkspaceSnapshot], windows: [WindowSnapshot], pendingDeletions: [UUID]) {
         var seen: Set<UUID> = [Workspace.defaultID, Workspace.anonymousID]
         let pending = pendingDeletions.filter { seen.insert($0).inserted }
@@ -135,10 +148,19 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         let workspaces = zip(list.workspaces, contents).map {
             WorkspaceSnapshot(workspace: $0, content: $1.checkingIcons(anonymous: $0.kind == .anonymous))
         }
-        let windows = windows.isEmpty ? [WindowSnapshot(activeWorkspace: Workspace.defaultID)] : windows
+        let windows = windows.isEmpty
+            ? [WindowSnapshot(activeWorkspace: Workspace.defaultID)] : Array(windows.prefix(Self.maxWindows))
+        let active = list.resolve(windows[0].activeWorkspace)
+        let tabs = Set(workspaces.first { $0.workspace.id == active }?.content.tabs.map(\.id) ?? [])
+        var taken: Set<TabID> = []
         version = Self.currentVersion
         self.workspaces = workspaces
-        self.windows = windows.map { WindowSnapshot(activeWorkspace: list.resolve($0.activeWorkspace)) }
+        self.windows = windows.map { window in
+            WindowSnapshot(
+                activeWorkspace: active,
+                selectedTab: window.selectedTab.flatMap { tabs.contains($0) && taken.insert($0).inserted ? $0 : nil },
+                frame: window.frame.flatMap { $0.isUsable ? $0 : nil })
+        }
         self.pendingDeletions = pending
     }
 

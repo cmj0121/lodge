@@ -6,6 +6,7 @@ import Testing
     @Test func catalogHoldsExactlyTheShortcutSetInOrder() {
         let expected: [(ShortcutID, String, ShortcutMenu, String)] = [
             (.newTab, "New Tab", .file, "⌘T"),
+            (.newWindow, "New Window", .file, "⌘N"),
             (.closeTab, "Close Tab", .file, "⌘W"),
             (.openLocation, "Open Location…", .file, "⌘L"),
             (.reload, "Reload Page", .view, "⌘R"),
@@ -63,7 +64,7 @@ import Testing
     @Test func groupedFollowsMenuOrderAndDropsEmptyGroups() {
         let grouped = ShortcutCatalog.grouped
         #expect(grouped.map(\.menu) == [.file, .edit, .view, .bookmarks, .workspaces, .help])
-        #expect(grouped[0].shortcuts.map(\.id) == [.newTab, .closeTab, .openLocation])
+        #expect(grouped[0].shortcuts.map(\.id) == [.newTab, .newWindow, .closeTab, .openLocation])
         #expect(grouped[1].shortcuts.map(\.id) == [.find])
         #expect(grouped[2].shortcuts.map(\.id) == [.reload, .toggleDownloads, .zoomIn, .zoomOut, .actualSize])
         #expect(grouped[3].shortcuts.map(\.id) == [.bookmarkTab])
