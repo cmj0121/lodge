@@ -149,7 +149,7 @@
             let clean =
                 result == true && coordinator.activeWorkspace.id == Workspace.defaultID
                 && coordinator.pendingDeletions.isEmpty && coordinator.model(for: doomed.id) == nil
-                && !coordinator.registry.hasViews(on: doomed.store)
+                && !coordinator.registry.hasViews(on: .workspace(doomed.id))
             if clean {
                 print("Workspace deletion: ok")
             } else {

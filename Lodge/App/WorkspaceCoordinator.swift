@@ -131,7 +131,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
 
     // MARK: Editing
 
-    /// Adds an empty workspace at the end of the bar and switches to it.
+    /// Adds an empty workspace just before Anonymous and switches to it.
     @discardableResult
     func create(name: String, symbol: String) throws(WorkspaceList.EditError) -> Workspace {
         let workspace = try workspaces.create(name: name, symbol: symbol)
@@ -150,7 +150,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         didChange()
     }
 
-    /// Moves a workspace in the bar; Default stays first.
+    /// Moves a custom workspace in the bar; Default stays first and Anonymous stays last.
     @discardableResult
     func move(from source: Int, to destination: Int) -> Bool {
         guard workspaces.move(from: source, to: destination) else { return false }
@@ -268,10 +268,11 @@ extension WorkspaceCoordinator {
     private static let deletionLogger = Logger(subsystem: "dev.lodge", category: "workspaces")
 
     /// Deletes a custom workspace with its tabs, bookmarks, history, sign-ins and site data; a window showing it
-    /// goes to Default. A deletion that fails stays pending and is finished at the next launch. Default is refused.
+    /// goes to Default. A deletion that fails stays pending and is finished at the next launch. Default and Anonymous
+    /// are refused.
     @discardableResult
     func delete(_ id: UUID) async -> Bool {
-        guard let workspace = workspaces[id], workspace.kind != .default else { return false }
+        guard let workspace = workspaces[id], workspace.kind == .custom else { return false }
         let done = await WorkspaceDeletion.run(id, steps: self)
         if !done {
             Self.deletionLogger.error(
@@ -296,7 +297,7 @@ extension WorkspaceCoordinator {
     func removeFromList(_ id: UUID) {
         guard let workspace = workspaces[id] else { return }
         if window.activeWorkspace == id { switchTo(Workspace.defaultID) }
-        deletingStores[id] = workspace.store
+        if let store = workspace.store { deletingStores[id] = store }
         _ = try? workspaces.remove(id)
         if !pendingDeletions.contains(id) { pendingDeletions.append(id) }
     }
@@ -311,7 +312,7 @@ extension WorkspaceCoordinator {
         model.onContentChange = nil
         if let recorder = model.historyRecorder { deletingRecorders[id] = recorder }
         model.historyRecorder = nil
-        registry.destroyAll(on: model.store)
+        if let store = model.store { registry.destroyAll(on: store) }
     }
 
     func cancelDownloads(of id: UUID) {

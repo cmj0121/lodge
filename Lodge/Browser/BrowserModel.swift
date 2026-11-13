@@ -9,8 +9,8 @@ import WebKit
 @Observable
 final class BrowserModel {
     let workspaceID: UUID
-    /// Every tab of the workspace runs on this store.
-    let store: StoreRef
+    /// Every tab of the workspace runs on this store; nil for Anonymous, whose tabs each get their own.
+    let store: StoreRef?
     /// Every open tab. A tab keeps its web view, built when it is first selected, until it closes or the workspace
     /// is released (`releaseViews()`).
     private(set) var tabs = TabList() {
@@ -115,7 +115,7 @@ final class BrowserModel {
     /// workspace gets a blank tab. Only while `window` shows the workspace does its selected tab get a web view; the
     /// other tabs build theirs when first selected.
     init(
-        workspace: UUID = Workspace.defaultID, store: StoreRef = .global,
+        workspace: UUID = Workspace.defaultID, store: StoreRef? = .global,
         restoring content: SessionSnapshot.WorkspaceContent? = nil,
         registry: WebViewRegistry = WebViewRegistry(), window: WindowState = WindowState(),
         defaultLibrary: LinkLibrary = LinkLibrary()
@@ -134,7 +134,7 @@ final class BrowserModel {
         }
         refreshSidebar()
         if tabs.tabs.isEmpty {
-            changeTabs { $0.open(BrowserTab(store: store, isLive: false)) }
+            changeTabs { $0.open(BrowserTab(store: store ?? .ephemeral(UUID()), isLive: false)) }
         }
         if isShown, let selected = tabs.selectedID { ensureView(for: selected) }
         lastContent = self.content
@@ -251,14 +251,14 @@ final class BrowserModel {
 
     /// Cmd-click on a link: the link opens in a new selected tab of this workspace, on the opener's store.
     func open(url: URL, from source: TabID) {
-        open(BrowserTab(store: tabs[source]?.store ?? store, url: url), load: true)
+        open(BrowserTab(store: tabs[source]?.store ?? store ?? .ephemeral(UUID()), url: url), load: true)
     }
 
     /// A History window entry: the page opens in a new selected tab of this workspace; a URL that is not a web page
     /// opens nothing.
     func open(historyURL url: URL) {
         guard NewTabPolicy.allowsFromHistory(url) else { return }
-        open(BrowserTab(store: store, url: url), load: true)
+        open(BrowserTab(store: store ?? .ephemeral(UUID()), url: url), load: true)
     }
 
     /// Selects the tab, building its web view when it has none; every other tab keeps its own.
@@ -289,7 +289,7 @@ final class BrowserModel {
         let next = tabs.selectedID == id ? sidebar.neighbour(ofClosing: id) : tabs.selectedID
         changeTabs { $0.close(id, selecting: next) }
         if tabs.tabs.isEmpty {
-            open(BrowserTab(store: store), load: false)
+            open(BrowserTab(store: store ?? .ephemeral(UUID())), load: false)
         } else if let selected = tabs.selectedID {
             ensureView(for: selected)
         }
@@ -417,7 +417,7 @@ final class BrowserModel {
 
     /// A fresh tab on the link, in this workspace.
     private func tab(for link: SavedLink) -> BrowserTab {
-        BrowserTab(store: store, url: link.url, title: link.title, link: link.id)
+        BrowserTab(store: store ?? .ephemeral(UUID()), url: link.url, title: link.title, link: link.id)
     }
 
     /// Whether the tab has a page to save as a link.
@@ -555,7 +555,7 @@ final class BrowserModel {
     func load(_ text: String) {
         guard let url = AddressInput.url(from: text) else { return }
         guard let id = tabs.selectedID else {
-            open(BrowserTab(store: store, url: url), load: true)
+            open(BrowserTab(store: store ?? .ephemeral(UUID()), url: url), load: true)
             return
         }
         load(url, in: id)
@@ -565,7 +565,7 @@ final class BrowserModel {
     /// Loads `url` in the tab; when the tab has no web view to load in, opens a loose tab on it instead.
     private func load(_ url: URL, in id: TabID) {
         guard let view = ensureView(for: id, load: false) else {
-            open(BrowserTab(store: store, url: url), load: true)
+            open(BrowserTab(store: store ?? .ephemeral(UUID()), url: url), load: true)
             return
         }
         update(id) { $0.url = url }
@@ -611,7 +611,7 @@ final class BrowserModel {
             // is left behind.
             load(url, in: blank.id)
         } else {
-            open(BrowserTab(store: store, url: url), load: true)
+            open(BrowserTab(store: store ?? .ephemeral(UUID()), url: url), load: true)
         }
         focusSelectedView()
     }

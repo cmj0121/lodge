@@ -83,7 +83,7 @@ public enum BookmarkNode: Identifiable, Hashable, Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, id, url, title, isExpanded, children
+        case kind, id, url, title, icon, isExpanded, children
     }
 
     public init(from decoder: any Decoder) throws {
@@ -92,7 +92,10 @@ public enum BookmarkNode: Identifiable, Hashable, Codable, Sendable {
         let title = try container.decode(String.self, forKey: .title)
         switch try container.decode(Kind.self, forKey: .kind) {
         case .link:
-            self = .link(SavedLink(id: id, url: try container.decode(URL.self, forKey: .url), title: title))
+            self = .link(
+                SavedLink(
+                    id: id, url: try container.decode(URL.self, forKey: .url), title: title,
+                    icon: try container.decodeIfPresent(Data.self, forKey: .icon)))
         case .folder:
             self = .folder(
                 BookmarkFolder(
@@ -109,6 +112,7 @@ public enum BookmarkNode: Identifiable, Hashable, Codable, Sendable {
             try container.encode(link.id, forKey: .id)
             try container.encode(link.url, forKey: .url)
             try container.encode(link.title, forKey: .title)
+            try container.encodeIfPresent(link.icon, forKey: .icon)
         case .folder(let folder):
             try container.encode(Kind.folder, forKey: .kind)
             try container.encode(folder.id, forKey: .id)

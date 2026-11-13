@@ -4,7 +4,8 @@ import Foundation
 /// (whether its workspace keeps history is up to its model's recorder), a restore load's commit is only seen, and the
 /// url observation's initial value and its changes while loading (commits, which `committed` covers) send nothing;
 /// neither does a blank title, which WebKit sets at every main-frame commit before `didCommit`. A nil `store` means
-/// the tab is gone.
+/// the tab is gone; an anonymous tab has its own `.ephemeral` store, and keeps no history because its model has no
+/// recorder.
 public struct HistoryEventFilter: Sendable {
     private let tab: TabID
     private var sawInitialURL = false

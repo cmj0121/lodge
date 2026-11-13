@@ -5,11 +5,15 @@ public struct SavedLink: Identifiable, Hashable, Codable, Sendable {
     public let id: UUID
     public let url: URL
     public var title: String
+    /// A small PNG of the site's icon, kept only for Anonymous bookmarks (`LinkIcon.png`); nil elsewhere, where
+    /// icons load live. Missing in older files.
+    public var icon: Data?
 
-    public init(id: UUID = UUID(), url: URL, title: String) {
+    public init(id: UUID = UUID(), url: URL, title: String, icon: Data? = nil) {
         self.id = id
         self.url = url
         self.title = title
+        self.icon = icon
     }
 }
 
@@ -127,6 +131,22 @@ public struct LinkLibrary: Equatable, Sendable {
                 folder.title = title
                 parent.children[index] = .folder(folder)
             }
+        }
+    }
+
+    /// Sets the icon of the pin or bookmark with `id`; folders and unknown ids are left as they are.
+    public mutating func setIcon(_ id: UUID, _ icon: Data?) {
+        if let index = pins.firstIndex(where: { $0.id == id }) {
+            pins[index].icon = icon
+            return
+        }
+        guard let parent = parent(of: id) else { return }
+        bookmarks.update(parent) { parent in
+            guard let index = parent.children.firstIndex(where: { $0.id == id }),
+                case .link(var link) = parent.children[index]
+            else { return }
+            link.icon = icon
+            parent.children[index] = .link(link)
         }
     }
 
