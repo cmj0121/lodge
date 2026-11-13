@@ -73,7 +73,6 @@ struct AddressBar: View {
         .onChange(of: tab?.id) { text = displayedAddress }
         .onChange(of: tab?.url) { if !isFocused { text = displayedAddress } }
         .onChange(of: isFocused) { if !isFocused { text = displayedAddress } }
-        .onChange(of: model.addressFocusRequest) { isFocused = true }
     }
 
     private var displayedAddress: String { tab?.url?.absoluteString ?? "" }

@@ -26,11 +26,26 @@ struct BrowserView: View {
                     .transition(.opacity)
             }
         }
+        .overlay {
+            if let prompt = model.locationPrompt {
+                LocationPromptView(
+                    prompt: prompt, initialText: prompt.initialText(for: address(of: prompt)),
+                    submit: model.submitLocation, cancel: model.cancelLocationPrompt
+                )
+                .transition(.opacity)
+            }
+        }
         .animation(.snappy(duration: 0.2), value: model.isShortcutHelpVisible)
+        .animation(.snappy(duration: 0.2), value: model.locationPrompt)
         .navigationTitle(model.selected?.displayTitle ?? "Lodge")
         .environment(\.webViewRegistry, model.registry)
         .frame(minWidth: 800, minHeight: 500)
         .focusedSceneValue(\.isBrowserWindow, true)
+    }
+
+    private func address(of prompt: LocationPrompt) -> URL? {
+        guard case .current(let id) = prompt else { return nil }
+        return model.tabs[id]?.url
     }
 }
 

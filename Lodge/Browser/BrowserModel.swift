@@ -32,8 +32,9 @@ final class BrowserModel {
     var isShortcutHelpVisible = false
     /// Each tab's decoded favicon, kept apart from `tabs` so an icon arriving redraws only its icon.
     private(set) var favicons: [TabID: NSImage] = [:]
-    /// Bumped to ask the window to focus the address bar or the find field.
-    private(set) var addressFocusRequest = 0
+    /// The floating location prompt, open for a new tab or for the tab it loads in; nil when closed.
+    private(set) var locationPrompt: LocationPrompt?
+    /// Bumped to ask the window to focus the find field.
     private(set) var findFocusRequest = 0
     /// The text the last search ran for, so the typing debounce does not search it again.
     @ObservationIgnored private var lastSearchedText = ""
@@ -107,11 +108,10 @@ final class BrowserModel {
 
     // MARK: Tabs
 
-    /// Opens a loose blank tab and selects it.
+    /// Opens the location prompt for a new tab; the tab opens only when the prompt submits an address.
     func newTab() {
         hideShortcutHelp()
-        open(BrowserTab(), load: false)
-        addressFocusRequest += 1
+        locationPrompt = .newTab
     }
 
     /// Cmd-click on a link: the link opens in a new selected tab, on the opener's store.
@@ -162,7 +162,7 @@ final class BrowserModel {
     }
 
     func closeSelectedTab() {
-        hideShortcutHelp()
+        closeFloatingSurfaces()
         if let id = tabs.selectedID { close(id) }
     }
 
@@ -215,7 +215,10 @@ final class BrowserModel {
         if tabs.selectedID != previous {
             if isFindVisible { isFindVisible = false }
             clearFindMiss()
-            if let previous { controllers[previous]?.didDeselect() }
+            if let previous {
+                controllers[previous]?.didDeselect()
+                registry.webView(for: previous)?.focusesWhenShown = false
+            }
             if let link = tabs.selected?.link { changeLibrary { $0.reveal(link) } }
         }
         let dropped = before.filter { tabs[$0] == nil }
@@ -290,7 +293,7 @@ final class BrowserModel {
     }
 
     func bookmarkSelectedTab() {
-        hideShortcutHelp()
+        closeFloatingSurfaces()
         if let id = tabs.selectedID { addLink(.bookmarks, from: id) }
     }
 
@@ -305,7 +308,7 @@ final class BrowserModel {
 
     /// Pins the selected tab's page, or unpins it; the page stays open, and a bookmark's tab keeps its bookmark.
     func togglePinSelectedTab() {
-        hideShortcutHelp()
+        closeFloatingSurfaces()
         if let pin = selectedPin {
             removeLink(pin.id)
         } else if let id = tabs.selectedID {
@@ -407,14 +410,23 @@ final class BrowserModel {
     /// Loads the address into the selected tab, or opens a loose tab on it when none is selected.
     func load(_ text: String) {
         guard let url = AddressInput.url(from: text) else { return }
-        guard let id = tabs.selectedID, let view = ensureView(for: id, load: false) else {
+        guard let id = tabs.selectedID else {
+            open(BrowserTab(url: url), load: true)
+            return
+        }
+        load(url, in: id)
+        focusSelectedView()
+    }
+
+    /// Loads `url` in the tab; when the tab has no web view to load in, opens a loose tab on it instead.
+    private func load(_ url: URL, in id: TabID) {
+        guard let view = ensureView(for: id, load: false) else {
             open(BrowserTab(url: url), load: true)
             return
         }
         update(id) { $0.url = url }
         controllers[id]?.browserWillLoad()
         view.load(URLRequest(url: url))
-        view.window?.makeFirstResponder(view)
     }
 
     func goBack() { selectedView?.goBack() }
@@ -422,7 +434,7 @@ final class BrowserModel {
     func goForward() { selectedView?.goForward() }
 
     func reload() {
-        hideShortcutHelp()
+        closeFloatingSurfaces()
         guard let id = tabs.selectedID, let view = ensureView(for: id, load: false) else { return }
         if view.url == nil, let url = tabs[id]?.url {
             controllers[id]?.browserWillLoad()
@@ -434,9 +446,54 @@ final class BrowserModel {
 
     func stopLoading() { selectedView?.stopLoading() }
 
+    /// Opens the location prompt on the selected tab's address, or for a new tab when none is selected.
     func focusAddressBar() {
         hideShortcutHelp()
-        addressFocusRequest += 1
+        locationPrompt = tabs.selectedID.map { .current($0) } ?? .newTab
+    }
+
+    // MARK: Location prompt
+
+    /// Goes where the prompt's text leads: a new selected tab, or its tab (a new one if that tab has closed since).
+    /// Text that makes no address (blank) leaves the prompt open.
+    func submitLocation(_ text: String) {
+        guard let prompt = locationPrompt, let url = AddressInput.url(from: text) else { return }
+        locationPrompt = nil
+        if case .current(let id) = prompt, tabs[id] != nil {
+            load(url, in: id)
+        } else if case .newTab = prompt, let blank = selected, blank.url == nil, !blank.isLoading {
+            // The blank tab an empty window or closing the last tab leaves takes the page, so no empty New Tab row
+            // is left behind.
+            load(url, in: blank.id)
+        } else {
+            open(BrowserTab(url: url), load: true)
+        }
+        focusSelectedView()
+    }
+
+    /// Closes the prompt and hands the keys back to the page, as closing Find does.
+    func cancelLocationPrompt() {
+        guard locationPrompt != nil else { return }
+        locationPrompt = nil
+        focusSelectedView()
+    }
+
+    /// Closes the shortcut overlay and the location prompt. Every catalog shortcut's action calls it first, so a key
+    /// pressed over either never acts out of sight behind it.
+    private func closeFloatingSurfaces() {
+        hideShortcutHelp()
+        cancelLocationPrompt()
+    }
+
+    /// Makes the selected page first responder; a view not in a window yet (a tab just opened) takes focus when
+    /// SwiftUI puts it in one.
+    private func focusSelectedView() {
+        guard let view = selectedView else { return }
+        if let window = view.window {
+            window.makeFirstResponder(view)
+        } else {
+            view.focusesWhenShown = true
+        }
     }
 
     // MARK: Zoom
@@ -454,17 +511,17 @@ final class BrowserModel {
     var canResetZoom: Bool { selectedPageZoom.map { $0 != PageZoom.actual } == true }
 
     func zoomIn() {
-        hideShortcutHelp()
+        closeFloatingSurfaces()
         if canZoomIn { setSelectedZoom(PageZoom.zoomedIn) }
     }
 
     func zoomOut() {
-        hideShortcutHelp()
+        closeFloatingSurfaces()
         if canZoomOut { setSelectedZoom(PageZoom.zoomedOut) }
     }
 
     func resetZoom() {
-        hideShortcutHelp()
+        closeFloatingSurfaces()
         if canResetZoom { setSelectedZoom { _ in PageZoom.actual } }
     }
 
@@ -481,7 +538,7 @@ final class BrowserModel {
     func closeDownloadsForModeChange() { isDownloadsVisible = false }
 
     func toggleDownloads() {
-        hideShortcutHelp()
+        closeFloatingSurfaces()
         isDownloadsVisible.toggle()
     }
 
@@ -489,12 +546,12 @@ final class BrowserModel {
 
     /// Opens the overlay and takes the keys from the page under it, so Esc and typing reach the overlay.
     func showShortcutHelp() {
+        locationPrompt = nil
         isShortcutHelpVisible = true
         if let window = selectedView?.window { window.makeFirstResponder(nil) }
     }
 
-    /// Closes the overlay and hands the keys back to the page, as closing Find does. Every catalog shortcut's
-    /// action calls it first, so a key pressed over the overlay never acts out of sight behind it.
+    /// Closes the overlay and hands the keys back to the page, as closing Find does.
     func hideShortcutHelp() {
         guard isShortcutHelpVisible else { return }
         isShortcutHelpVisible = false
@@ -508,7 +565,7 @@ final class BrowserModel {
     // MARK: Find
 
     func showFind() {
-        hideShortcutHelp()
+        closeFloatingSurfaces()
         isFindVisible = true
         clearFindMiss()
         findFocusRequest += 1

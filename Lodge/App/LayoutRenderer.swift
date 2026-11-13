@@ -4,7 +4,7 @@
     import SwiftUI
 
     /// Debug aid: `Lodge -renderLayout YES` draws the window's layout (both sidebar modes, find
-    /// open, and the shortcut overlay in light and dark), the History window from an in-memory history, and the Downloads popover and button
+    /// open, and the shortcut overlay and the location prompt in light and dark), the History window from an in-memory history, and the Downloads popover and button
     /// from sample items, to PNG files off screen, then exits. It never shows a window or takes focus,
     /// so it can run while someone uses the machine. No download runs.
     @MainActor
@@ -23,6 +23,12 @@
                 render(
                     .expanded, find: false, shortcutHelp: true, appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-shortcuts-\(name).png"))
+                render(
+                    .expanded, find: false, prompt: .current, appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-location-\(name).png"))
+                render(
+                    .expanded, find: false, prompt: .newTab, appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-location-new-\(name).png"))
             }
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
@@ -31,7 +37,8 @@
         }
 
         private static func render(
-            _ mode: SidebarMode, find: Bool, shortcutHelp: Bool = false, appearance: NSAppearance? = nil, to url: URL
+            _ mode: SidebarMode, find: Bool, shortcutHelp: Bool = false, prompt: PromptRender? = nil,
+            appearance: NSAppearance? = nil, to url: URL
         ) {
             // A throwaway defaults suite, so rendering never changes the user's saved sidebar mode.
             let suite = "dev.lodge.render-layout"
@@ -53,10 +60,18 @@
                 model.findText = "lodge"
             }
             model.isShortcutHelpVisible = shortcutHelp
+            switch prompt {
+            case .newTab: model.newTab()
+            case .current: model.focusAddressBar()
+            case nil: break
+            }
             snapshot(
                 BrowserView(model: model).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
                 appearance: appearance, to: url)
         }
+
+        /// Which location prompt a render opens: ⌘T's empty one or ⌘L's on the selected page.
+        enum PromptRender { case newTab, current }
 
         /// The History window over sample visits from today back three days, in a store that lives only in memory.
         private static func renderHistory(to url: URL) {
