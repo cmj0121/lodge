@@ -57,27 +57,28 @@
 
             let coordinator = WorkspaceCoordinator(
                 restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
-            let model = coordinator.active
+            let pane = firstPane(coordinator)
+            let model = pane.model
             // Opens the sample's folder, so the render shows a nested bookmark.
             for case .folder(let folder) in model.library.bookmarks.children { model.setFolderExpanded(folder.id, true) }
-            if let bookmark = model.library.links(on: .bookmarks).first { model.openLink(bookmark, load: false) }
+            if let bookmark = model.library.links(on: .bookmarks).first { pane.openLink(bookmark, load: false) }
             // An in-memory manager over one running sample, so the sidebar shows the Downloads ring.
             let downloads = DownloadManager(directory: nil, defaults: defaults)
             let running = sampleDownloads.filter { $0.state == .running && $0.totalBytes != nil }
             downloads.restore(DownloadList(items: running))
             model.downloads = downloads
             if find {
-                model.showFind()
-                model.findText = "lodge"
+                pane.showFind()
+                pane.window.findText = "lodge"
             }
-            model.isShortcutHelpVisible = shortcutHelp
+            pane.window.isShortcutHelpVisible = shortcutHelp
             switch prompt {
-            case .newTab: model.newTab()
-            case .current: model.focusAddressBar()
+            case .newTab: pane.newTab()
+            case .current: pane.focusAddressBar()
             case nil: break
             }
             snapshot(
-                BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                root(coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
                 appearance: appearance, to: url)
         }
 
@@ -96,24 +97,24 @@
                 for mode in SidebarMode.allCases {
                     defaults.set(mode.rawValue, forKey: SidebarMode.defaultsKey)
                     snapshot(
-                        BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                        root(coordinator).defaultAppStorage(defaults),
                         size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                         to: directory.appending(path: "layout-workspaces-\(mode.rawValue)-\(name).png"))
                 }
                 defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
-                coordinator.window.workspaceEditor = .create
+                coordinator.windows[0].workspaceEditor = .create
                 snapshot(
-                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    root(coordinator).defaultAppStorage(defaults),
                     size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-workspace-sheet-\(name).png"))
-                coordinator.window.workspaceEditor = .changeIcon(work.id)
+                coordinator.windows[0].workspaceEditor = .changeIcon(work.id)
                 snapshot(
-                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    root(coordinator).defaultAppStorage(defaults),
                     size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-workspace-icon-\(name).png"))
-                coordinator.window.workspaceEditor = .rename(work.id)
+                coordinator.windows[0].workspaceEditor = .rename(work.id)
                 snapshot(
-                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    root(coordinator).defaultAppStorage(defaults),
                     size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-workspace-rename-\(name).png"))
             }
@@ -136,18 +137,18 @@
                 for mode in SidebarMode.allCases {
                     defaults.set(mode.rawValue, forKey: SidebarMode.defaultsKey)
                     snapshot(
-                        BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                        root(coordinator).defaultAppStorage(defaults),
                         size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                         to: directory.appending(path: "layout-anonymous-\(mode.rawValue)-\(name).png"))
                 }
                 guard appearance == .aqua else { continue }
                 defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
-                coordinator.window.workspaceEditor = .rename(Workspace.anonymousID)
+                coordinator.windows[0].workspaceEditor = .rename(Workspace.anonymousID)
                 snapshot(
-                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    root(coordinator).defaultAppStorage(defaults),
                     size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-anonymous-sheet.png"))
-                coordinator.window.workspaceEditor = nil
+                coordinator.windows[0].workspaceEditor = nil
                 let notKept = coordinator.history.state == .notKept
                 snapshot(
                     HistoryView(model: coordinator.history), size: NSSize(width: 640, height: 600), title: "History",
@@ -170,7 +171,7 @@
                 restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
             guard (try? coordinator.create(name: "Work", symbol: WorkspaceSymbols.all[1])) != nil else { return }
             snapshot(
-                BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                root(coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
                 to: url)
             if coordinator.registry.hasViews(on: .global) { print("Default kept its web views after the switch") }
         }
@@ -184,7 +185,7 @@
             let made: Workspace? = autoreleasepool {
                 guard let doomed = try? coordinator.create(name: "Doomed", symbol: WorkspaceSymbols.all[1])
                 else { return nil }
-                snapshot(BrowserRoot(coordinator: coordinator), size: NSSize(width: 800, height: 500), to: url)
+                snapshot(root(coordinator), size: NSSize(width: 800, height: 500), to: url)
                 return doomed
             }
             guard let doomed = made else { return }
@@ -249,8 +250,9 @@
 
             let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
             coordinator.switchTo(Workspace.anonymousID)
-            let model = coordinator.active
-            guard let tab = model.selected, case .ephemeral = tab.store,
+            let pane = firstPane(coordinator)
+            let model = pane.model
+            guard let tab = pane.selected, case .ephemeral = tab.store,
                 let store = coordinator.registry.existingDataStore(for: tab.store)
             else { return report("Anonymous tab has its own store", false) }
             wait { await store.httpCookieStore.setCookie(cookie("kept")) }
@@ -273,14 +275,14 @@
 
             let secret = "anonymous-secret.example"
             let bookmark = URL(string: "https://kept-bookmark.example/")!
-            guard let blank = model.selected else { return report("Anonymous session leaves no URLs", false) }
+            guard let blank = pane.selected else { return report("Anonymous session leaves no URLs", false) }
             model.update(blank.id) { $0.url = bookmark }
             model.addLink(.bookmarks, from: blank.id)
-            model.openLink(SavedLink(url: URL(string: "https://\(secret)/page")!, title: "Secret"), load: false)
+            pane.openLink(SavedLink(url: URL(string: "https://\(secret)/page")!, title: "Secret"), load: false)
             let downloads = DownloadList(items: [
                 DownloadItem(
                     sourceURL: URL(string: "https://\(secret)/file.zip"), fileName: "file.zip", state: .finished,
-                    startedAt: .now, store: model.selected?.store),
+                    startedAt: .now, store: pane.selected?.store),
             ])
             let session = (try? coordinator.snapshot.encoded()).map { String(decoding: $0, as: UTF8.self) } ?? ""
             let saved = (try? JSONEncoder().encode(downloads.persistable())).map { String(decoding: $0, as: UTF8.self) }
@@ -293,7 +295,8 @@
         /// Checks in the background, printing ok or FAILED, that a private download still running when its anonymous
         /// tab closes leaves no row once it ends and its store is dropped. Downloads a `data:` URL into a temporary
         /// folder, removed afterwards; it does not download unless that folder can be accessed, and a file that lands
-        /// anywhere else fails the check (it is left there, as only its planned name is known).
+        /// anywhere else fails the check; the check does not know where such a file went, so it is not removed.
+        /// A failure names each condition that did not hold.
         private static func checkPrivateDownloadRow() {
             let name = "Anonymous download ended after its tab closed leaves no row"
             func report(_ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
@@ -322,43 +325,46 @@
             let coordinator = WorkspaceCoordinator(
                 restoring: nil, session: nil, appDirectory: nil, downloads: downloads)
             coordinator.switchTo(Workspace.anonymousID)
-            guard let tab = coordinator.active.selected, case .ephemeral = tab.store else { return report(false) }
+            guard let tab = firstPane(coordinator).selected, case .ephemeral = tab.store else { return report(false) }
             let config = WKWebViewConfiguration()
             config.websiteDataStore = coordinator.registry.dataStore(for: tab.store)
             let view = WKWebView(frame: .zero, configuration: config)
-            var started: WKDownload?
-            Task { started = await view.startDownload(using: URLRequest(url: URL(string: "data:text/plain,lodge")!)) }
+            var started = false
+            // Handed to the manager inside WebKit's callback, so it is the delegate before the download can end.
+            view.startDownload(using: URLRequest(url: URL(string: "data:text/plain,lodge")!)) { download in
+                MainActor.assumeIsolated {
+                    downloads.start(download, store: tab.store, site: nil, userInitiated: true, isMainFrame: true)
+                    started = true
+                }
+            }
             var deadline = Date.now.addingTimeInterval(5)
-            while started == nil, Date.now < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01)) }
-            guard let download = started else { return report(false) }
-            downloads.start(download, store: tab.store, site: nil, userInitiated: true, isMainFrame: true)
+            while !started, Date.now < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01)) }
+            guard started else { return report(false) }
             // Closed before the download can end: only the download holds the store now.
             coordinator.active.close(tab.id)
             coordinator.registry.detach(tab: tab.id)
             let heldByDownload = coordinator.registry.isHeld(tab.store)
-            // Where the file goes, seen while its row runs (the row goes with its store as the download ends).
-            var saved: URL?
+            // The row goes with its store as the download ends, so where the file went is read from the folder.
+            func landed() -> Bool {
+                (try? files.contentsOfDirectory(atPath: folder.path(percentEncoded: false)))?
+                    .contains { !$0.hasSuffix(".lodgedownload") } == true
+            }
             deadline = Date.now.addingTimeInterval(10)
-            while !downloads.hasUnseenEnded || coordinator.registry.isHeld(tab.store), Date.now < deadline {
-                if let row = downloads.list.items.first(where: { $0.store == tab.store }),
-                    let directory = row.directory
-                {
-                    saved = row.fileURL ?? directory.appending(path: row.fileName)
-                }
+            while !downloads.hasUnseenEnded || coordinator.registry.isHeld(tab.store) || !landed(), Date.now < deadline {
                 RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.005))
             }
-            func identity(_ url: URL) -> (any NSObjectProtocol)? {
-                try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier
-            }
-            let inFolder =
-                saved.flatMap { identity($0.deletingLastPathComponent()) }.map { $0.isEqual(identity(folder)) }
-                == true
+            let inFolder = landed()
             if !inFolder { print("\(name): the test file may have been saved in the Downloads folder") }
-            let landed = (try? files.contentsOfDirectory(atPath: folder.path(percentEncoded: false)))?
-                .contains { !$0.hasSuffix(".lodgedownload") }
-            report(
-                heldByDownload && downloads.hasUnseenEnded && !coordinator.registry.isHeld(tab.store)
-                    && !downloads.list.items.contains { $0.store == tab.store } && inFolder && landed == true)
+            let conditions = [
+                ("held by the download after the tab closed", heldByDownload),
+                ("download ended", downloads.hasUnseenEnded),
+                ("store dropped", !coordinator.registry.isHeld(tab.store)),
+                ("no row left", !downloads.list.items.contains { $0.store == tab.store }),
+                ("file in the temporary folder", inFolder),
+            ]
+            let failed = conditions.filter { !$0.1 }.map(\.0)
+            if !failed.isEmpty { print("\(name): did not hold: \(failed.joined(separator: ", "))") }
+            report(failed.isEmpty)
         }
 
         /// Draws a custom workspace showing Default's sample pins, then checks in the background, printing ok or FAILED
@@ -377,9 +383,10 @@
             guard let work = try? coordinator.create(name: "Work", symbol: "briefcase") else {
                 return report("Custom workspace shows Default's pins", false)
             }
-            let model = coordinator.active
+            let pane = firstPane(coordinator)
+            let model = pane.model
             snapshot(
-                BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                root(coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
                 to: url)
             report(
                 "Custom workspace shows Default's pins",
@@ -387,20 +394,20 @@
                     && model.sidebar.pins.allSatisfy { $0.tab == nil } && model.library.links(on: .pins).isEmpty)
 
             let page = URL(string: "about:blank#pinned")!
-            guard let tab = model.selected else { return report("Pinning in a custom workspace adds to Default", false) }
+            guard let tab = pane.selected else { return report("Pinning in a custom workspace adds to Default", false) }
             model.update(tab.id) { $0.url = page }
-            model.togglePinSelectedTab()
+            pane.togglePinSelectedTab()
             let defaultPins = coordinator.pins
             report(
                 "Pinning in a custom workspace adds to Default",
                 defaultPins.count == LinkLibrary.sample.links(on: .pins).count + 1 && defaultPins.last?.url == page
-                    && model.selected?.link == nil && model.library.links(on: .pins).isEmpty
-                    && coordinator.activeWorkspace.id == work.id && model.isSelectedTabPinned
+                    && pane.selected?.link == nil && model.library.links(on: .pins).isEmpty
+                    && coordinator.activeWorkspace.id == work.id && pane.isSelectedTabPinned
                     && model.sidebar.pins.count == defaultPins.count)
 
             guard let pin = defaultPins.last else { return report("Opening a pin switches to Default", false) }
-            model.activate(.link(pin))
-            let home = coordinator.active
+            pane.activate(.link(pin))
+            let home = firstPane(coordinator)
             report(
                 "Opening a pin switches to Default",
                 coordinator.activeWorkspace.id == Workspace.defaultID && home.selected?.link == pin.id
@@ -424,8 +431,9 @@
                 return report("Move puts the tab in the destination", false)
             }
             coordinator.switchTo(Workspace.defaultID)
-            let home = coordinator.active
-            guard let tab = home.selected, let workModel = coordinator.model(for: work.id) else {
+            let pane = firstPane(coordinator)
+            let home = pane.model
+            guard let tab = pane.selected, let workModel = coordinator.model(for: work.id) else {
                 return report("Move puts the tab in the destination", false)
             }
             let moved = URL(string: "about:blank#moved")!
@@ -438,24 +446,24 @@
 
             report(
                 "Move puts the tab in the destination",
-                coordinator.move(tab: tab.id, to: work.id) && workModel.selected?.url == moved
-                    && workModel.selected?.link == nil && workModel.tabs.tabs.count == 1 && home.tabs[tab.id] == nil
+                coordinator.move(tab: tab.id, to: work.id) && remembered(coordinator, workModel)?.url == moved
+                    && remembered(coordinator, workModel)?.link == nil && workModel.tabs.tabs.count == 1 && home.tabs[tab.id] == nil
                     && coordinator.activeWorkspace.id == Workspace.defaultID)
             report(
                 "Moved tab runs on the destination's store",
-                workModel.selected?.store == work.store && work.store != tab.store
-                    && workModel.selected?.isLive == false)
+                remembered(coordinator, workModel)?.store == work.store && work.store != tab.store
+                    && remembered(coordinator, workModel)?.isLive == false)
 
-            guard let keep = home.selected, let keptURL = keep.url else { return report("Open keeps the original", false) }
+            guard let keep = pane.selected, let keptURL = keep.url else { return report("Open keeps the original", false) }
             report(
                 "Open keeps the original",
                 coordinator.open(tab: keep.id, in: work.id) && home.tabs[keep.id] != nil
-                    && workModel.tabs.tabs.count == 2 && workModel.selected?.url == keptURL
-                    && workModel.selected?.id != keep.id)
+                    && workModel.tabs.tabs.count == 2 && remembered(coordinator, workModel)?.url == keptURL
+                    && remembered(coordinator, workModel)?.id != keep.id)
             report("Open in the same workspace is refused", !coordinator.open(tab: keep.id, in: Workspace.defaultID))
 
             guard let anonymous = coordinator.model(for: Workspace.anonymousID),
-                coordinator.move(tab: keep.id, to: Workspace.anonymousID), let arrived = anonymous.selected
+                coordinator.move(tab: keep.id, to: Workspace.anonymousID), let arrived = remembered(coordinator, anonymous)
             else { return report("Move into Anonymous gets a new browser", false) }
             let others = [home, workModel, anonymous].flatMap(\.tabs.tabs).filter { $0.id != arrived.id }.map(\.store)
             var isEphemeral = false
@@ -465,11 +473,11 @@
                 isEphemeral && !others.contains(arrived.store) && anonymous.tabs.tabs.count == 1
                     && arrived.url == keptURL && home.tabs[keep.id] == nil)
 
-            guard let opener = home.selected,
+            guard let opener = pane.selected,
                 home.openPopup(from: opener.id, configuration: WKWebViewConfiguration()) != nil,
-                let first = home.selected,
+                let first = pane.selected,
                 home.openPopup(from: first.id, configuration: WKWebViewConfiguration()) != nil,
-                let second = home.selected, second.id != first.id, first.id != opener.id
+                let second = pane.selected, second.id != first.id, first.id != opener.id
             else { return report("Move from a popup closes only its chain", false) }
             home.update(first.id) { $0.url = URL(string: "about:blank#popup")! }
             let before = workModel.tabs.tabs.count
@@ -477,9 +485,23 @@
                 "Move from a popup closes only its chain",
                 coordinator.move(tab: first.id, to: work.id) && home.tabs[opener.id] != nil
                     && home.tabs[first.id] == nil && home.tabs[second.id] == nil
-                    && workModel.tabs.tabs.count == before + 1 && workModel.selected?.url?.fragment == "popup"
-                    && workModel.selected?.store == work.store)
+                    && workModel.tabs.tabs.count == before + 1 && remembered(coordinator, workModel)?.url?.fragment == "popup"
+                    && remembered(coordinator, workModel)?.store == work.store)
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+        }
+
+        /// The first window's view of the active workspace.
+        private static func firstPane(_ coordinator: WorkspaceCoordinator) -> BrowserPane {
+            coordinator.pane(for: coordinator.windows[0])
+        }
+
+        private static func root(_ coordinator: WorkspaceCoordinator) -> BrowserRoot {
+            BrowserRoot(coordinator: coordinator, window: coordinator.windows[0])
+        }
+
+        /// The tab a window remembers in the model's workspace: what it shows there on switching to it.
+        private static func remembered(_ coordinator: WorkspaceCoordinator, _ model: BrowserModel) -> BrowserTab? {
+            coordinator.selections.remembered(in: model.workspaceID).flatMap { model.tabs[$0] }
         }
 
         /// Which location prompt a render opens: ⌘T's empty one or ⌘L's on the selected page.

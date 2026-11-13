@@ -11,15 +11,15 @@ extension SidebarMode {
 
 /// The left column: the full control sidebar, or the icon-only rail.
 struct TabSidebar: View {
-    let model: BrowserModel
+    let pane: BrowserPane
     let mode: SidebarMode
     let toggle: () -> Void
     @Environment(WorkspaceCoordinator.self) private var coordinator
 
     var body: some View {
         switch mode {
-        case .expanded: ExpandedSidebar(model: model, coordinator: coordinator, toggle: toggle)
-        case .rail: RailSidebar(model: model, coordinator: coordinator, toggle: toggle)
+        case .expanded: ExpandedSidebar(pane: pane, coordinator: coordinator, toggle: toggle)
+        case .rail: RailSidebar(pane: pane, coordinator: coordinator, toggle: toggle)
         }
     }
 }
@@ -27,7 +27,8 @@ struct TabSidebar: View {
 /// Navigation beside the window buttons, the address, pins, the workspace's bookmarks and loose
 /// tabs, and the workspace bar with Downloads.
 private struct ExpandedSidebar: View {
-    let model: BrowserModel
+    let pane: BrowserPane
+    private var model: BrowserModel { pane.model }
     let coordinator: WorkspaceCoordinator
     let toggle: () -> Void
 
@@ -37,26 +38,26 @@ private struct ExpandedSidebar: View {
             HStack(spacing: 8) {
                 SidebarToggle(isRail: false, action: toggle)
                 Spacer(minLength: 0)
-                NavigationButtons(model: model)
+                NavigationButtons(pane: pane)
             }
             .frame(height: 32)
             // Clears the window buttons, which sit over this row.
             .padding(.leading, 78 - 12)
-            AddressBar(model: model)
+            AddressBar(pane: pane)
                 .padding(.top, 6)
                 .padding(.bottom, 10)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     if !items.pins.isEmpty {
                         Divider()
-                        PinGrid(model: model, items: items.pins)
+                        PinGrid(pane: pane, items: items.pins)
                             .padding(.vertical, 10)
                     }
                     Divider()
                     HStack {
                         WorkspaceHeader(workspace: coordinator.activeWorkspace)
                         Spacer(minLength: 0)
-                        NewTabButton(model: model)
+                        NewTabButton(pane: pane)
                     }
                     .padding(.leading, 8)
                     .padding(.trailing, 4)
@@ -67,7 +68,7 @@ private struct ExpandedSidebar: View {
                         Button("New Folder…") { BookmarkPrompts.newFolder(in: nil, model: model) }
                     }
                     if !items.bookmarks.isEmpty {
-                        BookmarkOutline(model: model, workspaces: coordinator, nodes: items.bookmarks)
+                        BookmarkOutline(pane: pane, workspaces: coordinator, nodes: items.bookmarks)
                     }
                     if !items.bookmarks.isEmpty && !items.loose.isEmpty {
                         Divider()
@@ -79,10 +80,10 @@ private struct ExpandedSidebar: View {
             .scrollIndicators(.never)
             Divider()
             HStack(spacing: 6) {
-                WorkspaceBar(coordinator: coordinator, axis: .horizontal)
-                ShortcutHelpButton(model: model, isRail: false)
+                WorkspaceBar(coordinator: coordinator, pane: pane, axis: .horizontal)
+                ShortcutHelpButton(pane: pane, isRail: false)
                 if let downloads = model.downloads {
-                    DownloadsButton(model: model, manager: downloads, isRail: false)
+                    DownloadsButton(window: pane.window, manager: downloads, isRail: false)
                         .padding(.trailing, 4)
                 }
             }
@@ -94,9 +95,9 @@ private struct ExpandedSidebar: View {
     }
 
     private func rows(_ items: [SidebarItem]) -> some View {
-        let selected = model.tabs.selectedID
+        let selected = pane.selectedID
         return ForEach(items) {
-            SidebarRow(model: model, item: $0, isSelected: $0.isSelected(selected), favicon: model.favicon(for: $0))
+            SidebarRow(pane: pane, item: $0, isSelected: $0.isSelected(selected), favicon: model.favicon(for: $0))
         }
     }
 }
@@ -113,33 +114,34 @@ extension SidebarNode {
 
 /// Icons only: expand, pins, the bookmarks menu, and the workspace bar with Downloads.
 private struct RailSidebar: View {
-    let model: BrowserModel
+    let pane: BrowserPane
+    private var model: BrowserModel { pane.model }
     let coordinator: WorkspaceCoordinator
     let toggle: () -> Void
 
     var body: some View {
         let items = model.sidebar
-        let selected = model.tabs.selectedID
+        let selected = pane.selectedID
         VStack(spacing: 8) {
             SidebarToggle(isRail: true, action: toggle)
             ScrollView {
                 VStack(spacing: 4) {
                     ForEach(items.pins) {
                         ItemButton(
-                            model: model, item: $0, isSelected: $0.isSelected(selected),
+                            pane: pane, item: $0, isSelected: $0.isSelected(selected),
                             favicon: model.favicon(for: $0), shape: .rail)
                     }
                     if !items.bookmarks.isEmpty || !items.loose.isEmpty {
-                        BookmarksMenu(model: model, items: items)
+                        BookmarksMenu(pane: pane, items: items)
                     }
                 }
             }
             .scrollIndicators(.never)
             VStack(spacing: 12) {
-                WorkspaceBar(coordinator: coordinator, axis: .vertical)
-                ShortcutHelpButton(model: model, isRail: true)
+                WorkspaceBar(coordinator: coordinator, pane: pane, axis: .vertical)
+                ShortcutHelpButton(pane: pane, isRail: true)
                 if let downloads = model.downloads {
-                    DownloadsButton(model: model, manager: downloads, isRail: true)
+                    DownloadsButton(window: pane.window, manager: downloads, isRail: true)
                 }
             }
         }
@@ -151,21 +153,22 @@ private struct RailSidebar: View {
 /// The rail's stand-in for the bookmark and loose tab rows: one button whose menu lists them, each
 /// folder as a submenu, filled while one of them is selected; below them, Move and Open in Workspace for each open tab.
 private struct BookmarksMenu: View {
-    let model: BrowserModel
+    let pane: BrowserPane
+    private var model: BrowserModel { pane.model }
     let items: SidebarSections
     @Environment(WorkspaceCoordinator.self) private var coordinator
     @State private var isHovered = false
 
     var body: some View {
-        let selected = model.tabs.selectedID
+        let selected = pane.selectedID
         let isSelected = (items.bookmarks.flatMap(\.bookmarkItems) + items.loose).contains { $0.isSelected(selected) }
         let shape = ItemButton.Metrics.rail
         Menu {
-            BookmarkMenuEntries(model: model, nodes: items.bookmarks, selected: selected)
+            BookmarkMenuEntries(pane: pane, nodes: items.bookmarks, selected: selected)
             if !items.bookmarks.isEmpty && !items.loose.isEmpty {
                 Divider()
             }
-            ForEach(items.loose) { MenuEntry(model: model, item: $0, selected: selected) }
+            ForEach(items.loose) { MenuEntry(pane: pane, item: $0, selected: selected) }
             let open = (items.bookmarks.flatMap(\.bookmarkItems) + items.loose).compactMap(\.tab)
             if !open.isEmpty {
                 Divider()
@@ -205,7 +208,7 @@ private struct BookmarksMenu: View {
 
 /// The bookmarks menu's entries for `nodes`: a bookmark as a checkable entry, a folder as a submenu.
 private struct BookmarkMenuEntries: View {
-    let model: BrowserModel
+    let pane: BrowserPane
     let nodes: [SidebarNode]
     let selected: TabID?
 
@@ -218,12 +221,12 @@ private struct BookmarkMenuEntries: View {
                         Button("No Bookmarks") {}
                             .disabled(true)
                     }
-                    BookmarkMenuEntries(model: model, nodes: children, selected: selected)
+                    BookmarkMenuEntries(pane: pane, nodes: children, selected: selected)
                 } label: {
                     Label(title, systemImage: "folder")
                 }
             case .item(let item):
-                MenuEntry(model: model, item: item, selected: selected)
+                MenuEntry(pane: pane, item: item, selected: selected)
             }
         }
     }
@@ -231,13 +234,14 @@ private struct BookmarkMenuEntries: View {
 
 /// One bookmark or loose tab in the bookmarks menu, checked while its tab is selected.
 private struct MenuEntry: View {
-    let model: BrowserModel
+    let pane: BrowserPane
+    private var model: BrowserModel { pane.model }
     let item: SidebarItem
     let selected: TabID?
 
     var body: some View {
         Toggle(
-            isOn: Binding(get: { item.isSelected(selected) }, set: { _ in model.activate(item.target) })
+            isOn: Binding(get: { item.isSelected(selected) }, set: { _ in pane.activate(item.target) })
         ) {
             Label {
                 Text(item.title)
@@ -303,7 +307,8 @@ private enum MenuImages {
 
 /// Open, Pin, Bookmark, Unpin or Remove, and Close, as fit the item.
 private struct ItemMenu: View {
-    let model: BrowserModel
+    let pane: BrowserPane
+    private var model: BrowserModel { pane.model }
     let item: SidebarItem
     @Environment(WorkspaceCoordinator.self) private var coordinator
 
@@ -311,7 +316,7 @@ private struct ItemMenu: View {
         switch item {
         case .link(let link, let shelf, let tab):
             if shelf == .pins && tab == nil {
-                Button("Open") { model.activate(.link(link)) }
+                Button("Open") { pane.activate(.link(link)) }
             }
             if shelf == .pins {
                 Button("Unpin") { model.unpin(link.id) }
@@ -332,7 +337,7 @@ private struct ItemMenu: View {
                 coordinator.open(tab: tab.id, in: $0)
             }
             Divider()
-            Button("Close Tab") { model.close(tab.id) }
+            Button("Close Tab") { pane.close(tab.id) }
         }
     }
 }
@@ -361,9 +366,9 @@ private struct WorkspaceMenu: View {
 
 extension View {
     /// Hover tracking and the item's context menu, shared by every sidebar entry.
-    fileprivate func sidebarItem(_ item: SidebarItem, model: BrowserModel, isHovered: Binding<Bool>) -> some View {
+    fileprivate func sidebarItem(_ item: SidebarItem, pane: BrowserPane, isHovered: Binding<Bool>) -> some View {
         onHover { isHovered.wrappedValue = $0 }
-            .contextMenu { ItemMenu(model: model, item: item) }
+            .contextMenu { ItemMenu(pane: pane, item: item) }
     }
 
     /// An icon-only borderless button in the secondary colour, as the sidebar's small controls are.
@@ -459,17 +464,18 @@ func rowBackground(isSelected: Bool, isHovered: Bool, cornerRadius: CGFloat) -> 
 
 /// Pins as favicon tiles, four to a row.
 private struct PinGrid: View {
-    let model: BrowserModel
+    let pane: BrowserPane
+    private var model: BrowserModel { pane.model }
     let items: [SidebarItem]
 
     private static let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 4)
 
     var body: some View {
-        let selected = model.tabs.selectedID
+        let selected = pane.selectedID
         LazyVGrid(columns: Self.columns, spacing: 6) {
             ForEach(items) {
                 ItemButton(
-                    model: model, item: $0, isSelected: $0.isSelected(selected), favicon: model.favicon(for: $0),
+                    pane: pane, item: $0, isSelected: $0.isSelected(selected), favicon: model.favicon(for: $0),
                     shape: .pin)
             }
         }
@@ -492,7 +498,8 @@ private struct ItemButton: View {
         static let rail = Metrics(iconSize: 24, width: 46, height: 40, cornerRadius: 10, isTile: false)
     }
 
-    let model: BrowserModel
+    let pane: BrowserPane
+    private var model: BrowserModel { pane.model }
     let item: SidebarItem
     let isSelected: Bool
     let favicon: NSImage?
@@ -501,7 +508,7 @@ private struct ItemButton: View {
 
     var body: some View {
         Button {
-            model.activate(item.target)
+            pane.activate(item.target)
         } label: {
             ItemIcon(item: item, image: favicon, size: shape.iconSize, isOnTile: shape.isTile)
                 .frame(maxWidth: shape.width ?? .infinity)
@@ -520,7 +527,7 @@ private struct ItemButton: View {
             Button(shape.isTile ? "Move Left" : "Move Up") { move(by: -1) }
             Button(shape.isTile ? "Move Right" : "Move Down") { move(by: 1) }
         }
-        .sidebarItem(item, model: model, isHovered: $isHovered)
+        .sidebarItem(item, pane: pane, isHovered: $isHovered)
         .modifier(PinDrag(pin: pinID))
         .dropDestination(for: String.self) { payload, _ in
             guard let dragged = payload.first.flatMap(UUID.init(uuidString:)), isPin(dragged), let index else {
@@ -563,19 +570,19 @@ private struct PinDrag: ViewModifier {
 
 /// A loose tab with its title; the selected one carries a close button.
 private struct SidebarRow: View {
-    let model: BrowserModel
+    let pane: BrowserPane
     let item: SidebarItem
     let isSelected: Bool
     let favicon: NSImage?
     @State private var isHovered = false
 
     var body: some View {
-        SidebarRowLabel(model: model, item: item, isSelected: isSelected, isHovered: isHovered, favicon: favicon)
+        SidebarRowLabel(pane: pane, item: item, isSelected: isSelected, isHovered: isHovered, favicon: favicon)
             .contentShape(.rect)
-            .onTapGesture { model.activate(item.target) }
+            .onTapGesture { pane.activate(item.target) }
             .help(item.address)
-            .itemAccessibility(item, isSelected: isSelected, model: model)
-            .sidebarItem(item, model: model, isHovered: $isHovered)
+            .itemAccessibility(item, isSelected: isSelected, pane: pane)
+            .sidebarItem(item, pane: pane, isHovered: $isHovered)
     }
 }
 
@@ -583,7 +590,8 @@ private struct SidebarRow: View {
 /// disclosure chevron, set in by its depth. The outline beneath takes its clicks, drags, menu, tooltip
 /// and accessibility.
 struct BookmarkTreeRow: View {
-    let model: BrowserModel
+    let pane: BrowserPane
+    private var model: BrowserModel { pane.model }
     let rows: BookmarkRows
     let id: SidebarItem.ID
 
@@ -595,7 +603,7 @@ struct BookmarkTreeRow: View {
                 FolderRowLabel(title: title, isExpanded: isExpanded, isHovered: isHovered)
             case .item(let item)?:
                 SidebarRowLabel(
-                    model: model, item: item, isSelected: item.isSelected(model.tabs.selectedID), isHovered: isHovered,
+                    pane: pane, item: item, isSelected: item.isSelected(pane.selectedID), isHovered: isHovered,
                     favicon: model.favicon(for: item))
             case nil:
                 EmptyView()
@@ -649,7 +657,7 @@ struct SidebarRowLabel: View {
         static let cornerRadius: CGFloat = 7
     }
 
-    let model: BrowserModel
+    let pane: BrowserPane
     let item: SidebarItem
     let isSelected: Bool
     let isHovered: Bool
@@ -665,7 +673,7 @@ struct SidebarRowLabel: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let tab = item.tab {
                 Button {
-                    model.close(tab.id)
+                    pane.close(tab.id)
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .semibold))
@@ -688,14 +696,14 @@ struct SidebarRowLabel: View {
 extension View {
     /// A bookmark or tab row as one accessibility button named by its title, activated by default and
     /// closable while its tab is open.
-    fileprivate func itemAccessibility(_ item: SidebarItem, isSelected: Bool, model: BrowserModel) -> some View {
+    fileprivate func itemAccessibility(_ item: SidebarItem, isSelected: Bool, pane: BrowserPane) -> some View {
         accessibilityElement(children: .combine)
             .accessibilityLabel(item.title)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-            .accessibilityAction { model.activate(item.target) }
+            .accessibilityAction { pane.activate(item.target) }
             .accessibilityActions {
                 if let tab = item.tab {
-                    Button("Close Tab") { model.close(tab.id) }
+                    Button("Close Tab") { pane.close(tab.id) }
                 }
             }
     }
@@ -716,15 +724,15 @@ private struct SidebarToggle: View {
 
 /// Opens and closes the keyboard shortcut overlay, as Help ▸ Keyboard Shortcuts opens it (D3).
 private struct ShortcutHelpButton: View {
-    let model: BrowserModel
+    let pane: BrowserPane
     let isRail: Bool
 
     var body: some View {
-        Button("Keyboard Shortcuts", systemImage: "questionmark", action: model.toggleShortcutHelp)
+        Button("Keyboard Shortcuts", systemImage: "questionmark", action: pane.toggleShortcutHelp)
             .iconButtonStyle()
             .font(isRail ? .system(size: SidebarMode.railSymbolSize) : nil)
             .help("Keyboard shortcuts")
-            .accessibilityAddTraits(model.isShortcutHelpVisible ? .isSelected : [])
+            .accessibilityAddTraits(pane.window.isShortcutHelpVisible ? .isSelected : [])
     }
 }
 
@@ -763,10 +771,10 @@ private struct WorkspaceHeader: View {
 }
 
 private struct NewTabButton: View {
-    let model: BrowserModel
+    let pane: BrowserPane
 
     var body: some View {
-        Button("New Tab", systemImage: "plus", action: model.newTab)
+        Button("New Tab", systemImage: "plus", action: pane.newTab)
             .iconButtonStyle()
             .help(ShortcutCatalog.tooltip("Open a new tab", for: .newTab))
     }

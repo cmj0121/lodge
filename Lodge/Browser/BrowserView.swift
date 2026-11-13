@@ -4,48 +4,48 @@ import SwiftUI
 /// The browser window: every control in the left column, and the selected tab's page floating as
 /// a card on the right.
 struct BrowserView: View {
-    @Bindable var model: BrowserModel
+    let pane: BrowserPane
     @AppStorage(SidebarMode.defaultsKey) private var sidebarMode: SidebarMode = .expanded
 
     var body: some View {
         HStack(spacing: 0) {
-            TabSidebar(model: model, mode: sidebarMode) {
-                model.closeDownloadsForModeChange()
+            TabSidebar(pane: pane, mode: sidebarMode) {
+                pane.closeDownloadsForModeChange()
                 withAnimation(.snappy(duration: 0.25)) { sidebarMode = sidebarMode.toggled }
             }
             .frame(width: sidebarMode.width)
-            PageCard(model: model, showsAddress: sidebarMode == .rail)
+            PageCard(pane: pane, showsAddress: sidebarMode == .rail)
                 .padding([.top, .trailing, .bottom], 8)
                 // The card reaches up beside the window buttons; the column keeps the title bar inset.
                 .ignoresSafeArea(.container, edges: .top)
         }
         .background(Color(nsColor: .underPageBackgroundColor))
         .overlay {
-            if model.isShortcutHelpVisible {
-                ShortcutHelpOverlay(close: model.hideShortcutHelp)
+            if pane.window.isShortcutHelpVisible {
+                ShortcutHelpOverlay(close: pane.hideShortcutHelp)
                     .transition(.opacity)
             }
         }
         .overlay {
-            if let prompt = model.locationPrompt {
+            if let prompt = pane.window.locationPrompt {
                 LocationPromptView(
                     prompt: prompt, initialText: prompt.initialText(for: address(of: prompt)),
-                    submit: model.submitLocation, cancel: model.cancelLocationPrompt
+                    submit: pane.submitLocation, cancel: pane.cancelLocationPrompt
                 )
                 .transition(.opacity)
             }
         }
-        .animation(.snappy(duration: 0.2), value: model.isShortcutHelpVisible)
-        .animation(.snappy(duration: 0.2), value: model.locationPrompt)
-        .navigationTitle(model.windowTitle)
-        .environment(\.webViewRegistry, model.registry)
+        .animation(.snappy(duration: 0.2), value: pane.window.isShortcutHelpVisible)
+        .animation(.snappy(duration: 0.2), value: pane.window.locationPrompt)
+        .navigationTitle(pane.windowTitle)
+        .environment(\.webViewRegistry, pane.model.registry)
         .frame(minWidth: 800, minHeight: 500)
         .focusedSceneValue(\.isBrowserWindow, true)
     }
 
     private func address(of prompt: LocationPrompt) -> URL? {
         guard case .current(let id) = prompt else { return nil }
-        return model.tabs[id]?.url
+        return pane.model.tabs[id]?.url
     }
 }
 
@@ -57,15 +57,15 @@ extension FocusedValues {
 /// The page, as a floating card. With the sidebar collapsed it carries the address and navigation
 /// in a header strip.
 private struct PageCard: View {
-    let model: BrowserModel
+    let pane: BrowserPane
     let showsAddress: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             if showsAddress {
                 HStack(spacing: 8) {
-                    NavigationButtons(model: model)
-                    AddressBar(model: model)
+                    NavigationButtons(pane: pane)
+                    AddressBar(pane: pane)
                         .frame(maxWidth: 640)
                     Spacer(minLength: 0)
                 }
@@ -73,24 +73,24 @@ private struct PageCard: View {
                 .padding(.vertical, 6)
                 Divider()
             }
-            PageArea(model: model)
+            PageArea(pane: pane)
                 .overlay(alignment: .topTrailing) {
-                    if model.isFindVisible {
-                        FindPopup(model: model)
+                    if pane.window.isFindVisible {
+                        FindPopup(pane: pane, window: pane.window)
                             .padding(12)
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
-                .animation(.snappy(duration: 0.2), value: model.isFindVisible)
+                .animation(.snappy(duration: 0.2), value: pane.window.isFindVisible)
         }
         .floatingSurface(cornerRadius: 10)
     }
 }
 
 private struct PageArea: View {
-    let model: BrowserModel
+    let pane: BrowserPane
 
-    private var tab: BrowserTab? { model.selected }
+    private var tab: BrowserTab? { pane.selected }
     /// No tab, or a blank one with nothing on its way.
     private var showsNewTab: Bool { tab.map { $0.url == nil && !$0.isLoading } ?? true }
 
@@ -101,7 +101,7 @@ private struct PageArea: View {
                 WebViewHost(tab: tab.id)
             }
             if let tab, tab.hasCrashed {
-                CrashedPlaceholder(host: tab.url?.host(), reload: model.reload)
+                CrashedPlaceholder(host: tab.url?.host(), reload: pane.reload)
             } else if showsNewTab {
                 NewTabPlaceholder()
             }

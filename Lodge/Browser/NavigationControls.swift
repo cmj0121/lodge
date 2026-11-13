@@ -3,22 +3,22 @@ import SwiftUI
 
 /// Back, forward and reload/stop for the selected tab, as icon buttons.
 struct NavigationButtons: View {
-    let model: BrowserModel
+    let pane: BrowserPane
 
     var body: some View {
         HStack(spacing: 12) {
-            Button("Back", systemImage: "chevron.backward", action: model.goBack)
-                .disabled(model.selected?.canGoBack != true)
+            Button("Back", systemImage: "chevron.backward", action: pane.goBack)
+                .disabled(pane.selected?.canGoBack != true)
                 .help("Go back")
-            Button("Forward", systemImage: "chevron.forward", action: model.goForward)
-                .disabled(model.selected?.canGoForward != true)
+            Button("Forward", systemImage: "chevron.forward", action: pane.goForward)
+                .disabled(pane.selected?.canGoForward != true)
                 .help("Go forward")
-            if model.selected?.isLoading == true {
-                Button("Stop", systemImage: "xmark", action: model.stopLoading)
+            if pane.selected?.isLoading == true {
+                Button("Stop", systemImage: "xmark", action: pane.stopLoading)
                     .help("Stop loading")
             } else {
-                Button("Reload", systemImage: "arrow.clockwise", action: model.reload)
-                    .disabled(model.selected?.url == nil)
+                Button("Reload", systemImage: "arrow.clockwise", action: pane.reload)
+                    .disabled(pane.selected?.url == nil)
                     .help(ShortcutCatalog.tooltip("Reload this page", for: .reload))
             }
         }
@@ -32,11 +32,11 @@ struct NavigationButtons: View {
 /// The address field: shows the page's address, takes a URL or a search, and hosts the load
 /// progress line along its bottom edge.
 struct AddressBar: View {
-    let model: BrowserModel
+    let pane: BrowserPane
     @State private var text = ""
     @FocusState private var isFocused: Bool
 
-    private var tab: BrowserTab? { model.selected }
+    private var tab: BrowserTab? { pane.selected }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -44,7 +44,7 @@ struct AddressBar: View {
                 .textFieldStyle(.plain)
                 .focused($isFocused)
                 .onSubmit {
-                    model.load(text)
+                    pane.load(text)
                     isFocused = false
                 }
                 .onExitCommand {
@@ -52,7 +52,7 @@ struct AddressBar: View {
                     isFocused = false
                 }
                 .accessibilityLabel("Address")
-            SiteSecurityButton(model: model)
+            SiteSecurityButton(pane: pane)
         }
         .padding(.leading, 10)
         .padding(.trailing, 4)
@@ -65,7 +65,7 @@ struct AddressBar: View {
         }
         .overlay(alignment: .bottomLeading) {
             if let tab, tab.isLoading {
-                ProgressLine(model: model, tab: tab.id)
+                ProgressLine(model: pane.model, tab: tab.id)
                     .transition(.opacity)
             }
         }
@@ -80,11 +80,11 @@ struct AddressBar: View {
 
 /// The live page's security at the address bar's end; a click shows its origin and what the icon means.
 private struct SiteSecurityButton: View {
-    let model: BrowserModel
+    let pane: BrowserPane
     @State private var isShowingInfo = false
 
-    private var url: URL? { model.selected?.url }
-    private var security: SiteSecurity { model.selectedSecurity }
+    private var url: URL? { pane.selected?.url }
+    private var security: SiteSecurity { pane.selectedSecurity }
 
     var body: some View {
         Button {

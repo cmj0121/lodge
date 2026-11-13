@@ -1,13 +1,16 @@
-import Foundation
+import AppKit
 import LodgeKit
 import Observation
 
-/// One browser window's own state: the workspace it shows and its floating surfaces (find, downloads popover,
-/// shortcut overlay, location prompt), which stay with the window when it switches workspace.
+/// One browser window's own state: its floating surfaces (find, downloads popover, shortcut overlay, location
+/// prompt), which stay with the window when the workspace switches. The tab it shows is the coordinator's
+/// (`WindowSelections`), every window being on the active workspace.
 @MainActor
 @Observable
 final class WindowState {
-    var activeWorkspace: UUID
+    let id: WindowID
+    /// The window on screen, once `WindowRegistrar` has seen it.
+    @ObservationIgnored weak var nsWindow: NSWindow?
     var findText = ""
     var isFindVisible = false
     var findMissed = false
@@ -24,8 +27,14 @@ final class WindowState {
     /// The workspace sheet, open to create a workspace or to rename one or change its icon; nil when closed.
     var workspaceEditor: WorkspaceEditor?
 
-    init(activeWorkspace: UUID = Workspace.defaultID) {
-        self.activeWorkspace = activeWorkspace
+    init(id: WindowID = WindowID()) {
+        self.id = id
+    }
+
+    /// Another tab is shown: find hides and its miss clears.
+    func dismissFind() {
+        if isFindVisible { isFindVisible = false }
+        if findMissed { findMissed = false }
     }
 
     /// Before a switch: hides find (clearing its miss), the location prompt, the shortcut overlay and the workspace

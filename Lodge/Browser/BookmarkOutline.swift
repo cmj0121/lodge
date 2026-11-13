@@ -6,7 +6,7 @@ import SwiftUI
 /// bookmarks and folders drag natively between rows and onto folders. It is as tall as its rows; the
 /// sidebar's scroll view scrolls it.
 struct BookmarkOutline: NSViewRepresentable {
-    let model: BrowserModel
+    let pane: BrowserPane
     /// Lists the workspaces a bookmark's open tab can move or open in; the outline's menu cannot read the environment.
     let workspaces: WorkspaceCoordinator
     let nodes: [SidebarNode]
@@ -16,7 +16,7 @@ struct BookmarkOutline: NSViewRepresentable {
     /// How far each folder level sets its rows in.
     static let indent: CGFloat = 16
 
-    func makeCoordinator() -> Coordinator { Coordinator(model: model, workspaces: workspaces) }
+    func makeCoordinator() -> Coordinator { Coordinator(pane: pane, workspaces: workspaces) }
 
     func makeNSView(context: Context) -> OutlineContainer {
         let container = OutlineContainer(outline: context.coordinator.outline)
@@ -25,7 +25,7 @@ struct BookmarkOutline: NSViewRepresentable {
     }
 
     func updateNSView(_ container: OutlineContainer, context: Context) {
-        context.coordinator.model = model
+        context.coordinator.pane = pane
         context.coordinator.workspaces = workspaces
         context.coordinator.update(nodes)
     }
@@ -38,7 +38,8 @@ struct BookmarkOutline: NSViewRepresentable {
     /// context menu into model actions.
     @MainActor
     final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate {
-        var model: BrowserModel
+        var pane: BrowserPane
+        private var model: BrowserModel { pane.model }
         var workspaces: WorkspaceCoordinator
         let outline = TreeOutlineView()
         let rows = BookmarkRows()
@@ -58,8 +59,8 @@ struct BookmarkOutline: NSViewRepresentable {
         private static let cellID = NSUserInterfaceItemIdentifier("BookmarkCell")
         private static let rowID = NSUserInterfaceItemIdentifier("BookmarkRow")
 
-        init(model: BrowserModel, workspaces: WorkspaceCoordinator) {
-            self.model = model
+        init(pane: BrowserPane, workspaces: WorkspaceCoordinator) {
+            self.pane = pane
             self.workspaces = workspaces
             super.init()
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Bookmark"))
@@ -178,7 +179,7 @@ struct BookmarkOutline: NSViewRepresentable {
 
         func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
             guard let id = id(item) else { return nil }
-            let row = BookmarkTreeRow(model: model, rows: rows, id: id)
+            let row = BookmarkTreeRow(pane: pane, rows: rows, id: id)
             if let cell = outlineView.makeView(withIdentifier: Self.cellID, owner: nil) as? RowHost {
                 cell.rootView = row
                 return cell
@@ -212,11 +213,11 @@ struct BookmarkOutline: NSViewRepresentable {
                     label: title, value: isExpanded ? "Folder, expanded" : "Folder, collapsed", toolTip: nil,
                     isSelected: false, actions: [(isExpanded ? "Collapse" : "Expand", { [model] in model.setFolderExpanded(folder, !isExpanded) })])
             case .item(let item)?:
-                var actions: [(String, () -> Void)] = [("Open", { [model] in model.activate(item.target) })]
-                if let tab = item.tab { actions.append(("Close Tab", { [model] in model.close(tab.id) })) }
+                var actions: [(String, () -> Void)] = [("Open", { [pane] in pane.activate(item.target) })]
+                if let tab = item.tab { actions.append(("Close Tab", { [pane] in pane.close(tab.id) })) }
                 return RowView.Content(
                     label: item.title, value: nil, toolTip: item.address,
-                    isSelected: item.isSelected(model.tabs.selectedID), actions: actions)
+                    isSelected: item.isSelected(pane.selectedID), actions: actions)
             case nil:
                 return nil
             }
@@ -242,11 +243,11 @@ struct BookmarkOutline: NSViewRepresentable {
                 guard (NSApp.currentEvent?.clickCount ?? 1) <= 1 else { return }
                 model.setFolderExpanded(id, !isExpanded)
             case .item(let item)?:
-                let showsClose = rows.hovered == item.id || item.isSelected(model.tabs.selectedID)
+                let showsClose = rows.hovered == item.id || item.isSelected(pane.selectedID)
                 if let tab = item.tab, showsClose, isOnCloseButton(row) {
-                    model.close(tab.id)
+                    pane.close(tab.id)
                 } else {
-                    model.activate(item.target)
+                    pane.activate(item.target)
                 }
             case nil:
                 break
@@ -332,7 +333,7 @@ struct BookmarkOutline: NSViewRepresentable {
                         })
                     }
                     menu.addItem(.separator())
-                    menu.addItem(ClosureMenuItem("Close Tab") { [model] in model.close(tab.id) })
+                    menu.addItem(ClosureMenuItem("Close Tab") { [pane] in pane.close(tab.id) })
                 }
             case .item(.tab)?, nil:
                 menu.addItem(ClosureMenuItem("New Folder…") { [model] in BookmarkPrompts.newFolder(in: nil, model: model) })

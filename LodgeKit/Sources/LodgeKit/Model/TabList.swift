@@ -40,42 +40,28 @@ public struct BrowserTab: Identifiable, Hashable, Sendable {
     }
 }
 
-/// Ordered tabs of one window and which one is selected.
+/// A workspace's open tabs, in order; which one a window shows is the window resolver's (`WindowSelections`).
 public struct TabList: Sendable, Equatable {
     public private(set) var tabs: [BrowserTab] = []
-    public private(set) var selectedID: TabID?
 
     public init() {}
 
-    /// Restores `tabs`, selecting `selectedID` when it is one of them, else the first tab.
-    public init(tabs: [BrowserTab], selectedID: TabID?) {
+    public init(tabs: [BrowserTab]) {
         self.tabs = tabs
-        self.selectedID = tabs.contains { $0.id == selectedID } ? selectedID : tabs.first?.id
     }
-
-    public var selected: BrowserTab? { selectedID.flatMap { self[$0] } }
 
     public subscript(id: TabID) -> BrowserTab? { tabs.first { $0.id == id } }
 
     public func tab(forLink link: UUID) -> BrowserTab? { tabs.first { $0.link == link } }
 
-    /// Appends `tab` and selects it.
+    /// Appends `tab`.
     public mutating func open(_ tab: BrowserTab) {
         tabs.append(tab)
-        selectedID = tab.id
     }
 
-    /// Selects the tab, keeping every tab open; an unknown id changes nothing.
-    public mutating func select(_ id: TabID) {
-        if self[id] != nil { selectedID = id }
-    }
-
-    /// Removes `id`. When it was selected, selects `next` if it is in the list, else nothing.
-    /// Closing a non-selected tab keeps the selection.
-    public mutating func close(_ id: TabID, selecting next: TabID?) {
-        guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-        tabs.remove(at: index)
-        if selectedID == id { selectedID = next.flatMap { self[$0]?.id } }
+    /// Removes `id`; an unknown id changes nothing.
+    public mutating func close(_ id: TabID) {
+        tabs.removeAll { $0.id == id }
     }
 
     /// Applies `change` to the tab; an unknown id changes nothing.

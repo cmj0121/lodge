@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 /// sideways in the sidebar, up and down in the rail.
 struct WorkspaceBar: View {
     let coordinator: WorkspaceCoordinator
+    let pane: BrowserPane
     let axis: Axis
 
     /// How many rail icons show before the rest scroll.
@@ -20,7 +21,7 @@ struct WorkspaceBar: View {
         let layout = isRail ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(spacing: 10))
         layout {
             icons(isRail: isRail)
-            Button("New Workspace", systemImage: "plus") { coordinator.active.showWorkspaceEditor(.create) }
+            Button("New Workspace", systemImage: "plus") { pane.showWorkspaceEditor(.create) }
                 .iconButtonStyle()
                 .help("New workspace")
             SettingsButton()
@@ -41,7 +42,8 @@ struct WorkspaceBar: View {
                 layout {
                     ForEach(workspaces) { workspace in
                         WorkspaceIcon(
-                            coordinator: coordinator, workspace: workspace, isActive: workspace.id == activeID,
+                            coordinator: coordinator, pane: pane, workspace: workspace,
+                            isActive: workspace.id == activeID,
                             isRail: isRail)
                     }
                 }
@@ -66,6 +68,7 @@ private struct WorkspaceIcon: View {
     static let barHeight: CGFloat = 24
 
     let coordinator: WorkspaceCoordinator
+    let pane: BrowserPane
     let workspace: Workspace
     let isActive: Bool
     let isRail: Bool
@@ -135,7 +138,7 @@ private struct WorkspaceIcon: View {
     }
 
     private func edit(_ editor: WorkspaceEditor) {
-        coordinator.active.showWorkspaceEditor(editor)
+        pane.showWorkspaceEditor(editor)
     }
 
     private func move(by offset: Int) {

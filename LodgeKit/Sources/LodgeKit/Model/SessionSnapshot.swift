@@ -25,12 +25,13 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         /// The root folder, with every folder's expand state.
         public var bookmarks: BookmarkFolder
 
-        public static let empty = WorkspaceContent(tabs: TabList(), library: LinkLibrary())
+        public static let empty = WorkspaceContent(tabs: TabList(), library: LinkLibrary(), selectedTab: nil)
 
-        public init(tabs: TabList, library: LinkLibrary) {
+        /// `selectedTab` is the one an older build restores, and the fallback for the first window (D8).
+        public init(tabs: TabList, library: LinkLibrary, selectedTab: TabID?) {
             self.init(
                 tabs: tabs.tabs.map { Tab(id: $0.id, url: $0.url, title: $0.title, link: $0.link) },
-                selectedTab: tabs.selectedID, pins: library.links(on: .pins), bookmarks: library.bookmarks)
+                selectedTab: selectedTab, pins: library.links(on: .pins), bookmarks: library.bookmarks)
         }
 
         init(tabs: [Tab], selectedTab: TabID?, pins: [SavedLink], bookmarks: BookmarkFolder) {
@@ -56,18 +57,19 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             return content
         }
 
-        /// Tabs on `store`, isLive false, dangling link dropped, unknown selection → first tab. A nil `store`
-        /// (Anonymous) gives no tabs, only the library.
-        public func restored(store: StoreRef?) -> (tabs: TabList, library: LinkLibrary) {
+        /// Tabs on `store`, isLive false, dangling link dropped; `selectedTab` only when it is one of them. A nil
+        /// `store` (Anonymous) gives no tabs and no selection, only the library.
+        public func restored(store: StoreRef?) -> (tabs: TabList, library: LinkLibrary, selectedTab: TabID?) {
             let library = LinkLibrary(pins: pins, bookmarks: bookmarks)
-            guard let store else { return (TabList(), library) }
+            guard let store else { return (TabList(), library, nil) }
             let links = Set((pins + bookmarks.links).map(\.id))
             let restored = tabs.map {
                 BrowserTab(
                     id: $0.id, store: store, url: $0.url, title: $0.title,
                     link: $0.link.flatMap { links.contains($0) ? $0 : nil }, isLive: false)
             }
-            return (TabList(tabs: restored, selectedID: selectedTab), library)
+            let selected = restored.contains { $0.id == selectedTab } ? selectedTab : nil
+            return (TabList(tabs: restored), library, selected)
         }
     }
 

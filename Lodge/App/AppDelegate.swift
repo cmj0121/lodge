@@ -52,8 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let isShortcutHelp = event.characters == "/" && flags == [.command]
             guard isZoomInAlias || isShortcutHelp else { return event }
             let handled = MainActor.assumeIsolated {
-                guard let self, self.isBrowserWindowKey else { return false }
-                let browser = self.coordinator.active
+                guard let browser = self?.coordinator.keyPane else { return false }
                 if isZoomInAlias {
                     guard browser.canZoomIn else { return false }
                     browser.zoomIn()
@@ -75,12 +74,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             view = current.superview
         }
         return false
-    }
-
-    /// The key window shows the selected tab's web view, so it is the browser window.
-    private var isBrowserWindowKey: Bool {
-        guard let key = NSApp.keyWindow, let id = coordinator.active.tabs.selectedID else { return false }
-        return coordinator.registry.webView(for: id)?.window === key
     }
 
     /// Loads downloads.json off the main actor, interrupting what was running at the last quit and deleting the

@@ -10,19 +10,28 @@ struct BrowserCommands: Commands {
     @FocusedValue(\.isBrowserWindow) private var isBrowserWindow
     @AppStorage(SidebarMode.defaultsKey) private var sidebarMode: SidebarMode = .expanded
 
-    /// The shown workspace's model, which every item acts on.
-    private var model: BrowserModel { coordinator.active }
+    /// The last active browser window's pane, which every item acts on; nil with no browser window.
+    private var pane: BrowserPane? { coordinator.commandPane }
+
+    /// The shown tab has a page to save as a link.
+    private var canAddLink: Bool {
+        guard let pane, let id = pane.selectedID else { return false }
+        return pane.model.canAddLink(from: id)
+    }
+
+    /// The window the bookmark file panels go on.
+    private var browserWindow: NSWindow? { coordinator.lastActiveBrowserWindow?.nsWindow }
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button(ShortcutCatalog[.newTab].title, action: model.newTab)
+            Button(ShortcutCatalog[.newTab].title) { pane?.newTab() }
                 .shortcut(.newTab)
-            Button(ShortcutCatalog[.openLocation].title, action: model.focusAddressBar)
+            Button(ShortcutCatalog[.openLocation].title) { pane?.focusAddressBar() }
                 .shortcut(.openLocation)
         }
         CommandGroup(replacing: .saveItem) {
             Button(isBrowserWindow == true ? ShortcutCatalog[.closeTab].title : "Close Window") {
-                if isBrowserWindow == true { model.closeSelectedTab() } else { NSApp.keyWindow?.performClose(nil) }
+                if isBrowserWindow == true { pane?.closeSelectedTab() } else { NSApp.keyWindow?.performClose(nil) }
             }
                 .shortcut(.closeTab)
             if isBrowserWindow == true {
@@ -31,54 +40,58 @@ struct BrowserCommands: Commands {
         }
         CommandGroup(after: .textEditing) {
             Divider()
-            Button(ShortcutCatalog[.find].title, action: model.showFind)
+            Button(ShortcutCatalog[.find].title) { pane?.showFind() }
                 .shortcut(.find)
-            Button("Find Next", action: model.findNext)
-            Button("Find Previous", action: model.findPrevious)
+            Button("Find Next") { pane?.findNext() }
+            Button("Find Previous") { pane?.findPrevious() }
         }
         CommandGroup(replacing: .sidebar) {
             Button("Toggle Sidebar") {
-                model.closeDownloadsForModeChange()
+                pane?.closeDownloadsForModeChange()
                 withAnimation(.snappy(duration: 0.25)) { sidebarMode = sidebarMode.toggled }
             }
         }
         CommandGroup(before: .toolbar) {
-            Button(ShortcutCatalog[.reload].title, action: model.reload)
+            Button(ShortcutCatalog[.reload].title) { pane?.reload() }
                 .shortcut(.reload)
-            Button("Stop", action: model.stopLoading)
+            Button("Stop") { pane?.stopLoading() }
             Divider()
-            Button(model.isDownloadsVisible ? "Hide Downloads" : "Show Downloads", action: model.toggleDownloads)
+            Button(pane?.window.isDownloadsVisible == true ? "Hide Downloads" : "Show Downloads") { pane?.toggleDownloads() }
                 .shortcut(.toggleDownloads)
             Divider()
-            Button(ShortcutCatalog[.zoomIn].title, action: model.zoomIn)
-                .shortcut(.zoomIn, enabled: model.canZoomIn)
-            Button(ShortcutCatalog[.zoomOut].title, action: model.zoomOut)
-                .shortcut(.zoomOut, enabled: model.canZoomOut)
-            Button(ShortcutCatalog[.actualSize].title, action: model.resetZoom)
-                .shortcut(.actualSize, enabled: model.canResetZoom)
+            Button(ShortcutCatalog[.zoomIn].title) { pane?.zoomIn() }
+                .shortcut(.zoomIn, enabled: pane?.canZoomIn == true)
+            Button(ShortcutCatalog[.zoomOut].title) { pane?.zoomOut() }
+                .shortcut(.zoomOut, enabled: pane?.canZoomOut == true)
+            Button(ShortcutCatalog[.actualSize].title) { pane?.resetZoom() }
+                .shortcut(.actualSize, enabled: pane?.canResetZoom == true)
             Divider()
         }
         CommandMenu("History") {
-            Button("Back", action: model.goBack)
-            Button("Forward", action: model.goForward)
+            Button("Back") { pane?.goBack() }
+            Button("Forward") { pane?.goForward() }
             Divider()
             Button("Show All History") { openWindow(id: "history") }
             Button("Clear All History…") { HistoryPrompts.clearAll(model: history) }
                 .disabled(!history.canClearAll)
         }
         CommandMenu("Bookmarks") {
-            Button(ShortcutCatalog[.bookmarkTab].title, action: model.bookmarkSelectedTab)
-                .shortcut(.bookmarkTab, enabled: model.tabs.selectedID.map(model.canAddLink) == true)
-            Button(model.isSelectedTabPinned ? "Unpin Tab" : "Pin This Tab", action: model.togglePinSelectedTab)
-                .disabled(model.tabs.selectedID.map(model.canAddLink) != true)
-            Button("New Folder…") { BookmarkPrompts.newFolder(in: nil, model: model) }
+            Button(ShortcutCatalog[.bookmarkTab].title) { pane?.bookmarkSelectedTab() }
+                .shortcut(.bookmarkTab, enabled: canAddLink)
+            Button(pane?.isSelectedTabPinned == true ? "Unpin Tab" : "Pin This Tab") { pane?.togglePinSelectedTab() }
+                .disabled(!canAddLink)
+            Button("New Folder…") { if let model = pane?.model { BookmarkPrompts.newFolder(in: nil, model: model) } }
             Divider()
-            Button("Import Bookmarks…") { BookmarkTransfer.importBookmarks(into: model) }
-                .disabled(model.isImportingBookmarks)
-            Button("Export Bookmarks…") { BookmarkTransfer.exportBookmarks(from: model) }
+            Button("Import Bookmarks…") {
+                if let model = pane?.model { BookmarkTransfer.importBookmarks(into: model, on: browserWindow) }
+            }
+            .disabled(pane?.model.isImportingBookmarks != false)
+            Button("Export Bookmarks…") {
+                if let model = pane?.model { BookmarkTransfer.exportBookmarks(from: model, on: browserWindow) }
+            }
         }
         CommandMenu("Workspaces") {
-            Button("New Workspace…") { model.showWorkspaceEditor(.create) }
+            Button("New Workspace…") { pane?.showWorkspaceEditor(.create) }
                 .disabled(isBrowserWindow != true)
             Divider()
             let activeID = coordinator.activeWorkspace.id
@@ -89,7 +102,7 @@ struct BrowserCommands: Commands {
                         isOn: Binding(get: { workspace.id == activeID }, set: { _ in
                             // As every catalog key does: what floats over the page closes first, also when the
                             // workspace is already the one shown.
-                            model.closeFloatingSurfaces()
+                            pane?.closeFloatingSurfaces()
                             coordinator.switchTo(workspace.id)
                         })
                     )
@@ -100,19 +113,19 @@ struct BrowserCommands: Commands {
             Toggle(
                 anonymous.name,
                 isOn: Binding(get: { anonymous.id == activeID }, set: { _ in
-                    model.closeFloatingSurfaces()
+                    pane?.closeFloatingSurfaces()
                     coordinator.switchTo(anonymous.id)
                 })
             )
             .disabled(isBrowserWindow != true)
         }
         CommandGroup(before: .windowList) {
-            Button("Show Next Tab", action: model.selectNextTab)
-            Button("Show Previous Tab", action: model.selectPreviousTab)
+            Button("Show Next Tab") { pane?.selectNextTab() }
+            Button("Show Previous Tab") { pane?.selectPreviousTab() }
             Divider()
         }
         CommandGroup(after: .help) {
-            Button(ShortcutCatalog[.shortcutHelp].title, action: model.showShortcutHelp)
+            Button(ShortcutCatalog[.shortcutHelp].title) { pane?.showShortcutHelp() }
                 .shortcut(.shortcutHelp)
         }
     }

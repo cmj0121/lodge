@@ -2,41 +2,42 @@ import SwiftUI
 
 /// Find in page, floating over the page's top-right corner so it never moves the page.
 struct FindPopup: View {
-    @Bindable var model: BrowserModel
+    let pane: BrowserPane
+    @Bindable var window: WindowState
     @FocusState private var isFocused: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            TextField("Find on page", text: $model.findText)
+            TextField("Find on page", text: $window.findText)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 200)
                 .focused($isFocused)
-                .onSubmit(model.findNext)
-                .task(id: model.findText) {
+                .onSubmit(pane.findNext)
+                .task(id: window.findText) {
                     guard (try? await Task.sleep(for: .milliseconds(150))) != nil else { return }
-                    model.findIfChanged()
+                    pane.findIfChanged()
                 }
-                .onExitCommand(perform: model.hideFind)
-            if model.findMissed {
+                .onExitCommand(perform: pane.hideFind)
+            if window.findMissed {
                 Text("Not found")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize()
             }
             ControlGroup {
-                Button("Previous", systemImage: "chevron.up", action: model.findPrevious)
+                Button("Previous", systemImage: "chevron.up", action: pane.findPrevious)
                     .help("Previous match")
-                Button("Next", systemImage: "chevron.down", action: model.findNext)
+                Button("Next", systemImage: "chevron.down", action: pane.findNext)
                     .help("Next match")
             }
             .controlGroupStyle(.navigation)
             .fixedSize()
-            .disabled(model.findText.isEmpty)
-            Button("Done", action: model.hideFind)
+            .disabled(window.findText.isEmpty)
+            Button("Done", action: pane.hideFind)
         }
         .padding(8)
         .floatingSurface(cornerRadius: 8, fill: .regularMaterial)
         .onAppear { isFocused = true }
-        .onChange(of: model.findFocusRequest) { isFocused = true }
+        .onChange(of: window.findFocusRequest) { isFocused = true }
     }
 }

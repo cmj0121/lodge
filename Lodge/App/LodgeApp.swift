@@ -13,7 +13,7 @@ struct LodgeApp: App {
 
     var body: some Scene {
         Window("Lodge", id: "browser") {
-            BrowserRoot(coordinator: appDelegate.coordinator)
+            BrowserRoot(coordinator: appDelegate.coordinator, window: appDelegate.coordinator.windows[0])
         }
         .windowStyle(.hiddenTitleBar)
         .windowBackgroundDragBehavior(.enabled)
@@ -33,23 +33,26 @@ struct LodgeApp: App {
     }
 }
 
-/// The browser window, showing the workspace its window has active; a switch builds it afresh for that workspace.
-/// The workspace sheet floats over it, outside that rebuild, so creating a workspace can switch under it.
+/// A browser window, showing the active workspace; a switch builds it afresh for that workspace. The workspace
+/// sheet floats over it, outside that rebuild, so creating a workspace can switch under it.
 struct BrowserRoot: View {
     let coordinator: WorkspaceCoordinator
+    let window: WindowState
 
     var body: some View {
-        let model = coordinator.active
-        let window = coordinator.window
-        BrowserView(model: model)
-            .id(model.workspaceID)
+        let pane = coordinator.pane(for: window)
+        BrowserView(pane: pane)
+            .id(pane.model.workspaceID)
             .environment(coordinator)
             .overlay {
                 if let editor = window.workspaceEditor {
-                    WorkspaceSheet(coordinator: coordinator, editor: editor) { coordinator.active.finishWorkspaceEditor() }
-                        .transition(.opacity)
+                    WorkspaceSheet(coordinator: coordinator, editor: editor) {
+                        coordinator.pane(for: window).finishWorkspaceEditor()
+                    }
+                    .transition(.opacity)
                 }
             }
             .animation(.snappy(duration: 0.2), value: window.workspaceEditor)
+            .background(WindowRegistrar(coordinator: coordinator, window: window))
     }
 }
