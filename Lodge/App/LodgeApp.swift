@@ -17,7 +17,12 @@ struct LodgeApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowBackgroundDragBehavior(.enabled)
-        .commands { BrowserCommands(model: appDelegate.browser) }
+        .commands { BrowserCommands(model: appDelegate.browser, history: appDelegate.history) }
+
+        Window("History", id: "history") {
+            HistoryView(model: appDelegate.history)
+        }
+        .defaultSize(width: 640, height: 600)
 
         Settings {
             Text("No settings yet.")

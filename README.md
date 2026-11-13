@@ -28,6 +28,7 @@ one you are in uses resources.
 | Custom workspace      | A new browser: every site gets its own site data and sign-ins                            |
 | Own identity          | Sign-ins, cookies and site data stay in the workspace they were made in                  |
 | Own fingerprint       | Every workspace presents a distinct, stable fingerprint to each site                     |
+| Own history           | Each browser keeps the pages visited in it                                               |
 | One page, one browser | A page stays in its browser; opening it in another workspace carries the address there   |
 | Clear ownership       | Every page shows which browser it belongs to                                             |
 | Resources for now     | Release first, then suspend, then hibernate; coming back wakes only the page on screen   |

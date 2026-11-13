@@ -5,6 +5,8 @@ import SwiftUI
 /// Menu bar items and their keyboard shortcuts.
 struct BrowserCommands: Commands {
     let model: BrowserModel
+    let history: HistoryModel
+    @Environment(\.openWindow) private var openWindow
     @AppStorage(SidebarMode.defaultsKey) private var sidebarMode: SidebarMode = .expanded
 
     var body: some Commands {
@@ -45,6 +47,11 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("[")
             Button("Forward", action: model.goForward)
                 .keyboardShortcut("]")
+            Divider()
+            Button("Show All History") { openWindow(id: "history") }
+                .keyboardShortcut("y")
+            Button("Clear All History…") { HistoryPrompts.clearAll(model: history) }
+                .disabled(!history.canClearAll)
         }
         CommandMenu("Bookmarks") {
             Button("Bookmark This Tab", action: model.bookmarkSelectedTab)

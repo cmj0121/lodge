@@ -375,7 +375,7 @@ private struct ItemIcon: View {
 
 /// A link that is not open has no favicon yet: its first letter stands in, on a quiet tile of its
 /// own unless it already sits on one.
-private struct LetterIcon: View {
+struct LetterIcon: View {
     let letter: String
     let size: CGFloat
     let isOnTile: Bool

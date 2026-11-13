@@ -12,24 +12,45 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// Ends the dialog or file panel sheet this tab has open, answering it with its default.
     private var dismissSheet: (() -> Void)?
     private let favicons: FaviconLoader
+    private var history: HistoryEventFilter
+    /// The load that restored the tab; its commit is not a visit.
+    var restoreNavigation: WKNavigation?
 
     init(tab: TabID, webView: LodgeWebView, model: BrowserModel) {
         self.tab = tab
         self.model = model
+        history = HistoryEventFilter(tab: tab)
         favicons = FaviconLoader { [weak model] image in model?.setFavicon(image, for: tab) }
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
         observations = [
-            mirror(webView, \.title) { $0.title = $1.title ?? "" },
+            webView.observe(\.title) { [weak self] view, _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.model?.update(self.tab) { $0.title = view.title ?? "" }
+                    self.sendHistory(
+                        self.history.titleChanged(view.title ?? "", url: view.url, store: self.store))
+                }
+            },
             webView.observe(\.url, options: .initial) { [weak self] view, _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     if let url = view.url { self.model?.update(self.tab) { $0.url = url } }
                     self.updateSecurity(of: view)
+                    self.sendHistory(
+                        self.history.urlChanged(
+                            view.url, title: view.title ?? "", store: self.store, isLoading: view.isLoading))
                 }
             },
-            mirror(webView, \.isLoading) { $0.isLoading = $1.isLoading },
+            webView.observe(\.isLoading) { [weak self] view, _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.model?.update(self.tab) { $0.isLoading = view.isLoading }
+                    guard !view.isLoading else { return }
+                    self.sendHistory(self.history.loadFinished(view.url, title: view.title ?? "", store: self.store))
+                }
+            },
             mirror(webView, \.canGoBack) { $0.canGoBack = $1.canGoBack },
             mirror(webView, \.canGoForward) { $0.canGoForward = $1.canGoForward },
             webView.observe(\.estimatedProgress) { [weak self] view, _ in
@@ -47,6 +68,13 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// Reclassifies the page's security from the view's current URL and content.
     private func updateSecurity(of view: WKWebView) {
         model?.setSecurity(SiteSecurity(url: view.url, hasOnlySecureContent: view.hasOnlySecureContent), for: tab)
+    }
+
+    /// The tab's store; nil once the tab is gone.
+    private var store: StoreRef? { model?.tabs[tab]?.store }
+
+    private func sendHistory(_ event: HistoryRecorder.Event?) {
+        if let event { model?.historyRecorder?.send(event) }
     }
 
     /// Copies a web view property into the tab whenever it changes; `apply` reads the current
@@ -88,7 +116,12 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        if let url = webView.url { dialogGate.commit(origin: Origin(url: url)) }
+        let isRestore = navigation != nil && navigation === restoreNavigation
+        if isRestore { restoreNavigation = nil }
+        if let url = webView.url {
+            dialogGate.commit(origin: Origin(url: url))
+            sendHistory(history.committed(url, title: webView.title ?? "", store: store, isRestore: isRestore))
+        }
         favicons.pageCommitted(webView.url)
         model?.update(tab) { $0.hasCrashed = false }
     }
