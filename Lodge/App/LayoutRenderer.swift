@@ -36,6 +36,7 @@
             checkDeletion(to: directory.appending(path: "layout-delete.png"))
             checkAnonymous()
             checkSharedPins(to: directory.appending(path: "layout-shared-pins.png"))
+            checkMoveTabs()
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -284,6 +285,75 @@
                 "Unpinning in a custom workspace removes Default's pin",
                 !coordinator.pins.contains { $0.id == pin.id } && home.selected?.link == nil
                     && !model.sidebar.pins.contains { $0.id == .link(pin.id) })
+        }
+
+        /// Checks Move and Open in Workspace in the background, printing ok or FAILED for each: Move leaves a selected
+        /// tab with the same address in the destination and none in the source; Open keeps the original; a move into
+        /// Anonymous gets a new browser of its own; a move from a popup closes only that popup's chain; the destination
+        /// tab runs on the destination's store. Pages are `about:blank`, and nothing loads in a background workspace.
+        private static func checkMoveTabs() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            guard let work = try? coordinator.create(name: "Work", symbol: "briefcase") else {
+                return report("Move puts the tab in the destination", false)
+            }
+            coordinator.switchTo(Workspace.defaultID)
+            let home = coordinator.active
+            guard let tab = home.selected, let workModel = coordinator.model(for: work.id) else {
+                return report("Move puts the tab in the destination", false)
+            }
+            let moved = URL(string: "about:blank#moved")!
+            home.update(tab.id) { $0.url = moved }
+            home.open(url: URL(string: "about:blank#kept")!, from: tab.id)
+            let destinations = coordinator.destinations(from: Workspace.defaultID).map(\.id)
+            report(
+                "Destinations list every other workspace, Anonymous last",
+                destinations == [work.id, Workspace.anonymousID])
+
+            report(
+                "Move puts the tab in the destination",
+                coordinator.move(tab: tab.id, to: work.id) && workModel.selected?.url == moved
+                    && workModel.selected?.link == nil && workModel.tabs.tabs.count == 1 && home.tabs[tab.id] == nil
+                    && coordinator.activeWorkspace.id == Workspace.defaultID)
+            report(
+                "Moved tab runs on the destination's store",
+                workModel.selected?.store == work.store && work.store != tab.store
+                    && workModel.selected?.isLive == false)
+
+            guard let keep = home.selected, let keptURL = keep.url else { return report("Open keeps the original", false) }
+            report(
+                "Open keeps the original",
+                coordinator.open(tab: keep.id, in: work.id) && home.tabs[keep.id] != nil
+                    && workModel.tabs.tabs.count == 2 && workModel.selected?.url == keptURL
+                    && workModel.selected?.id != keep.id)
+            report("Open in the same workspace is refused", !coordinator.open(tab: keep.id, in: Workspace.defaultID))
+
+            guard let anonymous = coordinator.model(for: Workspace.anonymousID),
+                coordinator.move(tab: keep.id, to: Workspace.anonymousID), let arrived = anonymous.selected
+            else { return report("Move into Anonymous gets a new browser", false) }
+            let others = [home, workModel, anonymous].flatMap(\.tabs.tabs).filter { $0.id != arrived.id }.map(\.store)
+            var isEphemeral = false
+            if case .ephemeral = arrived.store { isEphemeral = true }
+            report(
+                "Move into Anonymous gets a new browser",
+                isEphemeral && !others.contains(arrived.store) && anonymous.tabs.tabs.count == 1
+                    && arrived.url == keptURL && home.tabs[keep.id] == nil)
+
+            guard let opener = home.selected,
+                home.openPopup(from: opener.id, configuration: WKWebViewConfiguration()) != nil,
+                let first = home.selected,
+                home.openPopup(from: first.id, configuration: WKWebViewConfiguration()) != nil,
+                let second = home.selected, second.id != first.id, first.id != opener.id
+            else { return report("Move from a popup closes only its chain", false) }
+            home.update(first.id) { $0.url = URL(string: "about:blank#popup")! }
+            let before = workModel.tabs.tabs.count
+            report(
+                "Move from a popup closes only its chain",
+                coordinator.move(tab: first.id, to: work.id) && home.tabs[opener.id] != nil
+                    && home.tabs[first.id] == nil && home.tabs[second.id] == nil
+                    && workModel.tabs.tabs.count == before + 1 && workModel.selected?.url?.fragment == "popup"
+                    && workModel.selected?.store == work.store)
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
         }
 
         /// Which location prompt a render opens: ⌘T's empty one or ⌘L's on the selected page.

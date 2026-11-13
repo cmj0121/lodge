@@ -286,6 +286,19 @@ final class BrowserModel {
         open(BrowserTab(store: newTabStore(), url: url), load: true)
     }
 
+    /// A tab moved or opened here from another workspace: a loose selected tab on this workspace's store (in Anonymous
+    /// a new browser) with only the address and title, taking the place of a blank selected tab. Its web view is built,
+    /// and the page loaded, now when the workspace is shown, else when it is next shown.
+    func receive(url: URL, title: String) {
+        let tab = BrowserTab(store: newTabStore(), url: url, title: title, isLive: false)
+        let blank = selected.flatMap { $0.url == nil && !$0.isLoading ? $0.id : nil }
+        changeTabs { tabs in
+            tabs.open(tab)
+            if let blank { tabs.close(blank, selecting: tab.id) }
+        }
+        if isShown { ensureView(for: tab.id) }
+    }
+
     /// Selects the tab, building its web view when it has none; every other tab keeps its own.
     func select(_ id: TabID) {
         changeTabs { $0.select(id) }

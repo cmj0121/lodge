@@ -174,6 +174,40 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     }
 }
 
+// MARK: Moving tabs
+
+extension WorkspaceCoordinator {
+    /// Opens the tab's page in a new selected tab of `destination`, on that workspace's own sign-ins (in Anonymous a
+    /// new browser); only the address and title go along. The tab stays, and the window stays where it is. False for
+    /// a tab with no address, an unknown tab, or a destination that is the tab's own workspace or not listed.
+    @discardableResult
+    func open(tab id: TabID, in destination: UUID) -> Bool {
+        guard let source = model(holding: id), let tab = source.tabs[id], let url = tab.url,
+            destination != source.workspaceID, let target = model(for: destination)
+        else { return false }
+        target.receive(url: url, title: tab.title)
+        return true
+    }
+
+    /// `open(tab:in:)`, then closes the tab with every popup it opened.
+    @discardableResult
+    func move(tab id: TabID, to destination: UUID) -> Bool {
+        guard let source = model(holding: id), open(tab: id, in: destination) else { return false }
+        source.close(id)
+        return true
+    }
+
+    /// Where a tab of `source` can go: every other workspace in bar order, Anonymous last.
+    func destinations(from source: UUID) -> [Workspace] {
+        workspaces.workspaces.filter { $0.id != source }
+    }
+
+    /// The built model with the tab open; a tab only opens in a built one.
+    private func model(holding tab: TabID) -> BrowserModel? {
+        models.values.first { $0.tabs[tab] != nil }
+    }
+}
+
 // MARK: Shared pins
 
 /// Default's pins, shown and changed from every other workspace.

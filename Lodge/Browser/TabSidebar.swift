@@ -67,7 +67,7 @@ private struct ExpandedSidebar: View {
                         Button("New Folder…") { BookmarkPrompts.newFolder(in: nil, model: model) }
                     }
                     if !items.bookmarks.isEmpty {
-                        BookmarkOutline(model: model, nodes: items.bookmarks)
+                        BookmarkOutline(model: model, workspaces: coordinator, nodes: items.bookmarks)
                     }
                     if !items.bookmarks.isEmpty && !items.loose.isEmpty {
                         Divider()
@@ -149,10 +149,11 @@ private struct RailSidebar: View {
 }
 
 /// The rail's stand-in for the bookmark and loose tab rows: one button whose menu lists them, each
-/// folder as a submenu, filled while one of them is selected.
+/// folder as a submenu, filled while one of them is selected; below them, Move and Open in Workspace for each open tab.
 private struct BookmarksMenu: View {
     let model: BrowserModel
     let items: SidebarSections
+    @Environment(WorkspaceCoordinator.self) private var coordinator
     @State private var isHovered = false
 
     var body: some View {
@@ -165,6 +166,24 @@ private struct BookmarksMenu: View {
                 Divider()
             }
             ForEach(items.loose) { MenuEntry(model: model, item: $0, selected: selected) }
+            let open = (items.bookmarks.flatMap(\.bookmarkItems) + items.loose).compactMap(\.tab)
+            if !open.isEmpty {
+                Divider()
+                Menu("Move to Workspace") {
+                    ForEach(open) { tab in
+                        WorkspaceMenu(title: tab.displayTitle, tab: tab, from: model.workspaceID, coordinator: coordinator) {
+                            coordinator.move(tab: tab.id, to: $0)
+                        }
+                    }
+                }
+                Menu("Open in Workspace") {
+                    ForEach(open) { tab in
+                        WorkspaceMenu(title: tab.displayTitle, tab: tab, from: model.workspaceID, coordinator: coordinator) {
+                            coordinator.open(tab: tab.id, in: $0)
+                        }
+                    }
+                }
+            }
         } label: {
             Image(systemName: isSelected ? "book.fill" : "book")
                 .font(.system(size: SidebarMode.railSymbolSize))
@@ -286,6 +305,7 @@ private enum MenuImages {
 private struct ItemMenu: View {
     let model: BrowserModel
     let item: SidebarItem
+    @Environment(WorkspaceCoordinator.self) private var coordinator
 
     var body: some View {
         switch item {
@@ -305,9 +325,37 @@ private struct ItemMenu: View {
                 .disabled(!model.canAddLink(from: tab.id))
         }
         if let tab = item.tab {
+            WorkspaceMenu(title: "Move to Workspace", tab: tab, from: model.workspaceID, coordinator: coordinator) {
+                coordinator.move(tab: tab.id, to: $0)
+            }
+            WorkspaceMenu(title: "Open in Workspace", tab: tab, from: model.workspaceID, coordinator: coordinator) {
+                coordinator.open(tab: tab.id, in: $0)
+            }
             Divider()
             Button("Close Tab") { model.close(tab.id) }
         }
+    }
+}
+
+/// A submenu of every other workspace, each with its icon; disabled for a tab with no address.
+private struct WorkspaceMenu: View {
+    let title: String
+    let tab: BrowserTab
+    let from: UUID
+    let coordinator: WorkspaceCoordinator
+    let action: (UUID) -> Void
+
+    var body: some View {
+        Menu(title) {
+            ForEach(coordinator.destinations(from: from)) { workspace in
+                Button {
+                    action(workspace.id)
+                } label: {
+                    Label { Text(workspace.name) } icon: { Image(systemName: workspace.symbol) }
+                }
+            }
+        }
+        .disabled(tab.url == nil)
     }
 }
 
