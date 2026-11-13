@@ -51,6 +51,8 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     @ObservationIgnored private var reserved: Set<URL> = []
     /// Rows with a Retry in flight.
     @ObservationIgnored private var retrying: Set<UUID> = []
+    /// Retries still waiting for WebKit's download, voided when their store is cancelled.
+    @ObservationIgnored private var pendingRetries = PendingRetries()
     @ObservationIgnored private var pendingProgress: [UUID: (received: Int64, total: Int64?)] = [:]
     @ObservationIgnored private var throttle = DownloadProgressThrottle()
     @ObservationIgnored private var isRestored = false
@@ -476,6 +478,7 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
 
     /// Cancels every download still running on the store, as each row's Cancel would; finished rows stay.
     func cancel(store: StoreRef) {
+        pendingRetries.cancel(store: store)
         for entry in active.values where entry.store == store { cancel(entry.id) }
     }
 
@@ -493,12 +496,18 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             return
         }
         retrying.insert(id)
+        pendingRetries.begin(id, on: store)
         let config = WKWebViewConfiguration()
         config.websiteDataStore = dataStore
         // A download outlives the view that started it.
         let view = WKWebView(frame: .zero, configuration: config)
         Task {
             let download = await view.startDownload(using: URLRequest(url: url))
+            guard pendingRetries.finish(id, storeExists: self.dataStore(store) != nil) else {
+                download.cancel(nil)
+                retrying.remove(id)
+                return
+            }
             track(download, store: store, replacing: id)
         }
     }
