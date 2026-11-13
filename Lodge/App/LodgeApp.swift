@@ -25,9 +25,7 @@ struct LodgeApp: App {
         .defaultSize(width: 640, height: 600)
 
         Settings {
-            Text("No settings yet.")
-                .foregroundStyle(.secondary)
-                .padding(40)
+            SettingsView()
         }
     }
 }
