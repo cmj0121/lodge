@@ -11,8 +11,8 @@ import Testing
     private let snapshot: SessionSnapshot = {
         let tab = BrowserTab(url: URL(string: "https://a.example")!, title: "A")
         return SessionSnapshot.defaultOnly(
-            tabs: TabList(tabs: [tab, BrowserTab()], selectedID: tab.id),
-            library: LinkLibrary(pins: [SavedLink(url: URL(string: "https://p.example")!, title: "P")]))
+            tabs: TabList(tabs: [tab, BrowserTab()]),
+            library: LinkLibrary(pins: [SavedLink(url: URL(string: "https://p.example")!, title: "P")]), selectedTab: tab.id)
     }()
 
     private func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) }

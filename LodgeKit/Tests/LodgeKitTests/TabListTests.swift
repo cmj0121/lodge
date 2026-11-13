@@ -11,85 +11,37 @@ import Testing
         return (list, tabs.map(\.id))
     }
 
-    @Test func startsEmptyWithNothingSelected() {
-        let list = TabList()
-        #expect(list.tabs.isEmpty)
-        #expect(list.selectedID == nil)
-        #expect(list.selected == nil)
+    @Test func startsEmpty() {
+        #expect(TabList().tabs.isEmpty)
     }
 
-    @Test func openAppendsAndSelects() {
+    @Test func openAppends() {
         let (list, ids) = list(3)
         #expect(list.tabs.map(\.id) == ids)
-        #expect(list.selectedID == ids[2])
     }
 
-    @Test func selectIgnoresUnknownTabs() {
-        var (list, ids) = list(2)
-        list.select(TabID())
-        #expect(list.selectedID == ids[1])
-    }
-
-    @Test func selectKeepsEveryTabOpen() {
+    @Test func closeRemovesOnlyTheGivenTab() {
         var (list, ids) = list(3)
-        list.select(ids[0])
-        list.select(ids[1])
-        #expect(list.tabs.map(\.id) == ids)
-        #expect(list.selectedID == ids[1])
-    }
-
-    @Test func closingTheSelectedTabSelectsTheGivenNext() {
-        var (list, ids) = list(3)
-        list.select(ids[1])
-        list.close(ids[1], selecting: ids[0])
+        list.close(ids[1])
         #expect(list.tabs.map(\.id) == [ids[0], ids[2]])
-        #expect(list.selectedID == ids[0])
-    }
-
-    @Test func closingTheSelectedTabWithANextNotInTheListLeavesNothingSelected() {
-        var (list, ids) = list(3)
-        list.close(ids[2], selecting: TabID())
-        #expect(list.tabs.map(\.id) == [ids[0], ids[1]])
-        #expect(list.selectedID == nil)
-        list.select(ids[0])
-        list.close(ids[0], selecting: ids[0])
-        #expect(list.selectedID == nil)
-    }
-
-    @Test func closingAnUnselectedTabKeepsTheSelection() {
-        var (list, ids) = list(3)
-        list.select(ids[0])
-        list.close(ids[2], selecting: ids[1])
-        #expect(list.tabs.map(\.id) == [ids[0], ids[1]])
-        #expect(list.selectedID == ids[0])
     }
 
     @Test func closingTheLastTabEmptiesTheList() {
         var (list, ids) = list(1)
-        list.close(ids[0], selecting: nil)
+        list.close(ids[0])
         #expect(list.tabs.isEmpty)
-        #expect(list.selectedID == nil)
     }
 
     @Test func closingAnUnknownTabChangesNothing() {
-        var (list, ids) = list(1)
+        var (list, _) = list(1)
         let before = list
-        list.close(TabID(), selecting: ids[0])
+        list.close(TabID())
         #expect(list == before)
     }
 
-    @Test func restoringKeepsTheSelectedTabWhenItIsListed() {
+    @Test func restoringKeepsTheTabsInOrder() {
         let tabs = (0..<3).map { _ in BrowserTab(isLive: false) }
-        let list = TabList(tabs: tabs, selectedID: tabs[1].id)
-        #expect(list.tabs == tabs)
-        #expect(list.selectedID == tabs[1].id)
-    }
-
-    @Test func restoringFallsBackToTheFirstTab() {
-        let tabs = (0..<2).map { _ in BrowserTab(isLive: false) }
-        #expect(TabList(tabs: tabs, selectedID: TabID()).selectedID == tabs[0].id)
-        #expect(TabList(tabs: tabs, selectedID: nil).selectedID == tabs[0].id)
-        #expect(TabList(tabs: [], selectedID: TabID()).selectedID == nil)
+        #expect(TabList(tabs: tabs).tabs == tabs)
     }
 
     @Test func tabsAreLiveUnlessRestored() {
@@ -99,7 +51,7 @@ import Testing
 
     @Test func liveStateIsTrackedPerTab() {
         let tabs = [BrowserTab(isLive: false), BrowserTab(isLive: false)]
-        var list = TabList(tabs: tabs, selectedID: tabs[0].id)
+        var list = TabList(tabs: tabs)
         list.update(tabs[0].id) { $0.isLive = true }
         #expect(list[tabs[0].id]?.isLive == true)
         #expect(list[tabs[1].id]?.isLive == false)

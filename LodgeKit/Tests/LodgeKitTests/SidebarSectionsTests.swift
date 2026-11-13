@@ -74,7 +74,7 @@ import Testing
         let pinTab = BrowserTab(url: URL(string: "https://elsewhere.example")!, link: pin.id)
         list.open(pinTab)
         #expect(SidebarSections(pins: [pin], bookmarks: root(), tabs: list).pins == [.link(pin, .pins, pinTab)])
-        list.close(pinTab.id, selecting: nil)
+        list.close(pinTab.id)
         let closed = SidebarSections(pins: [pin], bookmarks: root(), tabs: list)
         #expect(closed.pins == [.link(pin, .pins, nil)])
         #expect(closed.pins.first?.target == .link(pin))
@@ -153,15 +153,14 @@ import Testing
         #expect(sections.neighbour(ofClosing: TabID()) == nil)
     }
 
-    @Test func closeWithTheNeighbourKeepsTheOtherTabsAndSelectsIt() {
+    @Test func closeKeepsTheOtherTabsAndTheNeighbourIsTheNextOne() {
         var list = TabList()
         let tabs = [BrowserTab(), BrowserTab(), BrowserTab()]
         for tab in tabs { list.open(tab) }
-        list.select(tabs[1].id)
         let next = SidebarSections(pins: [], bookmarks: root(), tabs: list).neighbour(ofClosing: tabs[1].id)
-        list.close(tabs[1].id, selecting: next)
+        list.close(tabs[1].id)
         #expect(list.tabs == [tabs[0], tabs[2]])
-        #expect(list.selectedID == tabs[2].id)
+        #expect(next == tabs[2].id)
     }
 
     @Test func pairsTabsWithBookmarksInNestedFolders() {
@@ -280,6 +279,28 @@ import Testing
         #expect(sections.target(1, from: nil) == .tab(tabs[0].id))
         #expect(sections.neighbour(ofClosing: tabs[0].id) == tabs[1].id)
         #expect(sections.neighbour(ofClosing: tabs[1].id) == tabs[0].id)
+    }
+
+    @Test func tabOrderListsEveryOpenTabOnceInSidebarOrderIncludingClosedFolders() {
+        let pinTab = BrowserTab(link: pin.id)
+        let laterTab = BrowserTab(link: unopened.id)
+        let shownTab = BrowserTab(link: shown.id)
+        let bookmarkTab = BrowserTab(link: bookmark.id)
+        let second = BrowserTab(link: bookmark.id)
+        let loose = BrowserTab()
+        let sections = folders(tabs: [loose, bookmarkTab, second, shownTab, laterTab, pinTab])
+        #expect(sections.tabOrder == [pinTab.id, laterTab.id, shownTab.id, bookmarkTab.id, loose.id, second.id])
+    }
+
+    @Test func tabOrderPutsTabsOfSharedPinsWithTheLooseOnes() {
+        var list = TabList()
+        let pinTab = BrowserTab(link: pin.id)
+        let loose = BrowserTab()
+        list.open(loose)
+        list.open(pinTab)
+        let sections = SidebarSections(pins: [pin], bookmarks: root(), tabs: list, pinsAreShared: true)
+        #expect(sections.tabOrder == [loose.id, pinTab.id])
+        #expect(SidebarSections().tabOrder.isEmpty)
     }
 
     @Test func onlySharedPinsHaveNoTarget() {
