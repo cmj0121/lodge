@@ -9,7 +9,7 @@ import WebKit
 /// saved to.
 @MainActor
 @Observable
-final class WorkspaceCoordinator {
+final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     private(set) var workspaces: WorkspaceList
     let window: WindowState
     /// The window menus and keys act in; the only one for now.
@@ -35,6 +35,11 @@ final class WorkspaceCoordinator {
     @ObservationIgnored private var historyOpenings: [UUID: Task<Void, Never>] = [:]
     /// The workspaces whose history file could not open this run.
     @ObservationIgnored private var historyFailures: Set<UUID> = []
+
+    /// The store of each workspace being deleted this run, kept once it has left the list.
+    @ObservationIgnored private var deletingStores: [UUID: StoreRef] = [:]
+    /// The history recorder of a workspace being deleted, from when its model goes until its file closes.
+    @ObservationIgnored private var deletingRecorders: [UUID: HistoryRecorder] = [:]
 
     /// Starts from `snapshot` (nil: Default alone, with `defaultLibrary`), showing its window's workspace.
     init(
@@ -180,7 +185,7 @@ extension WorkspaceCoordinator {
     func closeHistory(of id: UUID) async throws {
         await historyOpenings[id]?.value
         historyFailures.remove(id)
-        let recorder = models[id]?.historyRecorder
+        let recorder = models[id]?.historyRecorder ?? deletingRecorders.removeValue(forKey: id)
         models[id]?.historyRecorder = nil
         await recorder?.drain()
         guard let store = historyStores.removeValue(forKey: id) else { return }
@@ -254,5 +259,83 @@ extension WorkspaceCoordinator {
         } else {
             history.show(nil, state: historyFailures.contains(workspace.id) ? .unavailable : .loading)
         }
+    }
+}
+
+// MARK: Deleting
+
+extension WorkspaceCoordinator {
+    private static let deletionLogger = Logger(subsystem: "dev.lodge", category: "workspaces")
+
+    /// Deletes a custom workspace with its tabs, bookmarks, history, sign-ins and site data; a window showing it
+    /// goes to Default. A deletion that fails stays pending and is finished at the next launch. Default is refused.
+    @discardableResult
+    func delete(_ id: UUID) async -> Bool {
+        guard let workspace = workspaces[id], workspace.kind != .default else { return false }
+        let done = await WorkspaceDeletion.run(id, steps: self)
+        if !done {
+            Self.deletionLogger.error(
+                "Workspace \(id.uuidString, privacy: .public) was not fully deleted; it is retried at next launch")
+        }
+        return done
+    }
+
+    /// Launch, before any history file opens: finishes the deletions the last run left pending.
+    func retryPendingDeletions() async {
+        let pending = pendingDeletions
+        guard !pending.isEmpty else { return }
+        await WorkspaceDeletion.retry(pending, steps: self)
+        for id in pending where pendingDeletions.contains(id) {
+            Self.deletionLogger.error(
+                "Workspace \(id.uuidString, privacy: .public) is still not fully deleted; it is retried at next launch")
+        }
+    }
+
+    private func deletingStore(of id: UUID) -> StoreRef { deletingStores[id] ?? .workspace(id) }
+
+    func removeFromList(_ id: UUID) {
+        guard let workspace = workspaces[id] else { return }
+        if window.activeWorkspace == id { switchTo(Workspace.defaultID) }
+        deletingStores[id] = workspace.store
+        _ = try? workspaces.remove(id)
+        if !pendingDeletions.contains(id) { pendingDeletions.append(id) }
+    }
+
+    func saveNow() {
+        session?.writeNow(snapshot)
+    }
+
+    func destroyViews(of id: UUID) {
+        dormant[id] = nil
+        guard let model = models.removeValue(forKey: id) else { return }
+        model.onContentChange = nil
+        if let recorder = model.historyRecorder { deletingRecorders[id] = recorder }
+        model.historyRecorder = nil
+        registry.destroyAll(on: model.store)
+    }
+
+    func cancelDownloads(of id: UUID) {
+        downloads?.cancel(store: deletingStore(of: id))
+    }
+
+    func forgetStore(of id: UUID) {
+        registry.forget(store: deletingStore(of: id))
+    }
+
+    func removeWebsiteData(of id: UUID) async throws {
+        guard case .workspace = deletingStore(of: id) else { return }
+        try await WebViewRegistry.removeWebsiteData(for: id)
+    }
+
+    /// Deletes `Workspaces/<uuid>/`; without Application Support nothing of it was ever written.
+    func removeFiles(of id: UUID) throws {
+        guard let appDirectory else { return }
+        try WorkspaceFiles.remove(id, in: appDirectory)
+    }
+
+    func clearPending(_ id: UUID) {
+        pendingDeletions.removeAll { $0 == id }
+        deletingStores[id] = nil
+        deletingRecorders[id] = nil
     }
 }

@@ -32,6 +32,7 @@
             }
             renderWorkspace(to: directory.appending(path: "layout-workspace.png"))
             renderWorkspaceUI(in: directory)
+            checkDeletion(to: directory.appending(path: "layout-delete.png"))
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -127,6 +128,33 @@
                 BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
                 to: url)
             if coordinator.registry.hasViews(on: .global) { print("Default kept its web views after the switch") }
+        }
+
+        /// Creates a throwaway workspace with no session or Application Support, shows it, deletes it and prints
+        /// whether every step ran: back on Default, nothing pending, no model or web view left on its store.
+        /// When the data store cannot be removed, its WebKit store (a fresh UUID each run) stays in the container.
+        private static func checkDeletion(to url: URL) {
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            // Its own pool, so the web view this run loop never drains is freed before the data store is removed.
+            let made: Workspace? = autoreleasepool {
+                guard let doomed = try? coordinator.create(name: "Doomed", symbol: WorkspaceSymbols.all[1])
+                else { return nil }
+                snapshot(BrowserRoot(coordinator: coordinator), size: NSSize(width: 800, height: 500), to: url)
+                return doomed
+            }
+            guard let doomed = made else { return }
+            var result: Bool?
+            Task { result = await coordinator.delete(doomed.id) }
+            while result == nil { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) }
+            let clean =
+                result == true && coordinator.activeWorkspace.id == Workspace.defaultID
+                && coordinator.pendingDeletions.isEmpty && coordinator.model(for: doomed.id) == nil
+                && !coordinator.registry.hasViews(on: doomed.store)
+            if clean {
+                print("Workspace deletion: ok")
+            } else {
+                print("Workspace deletion: FAILED, WebKit store \(doomed.id.uuidString) may be left")
+            }
         }
 
         /// Which location prompt a render opens: ⌘T's empty one or ⌘L's on the selected page.

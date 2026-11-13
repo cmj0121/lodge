@@ -105,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// first, so no file being deleted opens again.
     private func openHistory() {
         Task {
+            await coordinator.retryPendingDeletions()
             await coordinator.openHistoryStores()
         }
     }

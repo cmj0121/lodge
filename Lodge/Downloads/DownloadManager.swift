@@ -474,6 +474,11 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         end(entry.download, as: .cancelled)
     }
 
+    /// Cancels every download still running on the store, as each row's Cancel would; finished rows stay.
+    func cancel(store: StoreRef) {
+        for entry in active.values where entry.store == store { cancel(entry.id) }
+    }
+
     /// Downloads an ended GET http(s) item again on the store it came from (D8), once at a time per row; the row is
     /// replaced by the new one when it gets its destination. A finished item retries only once its file is missing.
     /// A row whose workspace is gone, or that came from a private store, is not retried.

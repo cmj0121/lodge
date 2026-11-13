@@ -1,3 +1,4 @@
+import AppKit
 import LodgeKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -103,6 +104,9 @@ private struct WorkspaceIcon: View {
                 Button("Rename…") { edit(.rename(workspace.id)) }
             }
             Button("Change Icon…") { edit(.changeIcon(workspace.id)) }
+            if !isDefault {
+                Button("Delete…") { WorkspacePrompts.delete(workspace, coordinator: coordinator) }
+            }
         }
         .contextMenu {
             if !isDefault {
@@ -111,8 +115,7 @@ private struct WorkspaceIcon: View {
             Button("Change Icon…") { edit(.changeIcon(workspace.id)) }
             if !isDefault {
                 Divider()
-                Button("Delete…") {}
-                    .disabled(true)
+                Button("Delete…") { WorkspacePrompts.delete(workspace, coordinator: coordinator) }
             }
         }
         .modifier(WorkspaceDrag(workspace: isDefault ? nil : workspace.id))
@@ -179,5 +182,28 @@ private struct SettingsButton: View {
         SettingsLink { Label("Settings", systemImage: "gearshape") }
             .iconButtonStyle()
             .help("Settings (⌘,)")
+    }
+}
+
+/// The question Delete… asks before a workspace and everything in it goes.
+@MainActor
+enum WorkspacePrompts {
+    static func delete(_ workspace: Workspace, coordinator: WorkspaceCoordinator) {
+        guard workspace.kind != .default else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete “\(workspace.name)”?"
+        alert.informativeText =
+            "Its tabs close, and its bookmarks, history, sign-ins and site data are deleted. This cannot be undone."
+        alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        let handle = { (response: NSApplication.ModalResponse) in
+            guard response == .alertFirstButtonReturn else { return }
+            Task { await coordinator.delete(workspace.id) }
+        }
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            alert.beginSheetModal(for: window, completionHandler: handle)
+        } else {
+            handle(alert.runModal())
+        }
     }
 }
