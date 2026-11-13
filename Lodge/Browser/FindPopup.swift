@@ -25,9 +25,9 @@ struct FindPopup: View {
             }
             ControlGroup {
                 Button("Previous", systemImage: "chevron.up", action: model.findPrevious)
-                    .help("Previous match (⇧⌘G)")
+                    .help("Previous match")
                 Button("Next", systemImage: "chevron.down", action: model.findNext)
-                    .help("Next match (⌘G)")
+                    .help("Next match")
             }
             .controlGroupStyle(.navigation)
             .fixedSize()

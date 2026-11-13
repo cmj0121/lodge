@@ -20,10 +20,38 @@ struct BrowserView: View {
                 .ignoresSafeArea(.container, edges: .top)
         }
         .background(Color(nsColor: .underPageBackgroundColor))
+        .overlay {
+            if model.isShortcutHelpVisible {
+                ShortcutHelpOverlay(close: model.hideShortcutHelp)
+                    .transition(.opacity)
+            }
+        }
+        .overlay {
+            if let prompt = model.locationPrompt {
+                LocationPromptView(
+                    prompt: prompt, initialText: prompt.initialText(for: address(of: prompt)),
+                    submit: model.submitLocation, cancel: model.cancelLocationPrompt
+                )
+                .transition(.opacity)
+            }
+        }
+        .animation(.snappy(duration: 0.2), value: model.isShortcutHelpVisible)
+        .animation(.snappy(duration: 0.2), value: model.locationPrompt)
         .navigationTitle(model.selected?.displayTitle ?? "Lodge")
         .environment(\.webViewRegistry, model.registry)
         .frame(minWidth: 800, minHeight: 500)
+        .focusedSceneValue(\.isBrowserWindow, true)
     }
+
+    private func address(of prompt: LocationPrompt) -> URL? {
+        guard case .current(let id) = prompt else { return nil }
+        return model.tabs[id]?.url
+    }
+}
+
+extension FocusedValues {
+    /// Set by browser windows, so ⌘W closes a tab there and the window anywhere else.
+    @Entry var isBrowserWindow: Bool?
 }
 
 /// The page, as a floating card. With the sidebar collapsed it carries the address and navigation

@@ -5,6 +5,17 @@ import WebKit
 /// "Open Link in New Window". The item still runs WebKit's own action, so the link arrives through
 /// `createWebViewWith` with the opener's configuration and opens as the live tab.
 final class LodgeWebView: WKWebView {
+    /// Set when the model wants this page focused before it is in a window; the next move into one takes
+    /// first responder and clears it.
+    var focusesWhenShown = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard focusesWhenShown, let window else { return }
+        focusesWhenShown = false
+        window.makeFirstResponder(self)
+    }
+
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
         let newWindow = NSUserInterfaceItemIdentifier("WKMenuItemIdentifierOpenLinkInNewWindow")

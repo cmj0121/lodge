@@ -21,15 +21,20 @@ final class BrowserModel {
     private(set) var loadProgress: [TabID: Double] = [:]
     /// Each page's security, kept apart from `tabs` like progress; gone with the tab.
     private(set) var security: [TabID: SiteSecurity] = [:]
+    /// Each tab's page zoom; absent means `PageZoom.actual`. Gone with the tab.
+    private(set) var zoom: [TabID: Double] = [:]
     var findText = ""
     var isFindVisible = false
     private(set) var findMissed = false
     /// The sidebar's Downloads popover is open.
     var isDownloadsVisible = false
+    /// The keyboard shortcut help overlay is open.
+    var isShortcutHelpVisible = false
     /// Each tab's decoded favicon, kept apart from `tabs` so an icon arriving redraws only its icon.
     private(set) var favicons: [TabID: NSImage] = [:]
-    /// Bumped to ask the window to focus the address bar or the find field.
-    private(set) var addressFocusRequest = 0
+    /// The floating location prompt, open for a new tab or for the tab it loads in; nil when closed.
+    private(set) var locationPrompt: LocationPrompt?
+    /// Bumped to ask the window to focus the find field.
     private(set) var findFocusRequest = 0
     /// The text the last search ran for, so the typing debounce does not search it again.
     @ObservationIgnored private var lastSearchedText = ""
@@ -103,10 +108,10 @@ final class BrowserModel {
 
     // MARK: Tabs
 
-    /// Opens a loose blank tab and selects it.
+    /// Opens the location prompt for a new tab; the tab opens only when the prompt submits an address.
     func newTab() {
-        open(BrowserTab(), load: false)
-        addressFocusRequest += 1
+        hideShortcutHelp()
+        locationPrompt = .newTab
     }
 
     /// Cmd-click on a link: the link opens in a new selected tab, on the opener's store.
@@ -157,6 +162,7 @@ final class BrowserModel {
     }
 
     func closeSelectedTab() {
+        closeFloatingSurfaces()
         if let id = tabs.selectedID { close(id) }
     }
 
@@ -184,7 +190,8 @@ final class BrowserModel {
         guard let tab = tabs[id] else { return nil }
         if let view = registry.webView(for: id) { return view }
         let isRestoring = restoredTabs.remove(id) != nil
-        let view = registry.make(for: id, store: tab.store, configuration: configuration)
+        let view = registry.make(
+            for: id, store: tab.store, configuration: configuration, zoom: zoom[id] ?? PageZoom.actual)
         update(id) { $0.isLive = true }
         // Built once the tab is listed, so the controller's initial KVO values reach it.
         let controller = TabController(tab: id, webView: view, model: self)
@@ -208,7 +215,10 @@ final class BrowserModel {
         if tabs.selectedID != previous {
             if isFindVisible { isFindVisible = false }
             clearFindMiss()
-            if let previous { controllers[previous]?.didDeselect() }
+            if let previous {
+                controllers[previous]?.didDeselect()
+                registry.webView(for: previous)?.focusesWhenShown = false
+            }
             if let link = tabs.selected?.link { changeLibrary { $0.reveal(link) } }
         }
         let dropped = before.filter { tabs[$0] == nil }
@@ -220,6 +230,7 @@ final class BrowserModel {
             if loadProgress[id] != nil { loadProgress[id] = nil }
             if favicons[id] != nil { favicons[id] = nil }
             if security[id] != nil { security[id] = nil }
+            if zoom[id] != nil { zoom[id] = nil }
         }
         Task { @MainActor [registry] in
             for id in dropped { registry.destroy(id) }
@@ -282,7 +293,27 @@ final class BrowserModel {
     }
 
     func bookmarkSelectedTab() {
+        closeFloatingSurfaces()
         if let id = tabs.selectedID { addLink(.bookmarks, from: id) }
+    }
+
+    /// The pin holding the selected tab's page, matched by URL so a bookmark's tab finds its pin too.
+    private var selectedPin: SavedLink? {
+        guard let url = selected?.url else { return nil }
+        return library.links(on: .pins).first { $0.url == url }
+    }
+
+    /// The selected tab's page is one of the pins.
+    var isSelectedTabPinned: Bool { selectedPin != nil }
+
+    /// Pins the selected tab's page, or unpins it; the page stays open, and a bookmark's tab keeps its bookmark.
+    func togglePinSelectedTab() {
+        closeFloatingSurfaces()
+        if let pin = selectedPin {
+            removeLink(pin.id)
+        } else if let id = tabs.selectedID {
+            addLink(.pins, from: id)
+        }
     }
 
     /// Drops the link's row, or a folder with every row in it; an open tab of a removed link carries on as a
@@ -379,14 +410,23 @@ final class BrowserModel {
     /// Loads the address into the selected tab, or opens a loose tab on it when none is selected.
     func load(_ text: String) {
         guard let url = AddressInput.url(from: text) else { return }
-        guard let id = tabs.selectedID, let view = ensureView(for: id, load: false) else {
+        guard let id = tabs.selectedID else {
+            open(BrowserTab(url: url), load: true)
+            return
+        }
+        load(url, in: id)
+        focusSelectedView()
+    }
+
+    /// Loads `url` in the tab; when the tab has no web view to load in, opens a loose tab on it instead.
+    private func load(_ url: URL, in id: TabID) {
+        guard let view = ensureView(for: id, load: false) else {
             open(BrowserTab(url: url), load: true)
             return
         }
         update(id) { $0.url = url }
         controllers[id]?.browserWillLoad()
         view.load(URLRequest(url: url))
-        view.window?.makeFirstResponder(view)
     }
 
     func goBack() { selectedView?.goBack() }
@@ -394,6 +434,7 @@ final class BrowserModel {
     func goForward() { selectedView?.goForward() }
 
     func reload() {
+        closeFloatingSurfaces()
         guard let id = tabs.selectedID, let view = ensureView(for: id, load: false) else { return }
         if view.url == nil, let url = tabs[id]?.url {
             controllers[id]?.browserWillLoad()
@@ -405,15 +446,126 @@ final class BrowserModel {
 
     func stopLoading() { selectedView?.stopLoading() }
 
-    func focusAddressBar() { addressFocusRequest += 1 }
+    /// Opens the location prompt on the selected tab's address, or for a new tab when none is selected.
+    func focusAddressBar() {
+        hideShortcutHelp()
+        locationPrompt = tabs.selectedID.map { .current($0) } ?? .newTab
+    }
+
+    // MARK: Location prompt
+
+    /// Goes where the prompt's text leads: a new selected tab, or its tab (a new one if that tab has closed since).
+    /// Text that makes no address (blank) leaves the prompt open.
+    func submitLocation(_ text: String) {
+        guard let prompt = locationPrompt, let url = AddressInput.url(from: text) else { return }
+        locationPrompt = nil
+        if case .current(let id) = prompt, tabs[id] != nil {
+            load(url, in: id)
+        } else if case .newTab = prompt, let blank = selected, blank.url == nil, !blank.isLoading {
+            // The blank tab an empty window or closing the last tab leaves takes the page, so no empty New Tab row
+            // is left behind.
+            load(url, in: blank.id)
+        } else {
+            open(BrowserTab(url: url), load: true)
+        }
+        focusSelectedView()
+    }
+
+    /// Closes the prompt and hands the keys back to the page, as closing Find does.
+    func cancelLocationPrompt() {
+        guard locationPrompt != nil else { return }
+        locationPrompt = nil
+        focusSelectedView()
+    }
+
+    /// Closes the shortcut overlay and the location prompt. Every catalog shortcut's action calls it first, so a key
+    /// pressed over either never acts out of sight behind it.
+    private func closeFloatingSurfaces() {
+        hideShortcutHelp()
+        cancelLocationPrompt()
+    }
+
+    /// Makes the selected page first responder; a view not in a window yet (a tab just opened) takes focus when
+    /// SwiftUI puts it in one.
+    private func focusSelectedView() {
+        guard let view = selectedView else { return }
+        if let window = view.window {
+            window.makeFirstResponder(view)
+        } else {
+            view.focusesWhenShown = true
+        }
+    }
+
+    // MARK: Zoom
+
+    /// The selected tab's zoom, nil when it has no page.
+    private var selectedPageZoom: Double? {
+        guard let id = tabs.selectedID, tabs[id]?.url != nil else { return nil }
+        return zoom[id] ?? PageZoom.actual
+    }
+
+    var canZoomIn: Bool { selectedPageZoom.map(PageZoom.canZoomIn) == true }
+
+    var canZoomOut: Bool { selectedPageZoom.map(PageZoom.canZoomOut) == true }
+
+    var canResetZoom: Bool { selectedPageZoom.map { $0 != PageZoom.actual } == true }
+
+    func zoomIn() {
+        closeFloatingSurfaces()
+        if canZoomIn { setSelectedZoom(PageZoom.zoomedIn) }
+    }
+
+    func zoomOut() {
+        closeFloatingSurfaces()
+        if canZoomOut { setSelectedZoom(PageZoom.zoomedOut) }
+    }
+
+    func resetZoom() {
+        closeFloatingSurfaces()
+        if canResetZoom { setSelectedZoom { _ in PageZoom.actual } }
+    }
+
+    /// Stores the selected tab's new zoom (dropping the entry at actual size) and applies it to its web view.
+    private func setSelectedZoom(_ next: (Double) -> Double) {
+        guard let id = tabs.selectedID, let current = selectedPageZoom else { return }
+        let value = next(current)
+        zoom[id] = value == PageZoom.actual ? nil : value
+        ensureView(for: id, load: false)?.pageZoom = value
+    }
 
     /// Each sidebar mode anchors the Downloads popover on its own button, so it closes before the mode changes rather
-    /// than leave the flag set with its anchor gone; ⌥⌘L then opens it on the new button.
+    /// than leave the flag set with its anchor gone; ⌘J then opens it on the new button.
     func closeDownloadsForModeChange() { isDownloadsVisible = false }
+
+    func toggleDownloads() {
+        closeFloatingSurfaces()
+        isDownloadsVisible.toggle()
+    }
+
+    // MARK: Shortcut help
+
+    /// Opens the overlay and takes the keys from the page under it, so Esc and typing reach the overlay.
+    func showShortcutHelp() {
+        locationPrompt = nil
+        isShortcutHelpVisible = true
+        if let window = selectedView?.window { window.makeFirstResponder(nil) }
+    }
+
+    /// Closes the overlay and hands the keys back to the page, as closing Find does.
+    func hideShortcutHelp() {
+        guard isShortcutHelpVisible else { return }
+        isShortcutHelpVisible = false
+        if let view = selectedView { view.window?.makeFirstResponder(view) }
+    }
+
+    func toggleShortcutHelp() {
+        if isShortcutHelpVisible { hideShortcutHelp() } else { showShortcutHelp() }
+    }
 
     // MARK: Find
 
     func showFind() {
+        closeFloatingSurfaces()
         isFindVisible = true
         clearFindMiss()
         findFocusRequest += 1

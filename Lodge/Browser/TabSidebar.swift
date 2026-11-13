@@ -80,6 +80,7 @@ private struct ExpandedSidebar: View {
             Divider()
             HStack(spacing: 6) {
                 WorkspaceBar(axis: .horizontal)
+                ShortcutHelpButton(model: model, isRail: false)
                 if let downloads = model.downloads {
                     DownloadsButton(model: model, manager: downloads, isRail: false)
                         .padding(.trailing, 4)
@@ -135,6 +136,7 @@ private struct RailSidebar: View {
             .scrollIndicators(.never)
             VStack(spacing: 12) {
                 WorkspaceBar(axis: .vertical)
+                ShortcutHelpButton(model: model, isRail: true)
                 if let downloads = model.downloads {
                     DownloadsButton(model: model, manager: downloads, isRail: true)
                 }
@@ -625,7 +627,7 @@ struct SidebarRowLabel: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
                 .opacity(isHovered || isSelected ? 1 : 0)
-                .help("Close tab (⌘W)")
+                .help(ShortcutCatalog.tooltip("Close tab", for: .closeTab))
                 .accessibilityLabel("Close \(item.title)")
             }
         }
@@ -660,7 +662,21 @@ private struct SidebarToggle: View {
         Button("\(verb) Sidebar", systemImage: "sidebar.left", action: action)
             .iconButtonStyle()
             .font(isRail ? .system(size: SidebarMode.railSymbolSize) : nil)
-            .help("\(verb) the sidebar (⌃⌘S)")
+            .help("\(verb) the sidebar")
+    }
+}
+
+/// Opens and closes the keyboard shortcut overlay, as Help ▸ Keyboard Shortcuts opens it (D3).
+private struct ShortcutHelpButton: View {
+    let model: BrowserModel
+    let isRail: Bool
+
+    var body: some View {
+        Button("Keyboard Shortcuts", systemImage: "questionmark", action: model.toggleShortcutHelp)
+            .iconButtonStyle()
+            .font(isRail ? .system(size: SidebarMode.railSymbolSize) : nil)
+            .help("Keyboard shortcuts")
+            .accessibilityAddTraits(model.isShortcutHelpVisible ? .isSelected : [])
     }
 }
 
@@ -670,6 +686,6 @@ private struct NewTabButton: View {
     var body: some View {
         Button("New Tab", systemImage: "plus", action: model.newTab)
             .iconButtonStyle()
-            .help("Open a new tab (⌘T)")
+            .help(ShortcutCatalog.tooltip("Open a new tab", for: .newTab))
     }
 }
