@@ -10,7 +10,7 @@ import Testing
 
     private let snapshot: SessionSnapshot = {
         let tab = BrowserTab(url: URL(string: "https://a.example")!, title: "A")
-        return SessionSnapshot(
+        return SessionSnapshot.defaultOnly(
             tabs: TabList(tabs: [tab, BrowserTab()], selectedID: tab.id),
             library: LinkLibrary(pins: [SavedLink(url: URL(string: "https://p.example")!, title: "P")]))
     }()
@@ -67,5 +67,52 @@ import Testing
         #expect(file.load().snapshot == nil)
         #expect(!exists(file.url))
         #expect(try String(contentsOf: file.badURL, encoding: .utf8) == "new bad")
+    }
+
+    private static let version2 = #"{"version": 2, "tabs": [], "pins": [], "bookmarks": "#
+        + #"{"id": "F0000000-0000-0000-0000-000000000001", "title": "Bookmarks", "isExpanded": true, "children": []}}"#
+
+    @Test func backupSitsBesideTheSession() {
+        #expect(file.v2BackupURL == root.appending(path: "session.v2.json"))
+    }
+
+    @Test func backsUpAnOlderSessionOnce() throws {
+        defer { cleanUp() }
+        try put(Self.version2, at: file.url)
+        #expect(file.load().snapshot != nil)
+        #expect(try file.backUpBeforeUpgrade())
+        #expect(try String(contentsOf: file.v2BackupURL, encoding: .utf8) == Self.version2)
+        #expect(try !file.backUpBeforeUpgrade())
+    }
+
+    @Test func backupNeverOverwritesAnEarlierOne() throws {
+        defer { cleanUp() }
+        try put("earlier backup", at: file.v2BackupURL)
+        try put(Self.version2, at: file.url)
+        #expect(try !file.backUpBeforeUpgrade())
+        #expect(try String(contentsOf: file.v2BackupURL, encoding: .utf8) == "earlier backup")
+    }
+
+    @Test func backupSurvivesTheFirstVersion3Write() throws {
+        defer { cleanUp() }
+        try put(Self.version2, at: file.url)
+        let loaded = try #require(file.load().snapshot)
+        #expect(try file.backUpBeforeUpgrade())
+        try file.write(loaded)
+        #expect(try String(contentsOf: file.v2BackupURL, encoding: .utf8) == Self.version2)
+        #expect(try !file.backUpBeforeUpgrade())
+    }
+
+    @Test func skipsTheBackupForAVersion3Session() throws {
+        defer { cleanUp() }
+        try file.write(snapshot)
+        #expect(try !file.backUpBeforeUpgrade())
+        #expect(!exists(file.v2BackupURL))
+    }
+
+    @Test func skipsTheBackupWithoutASession() throws {
+        defer { cleanUp() }
+        #expect(try !file.backUpBeforeUpgrade())
+        #expect(!exists(file.v2BackupURL))
     }
 }

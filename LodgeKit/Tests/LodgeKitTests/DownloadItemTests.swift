@@ -72,4 +72,27 @@ import Testing
         #expect(!item(.failed(reason: "x"), url: "data:text/plain,hi").canRetry)
         #expect(!item(.failed(reason: "x"), url: nil).canRetry)
     }
+
+    @Test func keepsItsStoreThroughJSON() throws {
+        var saved = item(.finished)
+        let id = UUID()
+        saved.store = .workspace(id)
+        let decoded = try JSONDecoder().decode(DownloadItem.self, from: JSONEncoder().encode(saved))
+        #expect(decoded.store == .workspace(id))
+        #expect(decoded.retryStore == .workspace(id))
+    }
+
+    @Test func aRowSavedBeforeWorkspacesRetriesOnDefault() throws {
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(item(.interrupted))) as! [String: Any]
+        json["store"] = nil
+        let decoded = try JSONDecoder().decode(DownloadItem.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.store == nil)
+        #expect(decoded.retryStore == .global)
+    }
+
+    @Test func aPrivateStoreRowDoesNotRetry() {
+        var private_ = item(.failed(reason: "x"))
+        private_.store = .ephemeral(UUID())
+        #expect(private_.retryStore == nil)
+    }
 }
