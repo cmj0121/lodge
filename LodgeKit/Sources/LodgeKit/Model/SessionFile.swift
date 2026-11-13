@@ -52,3 +52,22 @@ public struct SessionFile: Sendable {
         try snapshot.encoded().write(to: url, options: .atomic)
     }
 }
+
+extension SessionFile {
+    /// `session.v2.json` beside `session.json`: the file as an older Lodge wrote it, before the first v3 write.
+    public var v2BackupURL: URL { directory.appending(path: "session.v2.json") }
+
+    private struct Version: Decodable { var version: Int }
+
+    /// Copies session.json → session.v2.json when on-disk version < 3 and no backup exists; never overwrites.
+    @discardableResult
+    public func backUpBeforeUpgrade() throws -> Bool {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: url.path(percentEncoded: false)),
+            !manager.fileExists(atPath: v2BackupURL.path(percentEncoded: false)),
+            try JSONDecoder().decode(Version.self, from: Data(contentsOf: url)).version < 3
+        else { return false }
+        try manager.copyItem(at: url, to: v2BackupURL)
+        return true
+    }
+}

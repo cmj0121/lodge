@@ -38,9 +38,20 @@ final class SessionStore {
     }
 
     /// The saved session; nil when there is none, or when it cannot be read (the file is then set aside).
+    /// A session from an older Lodge is first copied to `session.v2.json`, before anything is written over it.
     func load() -> SessionSnapshot? {
-        guard let outcome = file?.load() else { return nil }
-        if case .setAside(let reason, let moveFailure) = outcome {
+        guard let file else { return nil }
+        let outcome = file.load()
+        switch outcome {
+        case .missing:
+            break
+        case .loaded:
+            do {
+                if try file.backUpBeforeUpgrade() { Self.logger.info("Backed up the older session") }
+            } catch {
+                Self.logger.error("Cannot back up the older session: \(error.localizedDescription, privacy: .public)")
+            }
+        case .setAside(let reason, let moveFailure):
             Self.logger.error("Cannot read the session, setting it aside: \(reason.localizedDescription, privacy: .public)")
             if let moveFailure {
                 Self.logger.error("Cannot set the session aside: \(moveFailure.localizedDescription, privacy: .public)")
@@ -61,6 +72,12 @@ final class SessionStore {
             self?.writeTask = nil
             self?.writePending()
         }
+    }
+
+    /// Writes `snapshot` now, replacing any snapshot still waiting.
+    func writeNow(_ snapshot: SessionSnapshot) {
+        schedule(snapshot)
+        flush()
     }
 
     /// Writes the waiting snapshot now.

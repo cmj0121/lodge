@@ -45,6 +45,7 @@ final class WebViewRegistry {
             switch ref {
             case .global: .default()
             case .workspace(let id): WKWebsiteDataStore(forIdentifier: id)
+            case .ephemeral: .nonPersistent()
             }
         stores[ref] = store
         return store
