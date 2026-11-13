@@ -8,15 +8,21 @@ public enum DownloadNaming {
     static let maxBytes = 200
 
     /// Last path component only; "/", ":", "\\", control and format chars (bidi controls, zero-width chars) → "_";
-    /// trims whitespace and dots at the ends; "", ".", ".." → "download"; at most 200 UTF-8 bytes, keeping the
-    /// extension. Never returns "", "." or "..".
+    /// each run of separators (spaces of any width, U+2028, U+2029) → one " ", so a name cannot hide its extension
+    /// behind blank space or a line break; trims whitespace and dots at the ends; "", ".", ".." → "download"; at
+    /// most 200 UTF-8 bytes, keeping the extension. Never returns "", "." or "..".
     public static func sanitize(_ suggested: String) -> String {
         let last = suggested.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init) ?? ""
         var scalars = String.UnicodeScalarView()
         for scalar in last.unicodeScalars {
-            let category = scalar.properties.generalCategory
-            let unsafe = scalar == ":" || scalar == "\\" || category == .control || category == .format
-            scalars.append(unsafe ? "_" : scalar)
+            switch scalar.properties.generalCategory {
+            case .spaceSeparator, .lineSeparator, .paragraphSeparator:
+                if scalars.last != " " { scalars.append(" ") }
+            case .control, .format:
+                scalars.append("_")
+            default:
+                scalars.append(scalar == ":" || scalar == "\\" ? "_" : scalar)
+            }
         }
         let name = capped(trimmed(String(scalars)))
         return name.isEmpty || name == "." || name == ".." ? "download" : name
@@ -63,11 +69,25 @@ public enum DownloadNaming {
         return (String(name[..<dot]), String(name[name.index(after: dot)...]))
     }
 
-    /// `name`, else "base (1).ext", "base (2).ext", … — skipping names that exist (final or `.lodgedownload`)
-    /// in `directory` or are in `reserved`.
+    /// One path component that is safe to put in a folder as is: not empty, ".", or "..", and without "/", ":",
+    /// "\\", control or format chars.
+    public static func isSafeComponent(_ name: String) -> Bool {
+        !name.isEmpty && name != "." && name != ".."
+            && !name.unicodeScalars.contains { scalar in
+                let category = scalar.properties.generalCategory
+                return "/:\\".unicodeScalars.contains(scalar) || category == .control || category == .format
+            }
+    }
+
+    /// Numbered names tried before `unique` gives up counting.
+    static let maxNumbered = 999
+
+    /// `name`, else "base (1).ext", "base (2).ext", … up to "base (999).ext", then "base <8 hex of a UUID>.ext" —
+    /// skipping names that exist (final or `.lodgedownload`, a dangling link included) in `directory` or are in
+    /// `reserved`.
     public static func unique(
         _ name: String, in directory: URL, reserved: Set<String>,
-        exists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
+        exists: (URL) -> Bool = { DownloadFiles.fileType(of: $0) != nil }
     ) -> String {
         // APFS is case-insensitive by default, so "A.zip" takes "a.zip" too.
         let reserved = Set(reserved.map { $0.lowercased() })
@@ -78,12 +98,12 @@ public enum DownloadNaming {
         }
         guard isTaken(name) else { return name }
         let (base, ext) = split(name)
-        var number = 1
-        while true {
-            let candidate = "\(base) (\(number))" + (ext.map { "." + $0 } ?? "")
+        let suffix = ext.map { "." + $0 } ?? ""
+        for number in 1...maxNumbered {
+            let candidate = "\(base) (\(number))" + suffix
             if !isTaken(candidate) { return candidate }
-            number += 1
         }
+        return "\(base) \(UUID().uuidString.prefix(8).lowercased())" + suffix
     }
 
     /// Appends ".lodgedownload".

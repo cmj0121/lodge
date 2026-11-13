@@ -32,6 +32,8 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         var placement = DownloadFiles.Placement.unique
         /// The custom folder, accessed until the download ends.
         var scopedFolder: URL?
+        /// The "download multiple files" prompt, answered before the download gets a destination.
+        var permission: Task<Bool, Never>?
     }
 
     private(set) var list = DownloadList()
@@ -50,6 +52,10 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     @ObservationIgnored private var pendingProgress: [UUID: (received: Int64, total: Int64?)] = [:]
     @ObservationIgnored private var throttle = DownloadProgressThrottle()
     @ObservationIgnored private var isRestored = false
+    /// Which pages may start downloads (CWE-770); answers last until quit.
+    @ObservationIgnored private var gate = DownloadGate()
+    /// The "Too many downloads" alert is up, so another refusal does not stack one more.
+    @ObservationIgnored private var isShowingTooMany = false
     /// `refreshMissing()` runs; a newer one voids the older.
     @ObservationIgnored private var refreshes = LatestOnly()
     @ObservationIgnored private let file: DownloadsFile?
@@ -90,7 +96,9 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             list = DownloadList()
         }
         _ = list.interruptActive(at: Date())
-        files.cleanUp(list.items, createdBefore: cutoff, folder: folderBookmark.flatMap(resolveFolder))
+        files.cleanUp(
+            list.items, createdBefore: cutoff, downloadsFolder: downloadsFolder,
+            folder: folderBookmark.flatMap(resolveFolder))
         return list
     }
 
@@ -122,8 +130,9 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
 
     // MARK: Starting
 
-    /// Takes over a download a tab's navigation became. Only Default tabs download for now (D10).
-    func start(_ download: WKDownload, store: StoreRef) {
+    /// Takes over a download a tab's navigation became, when `DownloadGate` lets `site` start it. Only Default tabs
+    /// download for now (D10).
+    func start(_ download: WKDownload, store: StoreRef, site: Origin?, userInitiated: Bool, isMainFrame: Bool) {
         guard store == .global else {
             download.cancel(nil)
             let alert = NSAlert()
@@ -131,18 +140,72 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             present(alert, in: download.webView?.window)
             return
         }
-        track(download, replacing: nil)
+        let decision = gate.decide(
+            site: site, userInitiated: userInitiated, isMainFrame: isMainFrame, activeCount: active.count)
+        switch decision {
+        case .allow:
+            track(download, replacing: nil)
+        case .ask:
+            guard let site else {
+                download.cancel(nil)
+                return
+            }
+            let window = download.webView?.window
+            track(download, replacing: nil, permission: Task { await askPermission(for: site, in: window) })
+        case .refuse(let refusal):
+            download.cancel(nil)
+            let from = site?.description ?? "a page without a site"
+            Self.logger.notice("Refused a download from \(from, privacy: .private): \(String(describing: refusal))")
+            if refusal == .tooMany { alertTooMany(in: download.webView?.window) }
+        }
     }
 
-    private func track(_ download: WKDownload, replacing: UUID?) {
+    private func track(_ download: WKDownload, replacing: UUID?, permission: Task<Bool, Never>? = nil) {
         download.delegate = self
-        active[ObjectIdentifier(download)] = Active(id: UUID(), download: download, replacing: replacing)
+        active[ObjectIdentifier(download)] = Active(
+            id: UUID(), download: download, replacing: replacing, permission: permission)
+    }
+
+    private func alertTooMany(in window: NSWindow?) {
+        guard !isShowingTooMany else { return }
+        isShowingTooMany = true
+        let alert = NSAlert()
+        alert.messageText = "Too many downloads are running."
+        Task {
+            if let window {
+                await alert.beginSheetModal(for: window)
+            } else {
+                alert.runModal()
+            }
+            isShowingTooMany = false
+        }
+    }
+
+    /// Asks whether `site` may download multiple files, as a sheet on the tab's window, and records the answer.
+    private func askPermission(for site: Origin, in window: NSWindow?) async -> Bool {
+        let alert = NSAlert()
+        alert.messageText = DownloadGate.prompt(for: site)
+        alert.addButton(withTitle: "Allow")
+        alert.addButton(withTitle: "Don't Allow")
+        let response = if let window { await alert.beginSheetModal(for: window) } else { alert.runModal() }
+        let allowed = response == .alertFirstButtonReturn
+        gate.answer(allowed, for: site)
+        return allowed
     }
 
     func download(
         _ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String
     ) async -> URL? {
         guard let entry = active[ObjectIdentifier(download)] else { return nil }
+        if let permission = entry.permission {
+            guard await permission.value else {
+                end(download, as: .cancelled)
+                return nil
+            }
+            // The download may have ended, by a quit, while the prompt was open.
+            guard active[ObjectIdentifier(download)] != nil else { return nil }
+            update(download) { $0.permission = nil }
+        }
         let request = download.originalRequest
         let name = DownloadNaming.sanitize(suggestedFilename)
         list.add(
@@ -328,6 +391,11 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             let target = try Self.files.finish(
                 partialURL, to: finalURL, placement: entry.placement,
                 reserved: reservedNames(in: finalURL.deletingLastPathComponent()))
+            do {
+                try Quarantine.ensure(target)
+            } catch {
+                Self.logger.error("Cannot quarantine a download: \(error.localizedDescription, privacy: .public)")
+            }
             let size = (try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
                 ?? download.progress.completedUnitCount
             let bookmark: Data?
@@ -416,8 +484,44 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         }
     }
 
+    /// Opens the finished file, after a confirmation when it is an app or script (`DownloadOpenRisk`).
     func open(_ id: UUID) {
-        act(on: id) { NSWorkspace.shared.open($0) }
+        act(on: id) { url in
+            let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType
+            guard DownloadOpenRisk.isAppOrScript(fileName: url.lastPathComponent, contentType: type) else {
+                return openQuarantined(url, isAppOrScript: false)
+            }
+            Task { await confirmOpen(id, name: url.lastPathComponent) }
+            return true
+        }
+    }
+
+    private func confirmOpen(_ id: UUID, name: String) async {
+        let alert = NSAlert()
+        alert.messageText = DownloadOpenRisk.confirmation(for: name)
+        alert.addButton(withTitle: "Open")
+        alert.addButton(withTitle: "Cancel")
+        let response =
+            if let window = NSApp.mainWindow { await alert.beginSheetModal(for: window) } else { alert.runModal() }
+        guard response == .alertFirstButtonReturn else { return }
+        act(on: id) { openQuarantined($0, isAppOrScript: true) }
+    }
+
+    /// Opens `url` once it carries the quarantine mark, so Gatekeeper checks it (CWE-693). An app or script that
+    /// cannot be marked is not opened: the user is told, and true is returned, as the file is there; any other file
+    /// opens anyway.
+    private func openQuarantined(_ url: URL, isAppOrScript: Bool) -> Bool {
+        do {
+            try Quarantine.ensure(url)
+        } catch {
+            Self.logger.error("Cannot quarantine a download: \(error.localizedDescription, privacy: .public)")
+            guard isAppOrScript else { return NSWorkspace.shared.open(url) }
+            let alert = NSAlert()
+            alert.messageText = "Lodge can't open “\(url.lastPathComponent)” safely."
+            present(alert, in: NSApp.mainWindow)
+            return true
+        }
+        return NSWorkspace.shared.open(url)
     }
 
     func showInFinder(_ id: UUID) {
@@ -467,11 +571,12 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         var fresh: (url: URL, bookmark: Data)?
     }
 
-    /// Resolves the item's bookmark, refreshing a stale one, and runs `use` on its file while access is held.
+    /// Resolves the item's bookmark, refreshing a stale one, and runs `use` on its file while access is held. Without
+    /// a bookmark the file counts as missing: the stored `fileURL` is never used on its own.
     private nonisolated static func check<Value: Sendable>(
         _ item: DownloadItem, _ use: (URL) -> Value
     ) -> Check<Value> {
-        var url = item.fileURL
+        var url: URL?
         var accessing = false
         var fresh: (url: URL, bookmark: Data)?
         if let bookmark = item.bookmark {

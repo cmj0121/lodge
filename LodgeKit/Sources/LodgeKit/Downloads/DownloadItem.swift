@@ -72,6 +72,18 @@ public struct DownloadItem: Identifiable, Codable, Equatable, Sendable {
         canRetry || (state == .finished && isMissing && isReplayable)
     }
 
+    /// The item as read back from downloads.json: a name that is not one safe path component is sanitized, so
+    /// cleanup never builds a path out of its folder (a safe one is kept as stored, so cleanup finds the partial
+    /// an older sanitizer named), and a source that is not http(s) is dropped, so it cannot be retried. A container
+    /// someone else can write to is out of scope; this only keeps a stale or malformed list from doing harm.
+    public func sanitizedForLoad() -> DownloadItem {
+        var item = self
+        if !DownloadNaming.isSafeComponent(fileName) { item.fileName = DownloadNaming.sanitize(fileName) }
+        let scheme = sourceURL?.scheme?.lowercased()
+        if scheme != "http" && scheme != "https" { item.sourceURL = nil }
+        return item
+    }
+
     /// Allowed: waitingForLocation → running | cancelled | failed; running → finished | failed | cancelled |
     /// interrupted; ended states are final (Retry makes a new item). Entering an ended state sets `endedAt`.
     /// Returns false and changes nothing otherwise.

@@ -190,6 +190,7 @@ final class BrowserModel {
         let controller = TabController(tab: id, webView: view, model: self)
         controllers[id] = controller
         if load, let url = tab.url {
+            controller.browserWillLoad()
             let navigation = view.load(URLRequest(url: url))
             if isRestoring { controller.restoreNavigation = navigation }
         }
@@ -383,6 +384,7 @@ final class BrowserModel {
             return
         }
         update(id) { $0.url = url }
+        controllers[id]?.browserWillLoad()
         view.load(URLRequest(url: url))
         view.window?.makeFirstResponder(view)
     }
@@ -394,6 +396,7 @@ final class BrowserModel {
     func reload() {
         guard let id = tabs.selectedID, let view = ensureView(for: id, load: false) else { return }
         if view.url == nil, let url = tabs[id]?.url {
+            controllers[id]?.browserWillLoad()
             view.load(URLRequest(url: url))
         } else {
             view.reload()

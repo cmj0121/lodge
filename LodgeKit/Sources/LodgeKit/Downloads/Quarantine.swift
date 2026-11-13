@@ -1,0 +1,33 @@
+import Foundation
+
+/// The `com.apple.quarantine` mark that makes Gatekeeper check a downloaded file before it runs (CWE-693).
+public enum Quarantine {
+    public static let attribute = "com.apple.quarantine"
+
+    /// "0083;<seconds since 1970, hex>;<agent>;": flag 0x0083 marks it downloaded and not yet approved.
+    public static func value(agent: String, at date: Date) -> String {
+        String(format: "0083;%08x;%@;", UInt64(max(0, date.timeIntervalSince1970)), agent)
+    }
+
+    /// Adds the mark to `url` (itself, not a link's target) unless it has one already. Throws the `POSIXError`
+    /// of a failed read or write.
+    public static func ensure(_ url: URL, agent: String = "Lodge", at date: Date = Date()) throws {
+        let path = url.path(percentEncoded: false)
+        if getxattr(path, attribute, nil, 0, 0, XATTR_NOFOLLOW) >= 0 { return }
+        guard errno == ENOATTR else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let bytes = Array(value(agent: agent, at: date).utf8)
+        guard setxattr(path, attribute, bytes, bytes.count, 0, XATTR_NOFOLLOW) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
+    /// The mark on `url`, nil when it has none.
+    public static func read(_ url: URL) -> String? {
+        let path = url.path(percentEncoded: false)
+        let size = getxattr(path, attribute, nil, 0, 0, XATTR_NOFOLLOW)
+        guard size >= 0 else { return nil }
+        var bytes = [UInt8](repeating: 0, count: size)
+        guard getxattr(path, attribute, &bytes, size, 0, XATTR_NOFOLLOW) == size else { return nil }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+}

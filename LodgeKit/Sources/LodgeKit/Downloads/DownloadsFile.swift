@@ -1,7 +1,8 @@
 import Foundation
 
 /// The download list on disk: `downloads.json` in `directory`. A file that cannot be read is moved aside to
-/// `downloads.json.bad` (replacing an older one) so the next launch starts with an empty list.
+/// `downloads.json.bad` (replacing an older one) so the next launch starts with an empty list. Loaded items are
+/// sanitized (`DownloadItem.sanitizedForLoad()`).
 public struct DownloadsFile: Sendable {
     public static let currentVersion = 1
 
@@ -59,7 +60,7 @@ public struct DownloadsFile: Sendable {
         guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return .missing }
         do {
             let contents = try JSONDecoder().decode(Contents.self, from: Data(contentsOf: url))
-            return .loaded(DownloadList(items: contents.items))
+            return .loaded(DownloadList(items: contents.items.map { $0.sanitizedForLoad() }))
         } catch {
             do {
                 try setAside()

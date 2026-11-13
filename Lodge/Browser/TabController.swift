@@ -15,6 +15,10 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var history: HistoryEventFilter
     /// The load that restored the tab; its commit is not a visit.
     var restoreNavigation: WKNavigation?
+    /// Each recent navigation action's gesture and site, for the download its response may become.
+    private var gestures = NavigationGestures()
+    /// The next main-frame action is a load the browser started (`browserWillLoad()`).
+    private var nextLoadIsBrowserInitiated = false
 
     init(tab: TabID, webView: LodgeWebView, model: BrowserModel) {
         self.tab = tab
@@ -91,6 +95,12 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         }
     }
 
+    /// Called just before the browser loads a URL into the tab (address bar, bookmark, history, restore): that
+    /// navigation's downloads count against the URL's site, not the page it replaces.
+    func browserWillLoad() {
+        nextLoadIsBrowserInitiated = true
+    }
+
     /// Called when another tab is selected: ends this tab's open sheet.
     func didDeselect() {
         dismissSheet?()
@@ -102,6 +112,12 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
         preferences: WKWebpagePreferences
     ) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+        let browserInitiated = isMainFrame && nextLoadIsBrowserInitiated
+        if isMainFrame { nextLoadIsBrowserInitiated = false }
+        gestures.record(
+            Self.gestureRecord(of: navigationAction, browserInitiated: browserInitiated),
+            url: navigationAction.request.url, isMainFrame: isMainFrame)
         if navigationAction.shouldPerformDownload { return (.download, preferences) }
         if navigationAction.navigationType == .linkActivated, navigationAction.modifierFlags.contains(.command),
             let url = navigationAction.request.url, NewTabPolicy.allows(url)
@@ -117,27 +133,53 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     ) async -> WKNavigationResponsePolicy {
         let disposition = (navigationResponse.response as? HTTPURLResponse)?
             .value(forHTTPHeaderField: "Content-Disposition")
+        let action = gestures.record(
+            for: navigationResponse.response.url, isMainFrame: navigationResponse.isForMainFrame)
         let download = DownloadPolicy.shouldDownload(
             mimeCanShow: navigationResponse.canShowMIMEType, contentDisposition: disposition,
-            isMainFrame: navigationResponse.isForMainFrame)
+            isMainFrame: navigationResponse.isForMainFrame, userInitiated: action?.userInitiated ?? false)
         return download ? .download : .allow
     }
 
+    /// A link click (an `<a download>` included) or a form submission counts as user-initiated: WebKit has no public
+    /// user-gesture flag, so the navigation type is the closest signal (see `DownloadGate`). The site is the source
+    /// frame's origin, else (or for a `browserInitiated` load) the target URL's.
+    private static func gestureRecord(
+        of action: WKNavigationAction, browserInitiated: Bool = false
+    ) -> NavigationGestures.Record {
+        let source = action.sourceFrame.securityOrigin
+        return NavigationGestures.Record(
+            userInitiated: action.navigationType == .linkActivated || action.navigationType == .formSubmitted,
+            site: DownloadGate.site(
+                source: Origin(scheme: source.protocol, host: source.host, port: source.port),
+                target: action.request.url, browserInitiated: browserInitiated))
+    }
+
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
-        startDownload(download)
+        let isMainFrame =
+            navigationAction.sourceFrame.isMainFrame && (navigationAction.targetFrame?.isMainFrame ?? true)
+        startDownload(download, action: Self.gestureRecord(of: navigationAction), isMainFrame: isMainFrame)
     }
 
+    /// The response's action is looked up by URL and frame; without one it counts as not user-initiated and
+    /// without a site.
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-        startDownload(download)
+        let isMainFrame = navigationResponse.isForMainFrame
+        let action = gestures.record(for: navigationResponse.response.url, isMainFrame: isMainFrame)
+        startDownload(
+            download, action: action ?? NavigationGestures.Record(userInitiated: false, site: nil),
+            isMainFrame: isMainFrame)
     }
 
-    /// Hands the download to the manager with the tab's store; without either it does not run.
-    private func startDownload(_ download: WKDownload) {
+    /// Hands the download to the manager with the tab's store and its action's gesture and site; without a store
+    /// it does not run.
+    private func startDownload(_ download: WKDownload, action: NavigationGestures.Record, isMainFrame: Bool) {
         guard let manager = model?.downloads, let store else {
             download.cancel(nil)
             return
         }
-        manager.start(download, store: store)
+        manager.start(
+            download, store: store, site: action.site, userInitiated: action.userInitiated, isMainFrame: isMainFrame)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
