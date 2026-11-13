@@ -38,6 +38,7 @@ struct LodgeApp: App {
         Settings {
             SettingsView()
         }
+        .handlesExternalEvents(matching: [])
     }
 }
 

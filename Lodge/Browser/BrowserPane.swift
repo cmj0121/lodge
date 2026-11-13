@@ -96,6 +96,15 @@ struct BrowserPane {
         open(BrowserTab(store: model.newTabStore(), url: url), load: true)
     }
 
+    /// A link from another app: it loads in the blank tab shown here, else in a new tab shown here.
+    func openExternal(_ url: URL) {
+        if let blank = selected, blank.url == nil, !blank.isLoading {
+            load(url, in: blank.id)
+        } else {
+            openLoose(url)
+        }
+    }
+
     /// Appends the tab to the workspace and shows it in this window.
     private func open(_ tab: BrowserTab, load: Bool) {
         model.append(tab, load: load)

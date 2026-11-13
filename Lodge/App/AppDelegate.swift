@@ -36,6 +36,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installKeyMonitor()
     }
 
+    private static let linkLogger = Logger(subsystem: "dev.lodge", category: "links")
+
+    /// Links from other apps (D7), also the one that launched Lodge, which arrives before `didFinishLaunching`: web
+    /// pages open in Default, anything else is ignored. The log has only counts, never a URL.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let links = ExternalLink.filter(urls)
+        Self.linkLogger.info(
+            "Opening \(links.accepted.count, privacy: .public) links from another app, ignoring \(links.ignored, privacy: .public)")
+        coordinator.openExternal(links.accepted)
+    }
+
     /// D5: closing the last window leaves the app running.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 

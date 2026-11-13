@@ -36,9 +36,16 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     @ObservationIgnored private var windowsPending = false
     /// Quitting: windows closing now stay in the session.
     @ObservationIgnored private var isQuitting = false
+    /// `openRestoredWindows` ran: the first window registering from then on opens the links waiting for it.
+    @ObservationIgnored private var isRestoringWindows = false
+    /// Links from other apps open at once; until the first restored window registers they wait in `pendingExternal`.
+    @ObservationIgnored private var opensExternalNow = false
+    @ObservationIgnored private var pendingExternal: [URL] = []
     #if DEBUG
         /// Layout self-checks: stands in for bringing a window forward, so a check never activates the app.
         @ObservationIgnored var bringForwardHook: ((WindowState) -> Void)?
+        /// Self-checks only: called in place of bringing the windows forward, so a check never activates the app.
+        @ObservationIgnored var bringAllForwardOverride: (() -> Void)?
     #endif
 
     @ObservationIgnored let registry: WebViewRegistry
@@ -296,6 +303,7 @@ extension WorkspaceCoordinator: WindowPlacement {
     /// Launch: puts every restored window on screen, the first (the key window at quit) last so it ends up in front;
     /// waits for `windowOpener` when it is not installed yet.
     func openRestoredWindows() {
+        isRestoringWindows = true
         windowsPending = true
         openPendingWindows()
     }
@@ -309,13 +317,15 @@ extension WorkspaceCoordinator: WindowPlacement {
 
     /// ⌘N and a Dock click with no window (D1, D5): a new window in front, on a new blank tab of the active workspace
     /// with the location prompt open; opened once `windowOpener` is installed when it is not yet.
-    func newWindow() {
+    @discardableResult
+    func newWindow() -> WindowState {
         let window = addWindow()
-        guard let windowOpener else {
+        if let windowOpener {
+            windowOpener(window.id)
+        } else {
             windowsPending = true
-            return
         }
-        windowOpener(window.id)
+        return window
     }
 
     @discardableResult
@@ -345,6 +355,9 @@ extension WorkspaceCoordinator: WindowPlacement {
 
     /// Brings every browser window forward, the key-first order kept, the first one key.
     func bringAllForward() {
+        #if DEBUG
+            if let bringAllForwardOverride { return bringAllForwardOverride() }
+        #endif
         for window in windows.dropFirst().reversed() { window.nsWindow?.orderFront(nil) }
         windows.first?.nsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate()
@@ -410,6 +423,39 @@ extension WorkspaceCoordinator: WindowPlacement {
             }
         }
         if nsWindow.isKeyWindow { didBecomeKey(ObjectIdentifier(nsWindow)) }
+        if isRestoringWindows, !opensExternalNow {
+            opensExternalNow = true
+            // Registering happens during a view update; the tabs open on the next main turn.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let urls = pendingExternal
+                pendingExternal = []
+                openExternal(urls)
+            }
+        }
+    }
+
+    /// Links from another app (D7), already only web pages: each opens as a new tab of Default shown in the last
+    /// active browser window (loaded into its blank tab when it shows one), a new window when none is open; every
+    /// window switches to Default (also from Anonymous) and all come forward. Until the first window restored at
+    /// launch is on screen they wait, and open once it is.
+    func openExternal(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        guard opensExternalNow else {
+            pendingExternal += urls
+            return
+        }
+        switchTo(Workspace.defaultID)
+        let window: WindowState
+        if let last = lastActiveBrowserWindow {
+            window = last
+        } else {
+            window = newWindow()
+            window.locationPrompt = nil
+        }
+        let pane = pane(for: window)
+        for url in urls { pane.openExternal(url) }
+        bringAllForward()
     }
 
     /// D5: the window leaves the registry and its remembered tabs; a blank it made and still owns closes, every

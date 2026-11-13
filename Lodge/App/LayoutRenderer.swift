@@ -42,6 +42,8 @@
             checkTwoWindows()
             checkShownElsewhere(in: directory)
             checkStepSkipsShownElsewhere()
+            checkExternalLinks()
+            renderSettings(to: directory.appending(path: "layout-settings.png"))
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -728,6 +730,100 @@
                 model.sidebar.target(offset, from: own) == .tab(shown) && asked == 0
                     && coordinator.selections.shown(in: second.id) == third.id
                     && coordinator.selections.shown(in: first.id) == shown)
+        }
+
+        /// Links from other apps (D7), printed ok or FAILED for each: a link arriving before the restored window is on
+        /// screen waits, then loads into that window's blank tab once it registers; from Anonymous a link still opens
+        /// in Default; with two windows on a custom workspace every window moves to Default, the link opens once, as
+        /// a new tab shown in the last active window, and all windows are brought forward. Bringing forward is a hook
+        /// here, so the app is never activated. Pages are `about:blank`, so no request goes out.
+        private static func checkExternalLinks() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            /// WebKit reports an `about:blank#x` page back as `about:blank%23x`, so the address is compared decoded.
+            func tabs(_ coordinator: WorkspaceCoordinator, with url: URL) -> [BrowserTab] {
+                let wanted = url.absoluteString.removingPercentEncoding
+                return coordinator.model(for: Workspace.defaultID)?.tabs.tabs.filter {
+                    $0.url?.absoluteString.removingPercentEncoding == wanted
+                } ?? []
+            }
+
+            let cold = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            var coldForward = 0
+            cold.bringAllForwardOverride = { coldForward += 1 }
+            let window = cold.windows[0]
+            let blank = cold.selections.shown(in: window.id)
+            let queued = URL(string: "about:blank#queued")!
+            cold.openExternal([queued])
+            cold.openRestoredWindows()
+            settle(0.1)
+            let waited = tabs(cold, with: queued).isEmpty && coldForward == 0
+            let coldHost = host(root(cold, window), size: NSSize(width: 900, height: 600))
+            defer { coldHost.close() }
+            let deadline = Date.now.addingTimeInterval(3)
+            while tabs(cold, with: queued).isEmpty, Date.now < deadline { settle(0.05) }
+            let opened = tabs(cold, with: queued)
+            report(
+                "A link before the windows are restored waits, then opens",
+                waited && window.nsWindow === coldHost && opened.count == 1 && opened.first?.id == blank
+                    && cold.selections.shown(in: window.id) == blank && cold.active.tabs.tabs.count == 1
+                    && coldForward == 1)
+
+            cold.switchTo(Workspace.anonymousID)
+            let fromAnonymous = URL(string: "about:blank#anonymous")!
+            cold.openExternal([fromAnonymous])
+            let shown = cold.selections.shown(in: window.id)
+            report(
+                "A link from Anonymous opens in Default",
+                cold.activeWorkspaceID == Workspace.defaultID && tabs(cold, with: fromAnonymous).count == 1
+                    && shown == tabs(cold, with: fromAnonymous).first?.id && coldForward == 2)
+
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            var forward = 0
+            coordinator.bringAllForwardOverride = { forward += 1 }
+            let first = coordinator.windows[0]
+            if let home = coordinator.selections.shown(in: first.id) {
+                coordinator.active.update(home) { $0.url = URL(string: "about:blank#home")! }
+            }
+            coordinator.openRestoredWindows()
+            let second = coordinator.newWindow()
+            second.locationPrompt = nil
+            let hosts = [first, second].map { host(root(coordinator, $0), size: NSSize(width: 900, height: 600)) }
+            defer { for host in hosts { host.close() } }
+            settle(0.5)
+            let made: Workspace? = autoreleasepool { try? coordinator.create(name: "Work", symbol: "briefcase") }
+            guard let work = made else { return report("A link moves every window to Default", false) }
+            settle()
+            let before = coordinator.model(for: Workspace.defaultID)?.tabs.tabs.map(\.id) ?? []
+            let link = URL(string: "about:blank#link")!
+            let last = coordinator.lastActiveBrowserWindow
+            coordinator.openExternal([link])
+            settle()
+            let linkTabs = tabs(coordinator, with: link)
+            let after = coordinator.model(for: Workspace.defaultID)?.tabs.tabs.map(\.id) ?? []
+            report(
+                "A link moves every window to Default",
+                coordinator.activeWorkspaceID == Workspace.defaultID && work.id != Workspace.defaultID
+                    && [first, second].allSatisfy {
+                        coordinator.selections.shown(in: $0.id)
+                            .map { coordinator.model(for: Workspace.defaultID)?.tabs[$0] != nil } == true
+                    })
+            report(
+                "A link opens one new tab in the last active window, all windows forward",
+                linkTabs.count == 1 && !before.contains(linkTabs[0].id) && after.contains(linkTabs[0].id)
+                    && last.map { coordinator.selections.shown(in: $0.id) } == linkTabs[0].id && forward == 1)
+            settle()
+        }
+
+        /// The Settings window, its download choices read from a defaults suite of its own, removed afterwards.
+        private static func renderSettings(to url: URL) {
+            let suiteName = "dev.lodge.selfcheck.\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            snapshot(
+                SettingsView(model: DownloadSettingsModel(defaults: defaults)).frame(height: 300),
+                size: NSSize(width: 480, height: 300),
+                title: "Settings", to: url)
         }
 
         /// An off-screen window hosting `view`, never shown; it is not freed on closing, so closing it is safe.
