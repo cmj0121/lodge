@@ -110,6 +110,11 @@ final class BrowserModel {
         open(BrowserTab(store: store, url: url), load: true)
     }
 
+    /// A History window entry: the page opens in a new selected tab on the default store.
+    func open(historyURL url: URL) {
+        open(BrowserTab(store: .global, url: url), load: true)
+    }
+
     /// Selects the tab, building its web view when it has none; every other tab keeps its own.
     func select(_ id: TabID) {
         changeTabs { $0.select(id) }

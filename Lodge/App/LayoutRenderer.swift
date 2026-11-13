@@ -4,7 +4,7 @@
     import SwiftUI
 
     /// Debug aid: `Lodge -renderLayout YES` draws the window's layout (both sidebar modes, and
-    /// find open) to PNG files off screen, then
+    /// find open) and the History window, from an in-memory history, to PNG files off screen, then
     /// exits. It never shows a window or takes focus, so it can run while someone uses the machine.
     @MainActor
     enum LayoutRenderer {
@@ -17,6 +17,7 @@
                 render(mode, find: false, to: directory.appending(path: "layout-\(mode.rawValue).png"))
             }
             render(.rail, find: true, to: directory.appending(path: "layout-find.png"))
+            renderHistory(to: directory.appending(path: "layout-history.png"))
             print(directory.path(percentEncoded: false))
             exit(0)
         }
@@ -36,14 +37,49 @@
                 model.showFind()
                 model.findText = "lodge"
             }
-            let view = BrowserView(model: model).defaultAppStorage(defaults)
-            let size = NSSize(width: 1100, height: 700)
+            snapshot(BrowserView(model: model).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700), to: url)
+        }
+
+        /// The History window over sample visits from today back three days, in a store that lives only in memory.
+        private static func renderHistory(to url: URL) {
+            guard let store = try? HistoryStore.inMemory() else { return }
+            let sites = [
+                ("https://developer.apple.com/documentation/swiftui", "SwiftUI | Apple Developer Documentation"),
+                ("https://www.swift.org/blog/", "Blog | Swift.org"),
+                ("https://github.com/groue/GRDB.swift", "GitHub - groue/GRDB.swift: A toolkit for SQLite databases"),
+                ("https://news.ycombinator.com/", "Hacker News"),
+                ("https://zh.wikipedia.org/wiki/臺北市", "臺北市 - 維基百科，自由的百科全書"),
+                ("https://example.com/untitled", ""),
+            ]
+            // Oldest first, as a clock would record them; the store coalesces a revisit only against the newest.
+            let done = Task {
+                for index in (0..<24).reversed() {
+                    let (address, title) = sites[index % sites.count]
+                    let date = Date.now.addingTimeInterval(-Double(index) * 4 * 3600)
+                    _ = try? await store.record(URL(string: address)!, title: title, at: date)
+                }
+            }
+            let model = HistoryModel(browser: BrowserModel(defaultLibrary: .sample))
+            Task {
+                await done.value
+                model.attach(store)
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(1))
+            snapshot(HistoryView(model: model), size: NSSize(width: 640, height: 600), title: "History", to: url)
+        }
+
+        /// Draws `view` in an off-screen window; with no `title`, the title bar is hidden as the browser's is.
+        private static func snapshot(_ view: some View, size: NSSize, title: String? = nil, to url: URL) {
             let window = NSWindow(
                 contentRect: NSRect(origin: .zero, size: size),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered, defer: false)
-            window.titlebarAppearsTransparent = true
-            window.titleVisibility = .hidden
+            if let title {
+                window.title = title
+            } else {
+                window.titlebarAppearsTransparent = true
+                window.titleVisibility = .hidden
+            }
             window.contentView = NSHostingView(rootView: view)
             window.setFrame(NSRect(origin: NSPoint(x: -10_000, y: -10_000), size: size), display: false)
             // Let SwiftUI settle its first layout passes.
