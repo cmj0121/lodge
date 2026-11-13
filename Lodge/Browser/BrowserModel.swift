@@ -48,6 +48,9 @@ final class BrowserModel {
         }
     }
 
+    /// Runs the tabs' downloads; nil in layout renders, where a download does not run.
+    @ObservationIgnored var downloads: DownloadManager?
+
     /// Called with the new snapshot whenever the tabs or the library change in a way it stores.
     @ObservationIgnored var onSnapshotChange: ((SessionSnapshot) -> Void)?
     /// The snapshot last handed to `onSnapshotChange`, so changes it does not store (loading, history

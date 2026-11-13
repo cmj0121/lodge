@@ -102,6 +102,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
         preferences: WKWebpagePreferences
     ) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
+        if navigationAction.shouldPerformDownload { return (.download, preferences) }
         if navigationAction.navigationType == .linkActivated, navigationAction.modifierFlags.contains(.command),
             let url = navigationAction.request.url, NewTabPolicy.allows(url)
         {
@@ -109,6 +110,34 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             return (.cancel, preferences)
         }
         return (.allow, preferences)
+    }
+
+    func webView(
+        _ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse
+    ) async -> WKNavigationResponsePolicy {
+        let disposition = (navigationResponse.response as? HTTPURLResponse)?
+            .value(forHTTPHeaderField: "Content-Disposition")
+        let download = DownloadPolicy.shouldDownload(
+            mimeCanShow: navigationResponse.canShowMIMEType, contentDisposition: disposition,
+            isMainFrame: navigationResponse.isForMainFrame)
+        return download ? .download : .allow
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        startDownload(download)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        startDownload(download)
+    }
+
+    /// Hands the download to the manager with the tab's store; without either it does not run.
+    private func startDownload(_ download: WKDownload) {
+        guard let manager = model?.downloads, let store else {
+            download.cancel(nil)
+            return
+        }
+        manager.start(download, store: store)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
