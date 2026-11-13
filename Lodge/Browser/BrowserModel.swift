@@ -11,6 +11,8 @@ final class BrowserModel {
     let workspaceID: UUID
     /// Every tab of the workspace runs on this store; nil for Anonymous, whose tabs each get their own.
     let store: StoreRef?
+    /// The Anonymous workspace: each tab is its own browser, its bookmarks keep their icons, nothing is recorded.
+    var isAnonymous: Bool { workspaceID == Workspace.anonymousID }
     /// Every open tab. A tab keeps its web view, built when it is first selected, until it closes or the workspace
     /// is released (`releaseViews()`).
     private(set) var tabs = TabList() {
@@ -80,6 +82,8 @@ final class BrowserModel {
     @ObservationIgnored private var controllers: [TabID: TabController] = [:]
     /// Restored or released tabs whose web view is not built yet; the load that builds one is not a visit.
     @ObservationIgnored private var restoredTabs: Set<TabID> = []
+    /// Decoded icons of Anonymous bookmarks, by link, with the bytes they were decoded from.
+    @ObservationIgnored private var storedIcons: [UUID: (data: Data, image: NSImage)] = [:]
     /// Released tabs' `interactionState`, in memory only, put back when the view is rebuilt.
     @ObservationIgnored private var savedStates: [TabID: Any] = [:]
     /// Each popup tab's opener, so neither of a live pair is released while the other has a view.
@@ -129,18 +133,29 @@ final class BrowserModel {
             library = restored.library
             tabs = restored.tabs
             restoredTabs = Set(restored.tabs.tabs.map(\.id))
+            for tab in restored.tabs.tabs { registry.attach(tab: tab.id, to: tab.store) }
         } else {
             library = defaultLibrary
         }
         refreshSidebar()
         if tabs.tabs.isEmpty {
-            changeTabs { $0.open(BrowserTab(store: store ?? .ephemeral(UUID()), isLive: false)) }
+            changeTabs { $0.open(BrowserTab(store: newTabStore(), isLive: false)) }
         }
         if isShown, let selected = tabs.selectedID { ensureView(for: selected) }
         lastContent = self.content
     }
 
     var selected: BrowserTab? { tabs.selected }
+
+    /// The window's title: "Anonymous" whatever its tab shows, else the selected tab's title.
+    var windowTitle: String { isAnonymous ? Workspace.anonymousName : selected?.displayTitle ?? "Lodge" }
+
+    /// The store a new tab runs on: the workspace's own; in Anonymous a new browser of its own, except a WebKit popup,
+    /// which shares its `opener`'s.
+    func newTabStore(popupOf opener: TabID? = nil) -> StoreRef {
+        if let opener, let shared = tabs[opener]?.store { return shared }
+        return store ?? .ephemeral(UUID())
+    }
 
     /// The selected page's security; `.none` with no tab selected.
     var selectedSecurity: SiteSecurity { tabs.selectedID.flatMap { security[$0] } ?? .none }
@@ -249,16 +264,16 @@ final class BrowserModel {
         locationPrompt = .newTab
     }
 
-    /// Cmd-click on a link: the link opens in a new selected tab of this workspace, on the opener's store.
+    /// Cmd-click on a link: the link opens in a new selected tab of this workspace; in Anonymous a new browser.
     func open(url: URL, from source: TabID) {
-        open(BrowserTab(store: tabs[source]?.store ?? store ?? .ephemeral(UUID()), url: url), load: true)
+        open(BrowserTab(store: newTabStore(), url: url), load: true)
     }
 
     /// A History window entry: the page opens in a new selected tab of this workspace; a URL that is not a web page
     /// opens nothing.
     func open(historyURL url: URL) {
         guard NewTabPolicy.allowsFromHistory(url) else { return }
-        open(BrowserTab(store: store ?? .ephemeral(UUID()), url: url), load: true)
+        open(BrowserTab(store: newTabStore(), url: url), load: true)
     }
 
     /// Selects the tab, building its web view when it has none; every other tab keeps its own.
@@ -283,13 +298,19 @@ final class BrowserModel {
         }
     }
 
-    /// Closes the tab and its web view. A link's row stays, not open. Closing the selected tab selects
-    /// its sidebar neighbour; closing the last one leaves a blank tab.
+    /// Closes the tab with every popup it opened, directly or through them, and their web views. A link's row stays,
+    /// not open. Closing the selected tab selects its sidebar neighbour; closing the last one leaves a blank tab.
     func close(_ id: TabID) {
-        let next = tabs.selectedID == id ? sidebar.neighbour(ofClosing: id) : tabs.selectedID
-        changeTabs { $0.close(id, selecting: next) }
+        guard tabs[id] != nil else { return }
+        let closing = [id] + PopupTree.descendants(of: id, openers: popupOpeners)
+        let next = tabs.selectedID.flatMap { selected in
+            closing.contains(selected) ? sidebar.neighbour(ofClosing: Set(closing), selected: selected) : selected
+        }
+        changeTabs { tabs in
+            for tab in closing { tabs.close(tab, selecting: next) }
+        }
         if tabs.tabs.isEmpty {
-            open(BrowserTab(store: store ?? .ephemeral(UUID())), load: false)
+            open(BrowserTab(store: newTabStore()), load: false)
         } else if let selected = tabs.selectedID {
             ensureView(for: selected)
         }
@@ -303,8 +324,8 @@ final class BrowserModel {
     /// Called by WebKit for popups and `target=_blank`: the new tab runs on the configuration it
     /// hands over and opens selected; WebKit loads it.
     func openPopup(from source: TabID, configuration: WKWebViewConfiguration) -> WKWebView? {
-        guard let opener = tabs[source] else { return nil }
-        let popup = BrowserTab(store: opener.store)
+        guard tabs[source] != nil else { return nil }
+        let popup = BrowserTab(store: newTabStore(popupOf: source))
         popupOpeners[popup.id] = source
         return open(popup, configuration: configuration, load: false)
     }
@@ -347,7 +368,7 @@ final class BrowserModel {
 
     /// Every change to `tabs` goes through here: a selection change hides find, ends any sheet the
     /// previous tab had open and opens the folders above the new tab's bookmark, and a tab that closes
-    /// loses everything kept for it. Its web view goes on
+    /// loses everything kept for it. A new tab holds its store; a closed one lets go of it, and its web view goes, on
     /// the next main-actor turn, so a WebKit callback running on it (a popup's opener) returns first.
     private func changeTabs(_ change: (inout TabList) -> Void) {
         let previous = tabs.selectedID
@@ -362,6 +383,8 @@ final class BrowserModel {
             }
             if let link = tabs.selected?.link { changeLibrary { $0.reveal(link) } }
         }
+        let kept = Set(before)
+        for tab in tabs.tabs where !kept.contains(tab.id) { registry.attach(tab: tab.id, to: tab.store) }
         let dropped = before.filter { tabs[$0] == nil }
         guard !dropped.isEmpty else { return }
         for id in dropped {
@@ -377,7 +400,7 @@ final class BrowserModel {
             if zoom[id] != nil { zoom[id] = nil }
         }
         Task { @MainActor [registry] in
-            for id in dropped { registry.destroy(id) }
+            registry.detach(tabs: dropped)
         }
     }
 
@@ -389,9 +412,30 @@ final class BrowserModel {
         if tab != old { tabs.update(id) { $0 = tab } }
     }
 
+    /// Keeps the tab's icon; in Anonymous a bookmark's tab also stores it in the bookmark, for when it has no tab.
     func setFavicon(_ image: NSImage?, for id: TabID) {
-        guard tabs[id] != nil, favicons[id] !== image else { return }
+        guard let tab = tabs[id], favicons[id] !== image else { return }
         favicons[id] = image
+        if let image, let link = tab.link, isAnonymous, library.links(on: .bookmarks).contains(where: { $0.id == link }) {
+            storeIcon(image, in: link)
+        }
+    }
+
+    /// The row's icon: its open tab's favicon, else the icon an Anonymous bookmark stored.
+    func favicon(for item: SidebarItem) -> NSImage? {
+        if let tab = item.tab, let image = favicons[tab.id] { return image }
+        guard case .link(let link, _, _) = item, let data = link.icon else { return nil }
+        if let cached = storedIcons[link.id], cached.data == data { return cached.image }
+        guard let image = NSImage(data: data) else { return nil }
+        storedIcons[link.id] = (data, image)
+        return image
+    }
+
+    private func storeIcon(_ image: NSImage, in link: UUID) {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+            let data = LinkIcon.png(from: cgImage)
+        else { return }
+        changeLibrary { $0.setIcon(link, data) }
     }
 
     func setProgress(_ progress: Double, for id: TabID) {
@@ -417,7 +461,7 @@ final class BrowserModel {
 
     /// A fresh tab on the link, in this workspace.
     private func tab(for link: SavedLink) -> BrowserTab {
-        BrowserTab(store: store ?? .ephemeral(UUID()), url: link.url, title: link.title, link: link.id)
+        BrowserTab(store: newTabStore(), url: link.url, title: link.title, link: link.id)
     }
 
     /// Whether the tab has a page to save as a link.
@@ -433,6 +477,7 @@ final class BrowserModel {
     func addLink(_ shelf: LinkShelf, from id: TabID) {
         guard let page = savablePage(of: id) else { return }
         let link = library.add(page.url, title: page.tab.displayTitle, to: shelf)
+        if isAnonymous, shelf == .bookmarks, let image = favicons[id] { storeIcon(image, in: link.id) }
         if page.tab.link == nil { update(id) { $0.link = link.id } }
     }
 
@@ -555,7 +600,7 @@ final class BrowserModel {
     func load(_ text: String) {
         guard let url = AddressInput.url(from: text) else { return }
         guard let id = tabs.selectedID else {
-            open(BrowserTab(store: store ?? .ephemeral(UUID()), url: url), load: true)
+            open(BrowserTab(store: newTabStore(), url: url), load: true)
             return
         }
         load(url, in: id)
@@ -565,7 +610,7 @@ final class BrowserModel {
     /// Loads `url` in the tab; when the tab has no web view to load in, opens a loose tab on it instead.
     private func load(_ url: URL, in id: TabID) {
         guard let view = ensureView(for: id, load: false) else {
-            open(BrowserTab(store: store ?? .ephemeral(UUID()), url: url), load: true)
+            open(BrowserTab(store: newTabStore(), url: url), load: true)
             return
         }
         update(id) { $0.url = url }
@@ -611,7 +656,7 @@ final class BrowserModel {
             // is left behind.
             load(url, in: blank.id)
         } else {
-            open(BrowserTab(store: store ?? .ephemeral(UUID()), url: url), load: true)
+            open(BrowserTab(store: newTabStore(), url: url), load: true)
         }
         focusSelectedView()
     }

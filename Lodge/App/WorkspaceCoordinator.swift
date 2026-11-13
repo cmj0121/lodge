@@ -59,11 +59,16 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         self.registry = registry
         self.defaultLibrary = defaultLibrary
         downloads?.dataStore = { [weak self] in self?.dataStore(for: $0) }
+        downloads?.storeHold = { [registry] id, store in
+            if let store { registry.hold(download: id, on: store) } else { registry.releaseHold(download: id) }
+        }
         active.didShow(in: window)
     }
 
-    /// The data store of a listed workspace's store, for a download's Retry; nil once the workspace is gone.
+    /// The data store a download's Retry runs on: a listed workspace's, nil once the workspace is gone; an anonymous
+    /// tab's only while its tab or a download still holds it.
     func dataStore(for store: StoreRef) -> WKWebsiteDataStore? {
+        if case .ephemeral = store { return registry.isHeld(store) ? registry.existingDataStore(for: store) : nil }
         guard workspaces.workspaces.contains(where: { $0.store == store }) else { return nil }
         return registry.dataStore(for: store)
     }
@@ -312,7 +317,7 @@ extension WorkspaceCoordinator {
         model.onContentChange = nil
         if let recorder = model.historyRecorder { deletingRecorders[id] = recorder }
         model.historyRecorder = nil
-        if let store = model.store { registry.destroyAll(on: store) }
+        registry.detach(tabs: model.tabs.tabs.map(\.id))
     }
 
     func cancelDownloads(of id: UUID) {

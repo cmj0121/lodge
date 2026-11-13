@@ -31,3 +31,28 @@ public enum Quarantine {
         return String(decoding: bytes, as: UTF8.self)
     }
 }
+
+/// Where a downloaded file came from, as macOS records it beside the file.
+public enum Provenance {
+    public static let whereFromsAttribute = "com.apple.metadata:kMDItemWhereFroms"
+
+    /// Removes the file's where-froms (its page and referrer) and replaces any quarantine mark with Lodge's, which
+    /// names no origin, so a private download keeps no trace of the site it came from. Throws the `POSIXError` of a
+    /// failed removal or write.
+    public static func strip(_ url: URL, agent: String = "Lodge", at date: Date = Date()) throws {
+        try removeWhereFroms(url)
+        let path = url.path(percentEncoded: false)
+        let bytes = Array(Quarantine.value(agent: agent, at: date).utf8)
+        guard setxattr(path, Quarantine.attribute, bytes, bytes.count, 0, XATTR_NOFOLLOW) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
+    /// Removes only the file's where-froms, the fallback when `strip` fails; a file without them is fine. Throws the
+    /// `POSIXError` of a failed removal.
+    public static func removeWhereFroms(_ url: URL) throws {
+        if removexattr(url.path(percentEncoded: false), whereFromsAttribute, XATTR_NOFOLLOW) != 0, errno != ENOATTR {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+}

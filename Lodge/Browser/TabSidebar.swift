@@ -282,12 +282,6 @@ private enum MenuImages {
     }
 }
 
-extension BrowserModel {
-    fileprivate func favicon(for item: SidebarItem) -> NSImage? {
-        item.tab.flatMap { favicons[$0.id] }
-    }
-}
-
 /// Open, Pin, Bookmark, Unpin or Remove, and Close, as fit the item.
 private struct ItemMenu: View {
     let model: BrowserModel

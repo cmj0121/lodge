@@ -137,9 +137,16 @@ public struct SidebarSections: Equatable, Sendable {
     /// (pins, bookmarks depth-first in every folder, loose), skipping links with no tab; else the previous
     /// one; nil when `tab` is the only one.
     public func neighbour(ofClosing tab: TabID) -> TabID? {
+        neighbour(ofClosing: [tab], selected: tab)
+    }
+
+    /// The open tab to select when every tab in `closing` closes at once and `selected` is among them: the next
+    /// entry after `selected` holding an open tab that stays, in sidebar order; else the nearest such one before it;
+    /// nil when none stays or `selected` is on no entry.
+    public func neighbour(ofClosing closing: Set<TabID>, selected: TabID) -> TabID? {
         let open = (pins + bookmarkItems(includingCollapsed: true) + loose).compactMap(\.tab?.id)
-        guard let index = open.firstIndex(of: tab) else { return nil }
-        if index + 1 < open.count { return open[index + 1] }
-        return index > 0 ? open[index - 1] : nil
+        guard let index = open.firstIndex(of: selected) else { return nil }
+        if let next = open[(index + 1)...].first(where: { !closing.contains($0) }) { return next }
+        return open[..<index].last { !closing.contains($0) }
     }
 }

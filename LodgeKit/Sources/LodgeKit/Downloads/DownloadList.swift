@@ -31,6 +31,11 @@ public struct DownloadList: Codable, Equatable, Sendable {
         items.removeAll { $0.id == id }
     }
 
+    /// The list as downloads.json keeps it: without private rows.
+    public func persistable() -> DownloadList {
+        DownloadList(items: items.filter { !$0.isPrivate })
+    }
+
     /// Removes every item that is not active.
     public mutating func clearEnded() {
         items.removeAll { !$0.state.isActive }

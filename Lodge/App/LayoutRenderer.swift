@@ -2,6 +2,7 @@
     import AppKit
     import LodgeKit
     import SwiftUI
+    import WebKit
 
     /// Debug aid: `Lodge -renderLayout YES` draws the window's layout (both sidebar modes, find
     /// open, and the shortcut overlay and the location prompt in light and dark), the History window from an in-memory history, and the Downloads popover and button
@@ -33,6 +34,7 @@
             renderWorkspace(to: directory.appending(path: "layout-workspace.png"))
             renderWorkspaceUI(in: directory)
             checkDeletion(to: directory.appending(path: "layout-delete.png"))
+            checkAnonymous()
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -155,6 +157,80 @@
             } else {
                 print("Workspace deletion: FAILED, WebKit store \(doomed.id.uuidString) may be left")
             }
+        }
+
+        /// Checks Anonymous's stores and privacy in the background, printing ok or FAILED for each: two anonymous
+        /// stores keep their cookies apart; leaving Anonymous and coming back keeps a tab's cookie; closing the tab
+        /// drops its store; and its pages reach neither the saved session nor the saved downloads. No page loads.
+        private static func checkAnonymous() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func wait<T>(_ work: @escaping @MainActor () async -> T) -> T {
+                var result: T?
+                Task { result = await work() }
+                while result == nil { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) }
+                return result!
+            }
+            func cookie(_ name: String) -> HTTPCookie {
+                HTTPCookie(properties: [
+                    .domain: "signin.example", .path: "/", .name: name, .value: "1",
+                    .expires: Date.now.addingTimeInterval(3600),
+                ])!
+            }
+            func names(in store: WKWebsiteDataStore) async -> Set<String> {
+                Set(await store.httpCookieStore.allCookies().map(\.name))
+            }
+
+            let registry = WebViewRegistry()
+            let first = registry.dataStore(for: .ephemeral(UUID()))
+            let second = registry.dataStore(for: .ephemeral(UUID()))
+            let apart = wait {
+                await first.httpCookieStore.setCookie(cookie("first"))
+                await second.httpCookieStore.setCookie(cookie("second"))
+                return (await names(in: first), await names(in: second))
+            }
+            report("Anonymous stores keep cookies apart", apart.0 == ["first"] && apart.1 == ["second"])
+
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            coordinator.switchTo(Workspace.anonymousID)
+            let model = coordinator.active
+            guard let tab = model.selected, case .ephemeral = tab.store,
+                let store = coordinator.registry.existingDataStore(for: tab.store)
+            else { return report("Anonymous tab has its own store", false) }
+            wait { await store.httpCookieStore.setCookie(cookie("kept")) }
+            coordinator.switchTo(Workspace.defaultID)
+            let deadline = Date.now.addingTimeInterval(5)
+            while coordinator.registry.webView(for: tab.id) != nil, Date.now < deadline {
+                RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+            }
+            let released = coordinator.registry.webView(for: tab.id) == nil
+            coordinator.switchTo(Workspace.anonymousID)
+            let back = coordinator.registry.existingDataStore(for: tab.store)
+            let kept = back.map { back in wait { await names(in: back) } } ?? []
+            report("Anonymous release then reselect keeps the cookie", released && back === store && kept == ["kept"])
+
+            model.close(tab.id)
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+            report(
+                "Anonymous close drops the store",
+                coordinator.registry.existingDataStore(for: tab.store) == nil && !coordinator.registry.isHeld(tab.store))
+
+            let secret = "anonymous-secret.example"
+            let bookmark = URL(string: "https://kept-bookmark.example/")!
+            guard let blank = model.selected else { return report("Anonymous session leaves no URLs", false) }
+            model.update(blank.id) { $0.url = bookmark }
+            model.addLink(.bookmarks, from: blank.id)
+            model.openLink(SavedLink(url: URL(string: "https://\(secret)/page")!, title: "Secret"), load: false)
+            let downloads = DownloadList(items: [
+                DownloadItem(
+                    sourceURL: URL(string: "https://\(secret)/file.zip"), fileName: "file.zip", state: .finished,
+                    startedAt: .now, store: model.selected?.store),
+            ])
+            let session = (try? coordinator.snapshot.encoded()).map { String(decoding: $0, as: UTF8.self) } ?? ""
+            let saved = (try? JSONEncoder().encode(downloads.persistable())).map { String(decoding: $0, as: UTF8.self) }
+            report(
+                "Anonymous session leaves no URLs",
+                !session.isEmpty && !session.contains(secret) && session.contains("kept-bookmark.example")
+                    && saved.map { !$0.contains(secret) } == true && model.tabs.tabs.contains { $0.url?.host() == secret })
         }
 
         /// Which location prompt a render opens: ⌘T's empty one or ⌘L's on the selected page.
