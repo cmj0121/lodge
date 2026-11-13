@@ -3,17 +3,14 @@ import LodgeKit
 import WebKit
 import os
 
-/// Owns the workspaces' coordinator, the session it is saved to, the history Default records and the downloads. All are built on first use, after `LodgeApp.init`, so a layout render (which exits there) never reads
-/// or writes the session, history or downloads files.
+/// Owns the workspaces' coordinator (with each workspace's history), the session it is saved to and the downloads.
+/// All are built on first use, after `LodgeApp.init`, so a layout render (which exits there) never reads or writes
+/// the session, history or downloads files.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private static let logger = Logger(subsystem: "dev.lodge", category: "history")
-
     private lazy var store = SessionStore()
-    /// The history file, nil until it has opened off the main actor, and for the run when it cannot open.
-    private(set) var historyStore: HistoryStore?
 
-    /// The History window's model; it gets the store when the file has opened.
+    /// The History window's model; it shows the active workspace's history once its file has opened.
     var history: HistoryModel { coordinator.history }
 
     /// The downloads, kept in memory only when Application Support cannot be found.
@@ -43,11 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyMonitor = nil
         downloads.cancelAllForQuit()
         store.writeNow(coordinator.snapshot)
-        do {
-            try historyStore?.close()
-        } catch {
-            Self.logger.error("Could not close history: \(error.localizedDescription, privacy: .public)")
-        }
+        coordinator.closeAllHistory()
     }
 
     /// In the browser window, runs Zoom In for ⌘+ when it can zoom in, and toggles the shortcut help for ⌘/ when
@@ -108,21 +101,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Opens the history file off the main actor (opening checks the whole file), then starts recording Default's
-    /// visits and hands it to the History window.
+    /// Opens every workspace's history file off the main actor; deletions left pending by the last run must finish
+    /// first, so no file being deleted opens again.
     private func openHistory() {
         Task {
-            do {
-                let opened = try await Task.detached(priority: .userInitiated) {
-                    try HistoryStore.open(directory: SessionStore.appDirectory())
-                }.value
-                historyStore = opened
-                coordinator.defaultHistoryRecorder = HistoryRecorder(store: opened)
-                history.attach(opened)
-            } catch {
-                Self.logger.error("History is unavailable: \(error.localizedDescription, privacy: .public)")
-                history.storeFailed()
-            }
+            await coordinator.openHistoryStores()
         }
     }
 }

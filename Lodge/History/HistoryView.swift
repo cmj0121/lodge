@@ -35,6 +35,10 @@ struct HistoryView: View {
             spinner
         case .unavailable:
             ContentUnavailableView("History is unavailable.", systemImage: "clock")
+        case .notKept:
+            ContentUnavailableView(
+                "History Is Not Kept", systemImage: "clock",
+                description: Text("Pages you visit in this workspace are not saved."))
         case .ready where model.isSearching:
             searchContent
         case .ready:
@@ -168,7 +172,7 @@ enum HistoryPrompts {
         guard model.canClearAll else { return }
         let alert = NSAlert()
         alert.messageText = "Clear all history?"
-        alert.informativeText = "This removes every page from your history. Open tabs keep their back and forward pages."
+        alert.informativeText = "This removes every page from this workspace's history. Open tabs keep their back and forward pages."
         alert.addButton(withTitle: "Clear All History").hasDestructiveAction = true
         alert.addButton(withTitle: "Cancel")
         let handle = { (response: NSApplication.ModalResponse) in

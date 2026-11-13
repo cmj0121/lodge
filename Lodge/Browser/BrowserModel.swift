@@ -84,13 +84,14 @@ final class BrowserModel {
     @ObservationIgnored private var viewRelease = ViewRelease()
     /// How long a held tab waits before its release is tried again.
     static let releaseRetry: Duration = .seconds(30)
-    /// Where tabs on the default store record their visits; nil until the history store opens, and in layout
-    /// renders. The store opens after the restored tab may have committed, so the recorder arrives knowing every
-    /// default-store tab's page as already seen, and a restored page's load finishing records nothing.
+    /// Where this workspace's tabs record their visits, into its own history store; nil until that store opens,
+    /// when the workspace keeps no history, and in layout renders. The store opens after the restored tab may have
+    /// committed, so the recorder arrives knowing every tab's page as already seen, and a restored page's load
+    /// finishing records nothing.
     @ObservationIgnored var historyRecorder: HistoryRecorder? {
         didSet {
             guard oldValue == nil, let historyRecorder else { return }
-            for tab in tabs.tabs where tab.store == .global {
+            for tab in tabs.tabs {
                 if let url = tab.url { historyRecorder.send(.seen(tab: tab.id, url: url)) }
             }
         }

@@ -113,7 +113,7 @@
             let model = HistoryModel { _ in }
             Task {
                 await done.value
-                model.attach(store)
+                model.show(store, state: .ready)
             }
             RunLoop.main.run(until: Date().addingTimeInterval(1))
             snapshot(HistoryView(model: model), size: NSSize(width: 640, height: 600), title: "History", to: url)

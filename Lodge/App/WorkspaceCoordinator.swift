@@ -1,6 +1,7 @@
 import Foundation
 import LodgeKit
 import Observation
+import os
 import WebKit
 
 /// Owns the workspaces, one `BrowserModel` per workspace (built when first needed, until then its saved content
@@ -23,16 +24,17 @@ final class WorkspaceCoordinator {
     @ObservationIgnored private let downloads: DownloadManager?
     @ObservationIgnored private let defaultLibrary: LinkLibrary
 
-    /// The History window's model; its visits are Default's and open in Default.
+    /// The History window's model: it shows the key window's workspace's visits, and a visit opens there.
     @ObservationIgnored private(set) lazy var history = HistoryModel { [unowned self] url in
-        switchTo(Workspace.defaultID)
-        model(for: Workspace.defaultID)?.open(historyURL: url)
+        active.open(historyURL: url)
     }
 
-    /// Where Default's tabs record their visits; nil until the history store opens.
-    @ObservationIgnored var defaultHistoryRecorder: HistoryRecorder? {
-        didSet { models[Workspace.defaultID]?.historyRecorder = defaultHistoryRecorder }
-    }
+    /// Each workspace's open history file; a workspace is missing while its file opens, when it could not open,
+    /// and when it keeps no history.
+    @ObservationIgnored private(set) var historyStores: [UUID: HistoryStore] = [:]
+    @ObservationIgnored private var historyOpenings: [UUID: Task<Void, Never>] = [:]
+    /// The workspaces whose history file could not open this run.
+    @ObservationIgnored private var historyFailures: Set<UUID> = []
 
     /// Starts from `snapshot` (nil: Default alone, with `defaultLibrary`), showing its window's workspace.
     init(
@@ -78,7 +80,7 @@ final class WorkspaceCoordinator {
             registry: registry, window: window,
             defaultLibrary: workspace.id == Workspace.defaultID ? defaultLibrary : LinkLibrary())
         model.downloads = downloads
-        if workspace.id == Workspace.defaultID { model.historyRecorder = defaultHistoryRecorder }
+        if let store = historyStores[workspace.id] { model.historyRecorder = HistoryRecorder(store: store) }
         model.onContentChange = { [weak self] _ in self?.didChange() }
         models[workspace.id] = model
         return model
@@ -112,6 +114,7 @@ final class WorkspaceCoordinator {
         window.closeTransientSurfaces()
         window.activeWorkspace = target.id
         model(of: target).didShow(in: window)
+        showActiveHistory()
         Task { await old.releaseViews() }
         didChange()
     }
@@ -127,6 +130,7 @@ final class WorkspaceCoordinator {
     @discardableResult
     func create(name: String, symbol: String) throws(WorkspaceList.EditError) -> Workspace {
         let workspace = try workspaces.create(name: name, symbol: symbol)
+        Task { await openHistoryStore(for: workspace.id) }
         switchTo(workspace.id)
         return workspace
     }
@@ -147,5 +151,108 @@ final class WorkspaceCoordinator {
         guard workspaces.move(from: source, to: destination) else { return false }
         didChange()
         return true
+    }
+}
+
+// MARK: History
+
+extension WorkspaceCoordinator {
+    private static let historyLogger = Logger(subsystem: "dev.lodge", category: "history")
+
+    /// Launch: opens every listed workspace's history file off the main actor, all at once; each one's tabs record
+    /// into it once it has opened, and the History window shows the active one's as soon as it is there.
+    func openHistoryStores() async {
+        let openings = workspaces.workspaces.compactMap(openHistory(of:))
+        showActiveHistory()
+        for opening in openings { await opening.value }
+    }
+
+    /// Opens a new workspace's history file; a switch to it meanwhile shows the History window loading.
+    func openHistoryStore(for id: UUID) async {
+        guard let workspace = workspaces[id] else { return }
+        let opening = openHistory(of: workspace)
+        if id == window.activeWorkspace { showActiveHistory() }
+        await opening?.value
+    }
+
+    /// Stops the workspace's recording, waits for what it already sent to be written, then closes its file; one
+    /// still opening is waited for first.
+    func closeHistory(of id: UUID) async throws {
+        await historyOpenings[id]?.value
+        historyFailures.remove(id)
+        let recorder = models[id]?.historyRecorder
+        models[id]?.historyRecorder = nil
+        await recorder?.drain()
+        guard let store = historyStores.removeValue(forKey: id) else { return }
+        // The History window stops observing it first, or closing fails.
+        if id == window.activeWorkspace { history.show(nil, state: .unavailable) }
+        await history.stoppedFollowing()
+        try store.close()
+    }
+
+    /// Quit: closes every history file; events still queued are dropped.
+    func closeAllHistory() {
+        for (id, store) in historyStores {
+            models[id]?.historyRecorder = nil
+            do {
+                try store.close()
+            } catch {
+                Self.historyLogger.error("Could not close history: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        historyStores = [:]
+    }
+
+    /// Starts opening the workspace's history file, or returns the opening under way; nil when it is open already,
+    /// keeps no history, or cannot open because Application Support cannot be found.
+    private func openHistory(of workspace: Workspace) -> Task<Void, Never>? {
+        let id = workspace.id
+        guard historyStores[id] == nil else { return nil }
+        if let opening = historyOpenings[id] { return opening }
+        guard workspace.kind != .anonymous else { return nil }
+        guard let directory = appDirectory.flatMap({ WorkspaceFiles.historyDirectory(for: workspace, in: $0) }) else {
+            Self.historyLogger.error("History is unavailable: Application Support cannot be found")
+            historyFailures.insert(id)
+            return nil
+        }
+        historyFailures.remove(id)
+        let opening = Task {
+            let opened = await Task.detached(priority: .userInitiated) {
+                Result { try HistoryStore.open(directory: directory) }
+            }.value
+            didOpenHistory(id, opened)
+        }
+        historyOpenings[id] = opening
+        return opening
+    }
+
+    /// Hands an opened file to its workspace's model, or closes it again when the workspace was deleted meanwhile.
+    private func didOpenHistory(_ id: UUID, _ opened: Result<HistoryStore, any Error>) {
+        historyOpenings[id] = nil
+        switch opened {
+        case .success(let store):
+            guard workspaces[id] != nil else {
+                try? store.close()
+                return
+            }
+            historyStores[id] = store
+            models[id]?.historyRecorder = HistoryRecorder(store: store)
+        case .failure(let error):
+            Self.historyLogger.error("History is unavailable: \(error.localizedDescription, privacy: .public)")
+            historyFailures.insert(id)
+        }
+        if id == window.activeWorkspace { showActiveHistory() }
+    }
+
+    /// Shows the active workspace's history in the History window: loading while its file opens.
+    private func showActiveHistory() {
+        let workspace = activeWorkspace
+        if let store = historyStores[workspace.id] {
+            history.show(store, state: .ready)
+        } else if workspace.kind == .anonymous {
+            history.show(nil, state: .notKept)
+        } else {
+            history.show(nil, state: historyFailures.contains(workspace.id) ? .unavailable : .loading)
+        }
     }
 }
