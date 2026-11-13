@@ -60,6 +60,11 @@ final class BrowserModel {
         get { window.locationPrompt }
         set { window.locationPrompt = newValue }
     }
+    /// The workspace sheet, open to create a workspace or to rename one or change its icon; nil when closed.
+    private(set) var workspaceEditor: WorkspaceEditor? {
+        get { window.workspaceEditor }
+        set { window.workspaceEditor = newValue }
+    }
     /// Bumped to ask the window to focus the find field.
     private(set) var findFocusRequest: Int {
         get { window.findFocusRequest }
@@ -240,6 +245,7 @@ final class BrowserModel {
     /// Opens the location prompt for a new tab; the tab opens only when the prompt submits an address.
     func newTab() {
         hideShortcutHelp()
+        workspaceEditor = nil
         locationPrompt = .newTab
     }
 
@@ -587,6 +593,7 @@ final class BrowserModel {
     /// Opens the location prompt on the selected tab's address, or for a new tab when none is selected.
     func focusAddressBar() {
         hideShortcutHelp()
+        workspaceEditor = nil
         locationPrompt = tabs.selectedID.map { .current($0) } ?? .newTab
     }
 
@@ -616,11 +623,39 @@ final class BrowserModel {
         focusSelectedView()
     }
 
-    /// Closes the shortcut overlay and the location prompt. Every catalog shortcut's action calls it first, so a key
-    /// pressed over either never acts out of sight behind it.
-    private func closeFloatingSurfaces() {
+    /// Closes the shortcut overlay, the location prompt and the workspace sheet. Every catalog shortcut's action calls
+    /// it first, so a key pressed over any of them never acts out of sight behind it.
+    func closeFloatingSurfaces() {
         hideShortcutHelp()
         cancelLocationPrompt()
+        closeWorkspaceEditor()
+    }
+
+    // MARK: Workspace sheet
+
+    /// Opens the workspace sheet in place of every other floating surface (find, the location prompt, the shortcut
+    /// overlay, the Downloads popover) and takes the keys from the page under it.
+    func showWorkspaceEditor(_ editor: WorkspaceEditor) {
+        locationPrompt = nil
+        isShortcutHelpVisible = false
+        if isFindVisible { isFindVisible = false }
+        clearFindMiss()
+        isDownloadsVisible = false
+        workspaceEditor = editor
+        if let window = selectedView?.window { window.makeFirstResponder(nil) }
+    }
+
+    /// Closes the sheet and hands the keys back to the page, as closing the location prompt does.
+    func closeWorkspaceEditor() {
+        guard workspaceEditor != nil else { return }
+        finishWorkspaceEditor()
+    }
+
+    /// The sheet is done: closed if still open, and the keys go to the page, also when Create already closed it by
+    /// switching to the new workspace.
+    func finishWorkspaceEditor() {
+        workspaceEditor = nil
+        focusSelectedView()
     }
 
     /// Makes the selected page first responder; a view not in a window yet (a tab just opened) takes focus when
@@ -685,6 +720,7 @@ final class BrowserModel {
     /// Opens the overlay and takes the keys from the page under it, so Esc and typing reach the overlay.
     func showShortcutHelp() {
         locationPrompt = nil
+        workspaceEditor = nil
         isShortcutHelpVisible = true
         if let window = selectedView?.window { window.makeFirstResponder(nil) }
     }

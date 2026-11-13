@@ -77,6 +77,26 @@ struct BrowserCommands: Commands {
                 .disabled(model.isImportingBookmarks)
             Button("Export Bookmarks…") { BookmarkTransfer.exportBookmarks(from: model) }
         }
+        CommandMenu("Workspaces") {
+            Button("New Workspace…") { model.showWorkspaceEditor(.create) }
+                .disabled(isBrowserWindow != true)
+            Divider()
+            let activeID = coordinator.activeWorkspace.id
+            ForEach(1...ShortcutID.workspaceSlots.count, id: \.self) { slot in
+                if let workspace = coordinator.workspaces.workspace(forSlot: slot) {
+                    Toggle(
+                        workspace.name,
+                        isOn: Binding(get: { workspace.id == activeID }, set: { _ in
+                            // As every catalog key does: what floats over the page closes first, also when the
+                            // workspace is already the one shown.
+                            model.closeFloatingSurfaces()
+                            coordinator.switchTo(workspace.id)
+                        })
+                    )
+                    .shortcut(.workspace(slot: slot)!, enabled: isBrowserWindow == true)
+                }
+            }
+        }
         CommandGroup(before: .windowList) {
             Button("Show Next Tab", action: model.selectNextTab)
             Button("Show Previous Tab", action: model.selectPreviousTab)

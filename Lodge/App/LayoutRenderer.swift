@@ -31,6 +31,7 @@
                     to: directory.appending(path: "layout-location-new-\(name).png"))
             }
             renderWorkspace(to: directory.appending(path: "layout-workspace.png"))
+            renderWorkspaceUI(in: directory)
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -47,7 +48,9 @@
             defaults.set(mode.rawValue, forKey: SidebarMode.defaultsKey)
             defer { defaults.removePersistentDomain(forName: suite) }
 
-            let model = BrowserModel(defaultLibrary: .sample)
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+            let model = coordinator.active
             // Opens the sample's folder, so the render shows a nested bookmark.
             for case .folder(let folder) in model.library.bookmarks.children { model.setFolderExpanded(folder.id, true) }
             if let bookmark = model.library.links(on: .bookmarks).first { model.openLink(bookmark, load: false) }
@@ -67,8 +70,46 @@
             case nil: break
             }
             snapshot(
-                BrowserView(model: model).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
                 appearance: appearance, to: url)
+        }
+
+        /// The workspace bar over Default and two custom workspaces, the second shown, in both sidebar modes and both
+        /// appearances; then the New Workspace, Change Icon and Rename sheets over it.
+        private static func renderWorkspaceUI(in directory: URL) {
+            let suite = "dev.lodge.render-layout"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                let name = appearance == .aqua ? "light" : "dark"
+                let coordinator = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+                _ = try? coordinator.create(name: "Personal", symbol: "house")
+                guard let work = try? coordinator.create(name: "Work", symbol: "briefcase") else { return }
+                for mode in SidebarMode.allCases {
+                    defaults.set(mode.rawValue, forKey: SidebarMode.defaultsKey)
+                    snapshot(
+                        BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                        size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
+                        to: directory.appending(path: "layout-workspaces-\(mode.rawValue)-\(name).png"))
+                }
+                defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+                coordinator.window.workspaceEditor = .create
+                snapshot(
+                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-workspace-sheet-\(name).png"))
+                coordinator.window.workspaceEditor = .changeIcon(work.id)
+                snapshot(
+                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-workspace-icon-\(name).png"))
+                coordinator.window.workspaceEditor = .rename(work.id)
+                snapshot(
+                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-workspace-rename-\(name).png"))
+            }
         }
 
         /// A second workspace, created and switched to over Default's sample library: its own empty sidebar shows,

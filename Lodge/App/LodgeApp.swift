@@ -31,12 +31,22 @@ struct LodgeApp: App {
 }
 
 /// The browser window, showing the workspace its window has active; a switch builds it afresh for that workspace.
+/// The workspace sheet floats over it, outside that rebuild, so creating a workspace can switch under it.
 struct BrowserRoot: View {
     let coordinator: WorkspaceCoordinator
 
     var body: some View {
         let model = coordinator.active
+        let window = coordinator.window
         BrowserView(model: model)
             .id(model.workspaceID)
+            .environment(coordinator)
+            .overlay {
+                if let editor = window.workspaceEditor {
+                    WorkspaceSheet(coordinator: coordinator, editor: editor) { coordinator.active.finishWorkspaceEditor() }
+                        .transition(.opacity)
+                }
+            }
+            .animation(.snappy(duration: 0.2), value: window.workspaceEditor)
     }
 }
