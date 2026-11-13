@@ -148,12 +148,14 @@ private struct ShortcutRow: View {
                     }
                     KeyCaps(combo: combos[index])
                 }
+                if let note = shortcut.note { Text("(\(note))").font(.caption).foregroundStyle(.secondary) }
             }
         }
         .frame(minHeight: 22)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(shortcut.title)
-        .accessibilityValue(combos.map(\.display).joined(separator: " or "))
+        .accessibilityValue(
+            combos.map(\.display).joined(separator: " or ") + (shortcut.note.map { " (\($0))" } ?? ""))
     }
 }
 

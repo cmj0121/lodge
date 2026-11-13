@@ -80,7 +80,8 @@ struct BrowserCommands: Commands {
             Divider()
         }
         CommandGroup(after: .help) {
-            Button("Keyboard Shortcuts", action: model.showShortcutHelp)
+            Button(ShortcutCatalog[.shortcutHelp].title, action: model.showShortcutHelp)
+                .shortcut(.shortcutHelp)
         }
     }
 }

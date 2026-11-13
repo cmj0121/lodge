@@ -1,10 +1,11 @@
 public enum ShortcutID: String, CaseIterable, Sendable {
-    case newTab, closeTab, openLocation, reload, find, bookmarkTab, toggleDownloads, zoomIn, zoomOut, actualSize
+    case newTab, closeTab, openLocation, reload, find, bookmarkTab, toggleDownloads, zoomIn, zoomOut, actualSize,
+        shortcutHelp
 }
 
 /// Menu groups, in the order the overlay shows them.
 public enum ShortcutMenu: String, CaseIterable, Sendable {
-    case file = "File", edit = "Edit", view = "View", bookmarks = "Bookmarks"
+    case file = "File", edit = "Edit", view = "View", bookmarks = "Bookmarks", help = "Help"
 }
 
 public struct KeyCombo: Hashable, Sendable {
@@ -38,13 +39,22 @@ public struct Shortcut: Identifiable, Hashable, Sendable {
     public let menu: ShortcutMenu
     public let combo: KeyCombo
     public let aliases: [KeyCombo]
+    /// The page keeps the key while a web view has focus, so no menu item carries it (D10).
+    public let yieldsToPage: Bool
+    /// Shown beside the key in the overlay, e.g. "outside the page".
+    public let note: String?
 
-    init(_ id: ShortcutID, _ title: String, _ menu: ShortcutMenu, _ combo: KeyCombo, aliases: [KeyCombo] = []) {
+    init(
+        _ id: ShortcutID, _ title: String, _ menu: ShortcutMenu, _ combo: KeyCombo, aliases: [KeyCombo] = [],
+        yieldsToPage: Bool = false, note: String? = nil
+    ) {
         self.id = id
         self.title = title
         self.menu = menu
         self.combo = combo
         self.aliases = aliases
+        self.yieldsToPage = yieldsToPage
+        self.note = note
     }
 }
 
@@ -60,6 +70,7 @@ public enum ShortcutCatalog {
         Shortcut(.zoomIn, "Zoom In", .view, KeyCombo("="), aliases: [KeyCombo("+")]),
         Shortcut(.zoomOut, "Zoom Out", .view, KeyCombo("-")),
         Shortcut(.actualSize, "Actual Size", .view, KeyCombo("0")),
+        Shortcut(.shortcutHelp, "Keyboard Shortcuts", .help, KeyCombo("/"), yieldsToPage: true, note: "outside the page"),
     ]
 
     public static subscript(id: ShortcutID) -> Shortcut {

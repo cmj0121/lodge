@@ -1,5 +1,6 @@
 import AppKit
 import LodgeKit
+import WebKit
 import os
 
 /// Owns the browser, the session it is saved to, the history it records, the History window's model and the
@@ -33,18 +34,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return browser
     }()
 
-    /// The ⌘+ alias of Zoom In (D9), which a menu item cannot carry beside its ⌘= key.
-    private var zoomInAliasMonitor: Any?
+    /// The ⌘+ alias of Zoom In (D9), which a menu item cannot carry beside its ⌘= key, and ⌘/ outside the page (D10).
+    private var keyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         openHistory()
         restoreDownloads()
-        installZoomInAlias()
+        installKeyMonitor()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if let zoomInAliasMonitor { NSEvent.removeMonitor(zoomInAliasMonitor) }
-        zoomInAliasMonitor = nil
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
         downloads.cancelAllForQuit()
         store.schedule(browser.snapshot)
         store.flush()
@@ -55,19 +56,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Runs Zoom In for ⌘+ in the browser window when it can zoom in, swallowing the key; any other key passes on.
-    private func installZoomInAlias() {
-        zoomInAliasMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.characters == "+",
-                event.modifierFlags.intersection([.command, .control, .option]) == [.command]
-            else { return event }
-            let zoomed = MainActor.assumeIsolated {
-                guard let self, self.isBrowserWindowKey, self.browser.canZoomIn else { return false }
-                self.browser.zoomIn()
+    /// In the browser window, runs Zoom In for ⌘+ when it can zoom in, and toggles the shortcut help for ⌘/ when
+    /// focus is not in a web view, swallowing the key; any other key, and ⌘/ inside the page, passes on.
+    private func installKeyMonitor() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            let isZoomInAlias = event.characters == "+" && flags.subtracting(.shift) == [.command]
+            let isShortcutHelp = event.characters == "/" && flags == [.command]
+            guard isZoomInAlias || isShortcutHelp else { return event }
+            let handled = MainActor.assumeIsolated {
+                guard let self, self.isBrowserWindowKey else { return false }
+                if isZoomInAlias {
+                    guard self.browser.canZoomIn else { return false }
+                    self.browser.zoomIn()
+                } else {
+                    guard !Self.isInWebView(NSApp.keyWindow?.firstResponder) else { return false }
+                    self.browser.toggleShortcutHelp()
+                }
                 return true
             }
-            return zoomed ? nil : event
+            return handled ? nil : event
         }
+    }
+
+    /// The responder is a web view or a view inside one, so the page owns its keys.
+    private static func isInWebView(_ responder: NSResponder?) -> Bool {
+        var view = responder as? NSView
+        while let current = view {
+            if current is WKWebView { return true }
+            view = current.superview
+        }
+        return false
     }
 
     /// The key window shows the selected tab's web view, so it is the browser window.
