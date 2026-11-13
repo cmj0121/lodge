@@ -109,6 +109,7 @@ final class BrowserModel {
 
     /// Opens a loose blank tab and selects it.
     func newTab() {
+        hideShortcutHelp()
         open(BrowserTab(), load: false)
         addressFocusRequest += 1
     }
@@ -161,6 +162,7 @@ final class BrowserModel {
     }
 
     func closeSelectedTab() {
+        hideShortcutHelp()
         if let id = tabs.selectedID { close(id) }
     }
 
@@ -288,6 +290,7 @@ final class BrowserModel {
     }
 
     func bookmarkSelectedTab() {
+        hideShortcutHelp()
         if let id = tabs.selectedID { addLink(.bookmarks, from: id) }
     }
 
@@ -302,6 +305,7 @@ final class BrowserModel {
 
     /// Pins the selected tab's page, or unpins it; the page stays open, and a bookmark's tab keeps its bookmark.
     func togglePinSelectedTab() {
+        hideShortcutHelp()
         if let pin = selectedPin {
             removeLink(pin.id)
         } else if let id = tabs.selectedID {
@@ -418,6 +422,7 @@ final class BrowserModel {
     func goForward() { selectedView?.goForward() }
 
     func reload() {
+        hideShortcutHelp()
         guard let id = tabs.selectedID, let view = ensureView(for: id, load: false) else { return }
         if view.url == nil, let url = tabs[id]?.url {
             controllers[id]?.browserWillLoad()
@@ -429,7 +434,10 @@ final class BrowserModel {
 
     func stopLoading() { selectedView?.stopLoading() }
 
-    func focusAddressBar() { addressFocusRequest += 1 }
+    func focusAddressBar() {
+        hideShortcutHelp()
+        addressFocusRequest += 1
+    }
 
     // MARK: Zoom
 
@@ -446,14 +454,17 @@ final class BrowserModel {
     var canResetZoom: Bool { selectedPageZoom.map { $0 != PageZoom.actual } == true }
 
     func zoomIn() {
+        hideShortcutHelp()
         if canZoomIn { setSelectedZoom(PageZoom.zoomedIn) }
     }
 
     func zoomOut() {
+        hideShortcutHelp()
         if canZoomOut { setSelectedZoom(PageZoom.zoomedOut) }
     }
 
     func resetZoom() {
+        hideShortcutHelp()
         if canResetZoom { setSelectedZoom { _ in PageZoom.actual } }
     }
 
@@ -469,9 +480,35 @@ final class BrowserModel {
     /// than leave the flag set with its anchor gone; ⌘J then opens it on the new button.
     func closeDownloadsForModeChange() { isDownloadsVisible = false }
 
+    func toggleDownloads() {
+        hideShortcutHelp()
+        isDownloadsVisible.toggle()
+    }
+
+    // MARK: Shortcut help
+
+    /// Opens the overlay and takes the keys from the page under it, so Esc and typing reach the overlay.
+    func showShortcutHelp() {
+        isShortcutHelpVisible = true
+        if let window = selectedView?.window { window.makeFirstResponder(nil) }
+    }
+
+    /// Closes the overlay and hands the keys back to the page, as closing Find does. Every catalog shortcut's
+    /// action calls it first, so a key pressed over the overlay never acts out of sight behind it.
+    func hideShortcutHelp() {
+        guard isShortcutHelpVisible else { return }
+        isShortcutHelpVisible = false
+        if let view = selectedView { view.window?.makeFirstResponder(view) }
+    }
+
+    func toggleShortcutHelp() {
+        if isShortcutHelpVisible { hideShortcutHelp() } else { showShortcutHelp() }
+    }
+
     // MARK: Find
 
     func showFind() {
+        hideShortcutHelp()
         isFindVisible = true
         clearFindMiss()
         findFocusRequest += 1

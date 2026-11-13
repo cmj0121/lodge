@@ -3,8 +3,8 @@
     import LodgeKit
     import SwiftUI
 
-    /// Debug aid: `Lodge -renderLayout YES` draws the window's layout (both sidebar modes, and
-    /// find open), the History window from an in-memory history, and the Downloads popover and button
+    /// Debug aid: `Lodge -renderLayout YES` draws the window's layout (both sidebar modes, find
+    /// open, and the shortcut overlay in light and dark), the History window from an in-memory history, and the Downloads popover and button
     /// from sample items, to PNG files off screen, then exits. It never shows a window or takes focus,
     /// so it can run while someone uses the machine. No download runs.
     @MainActor
@@ -18,13 +18,21 @@
                 render(mode, find: false, to: directory.appending(path: "layout-\(mode.rawValue).png"))
             }
             render(.rail, find: true, to: directory.appending(path: "layout-find.png"))
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                let name = appearance == .aqua ? "light" : "dark"
+                render(
+                    .expanded, find: false, shortcutHelp: true, appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-shortcuts-\(name).png"))
+            }
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
             exit(0)
         }
 
-        private static func render(_ mode: SidebarMode, find: Bool, to url: URL) {
+        private static func render(
+            _ mode: SidebarMode, find: Bool, shortcutHelp: Bool = false, appearance: NSAppearance? = nil, to url: URL
+        ) {
             // A throwaway defaults suite, so rendering never changes the user's saved sidebar mode.
             let suite = "dev.lodge.render-layout"
             let defaults = UserDefaults(suiteName: suite)!
@@ -44,7 +52,10 @@
                 model.showFind()
                 model.findText = "lodge"
             }
-            snapshot(BrowserView(model: model).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700), to: url)
+            model.isShortcutHelpVisible = shortcutHelp
+            snapshot(
+                BrowserView(model: model).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                appearance: appearance, to: url)
         }
 
         /// The History window over sample visits from today back three days, in a store that lives only in memory.
@@ -134,11 +145,14 @@
         }
 
         /// Draws `view` in an off-screen window; with no `title`, the title bar is hidden as the browser's is.
-        private static func snapshot(_ view: some View, size: NSSize, title: String? = nil, to url: URL) {
+        private static func snapshot(
+            _ view: some View, size: NSSize, title: String? = nil, appearance: NSAppearance? = nil, to url: URL
+        ) {
             let window = NSWindow(
                 contentRect: NSRect(origin: .zero, size: size),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered, defer: false)
+            window.appearance = appearance
             if let title {
                 window.title = title
             } else {

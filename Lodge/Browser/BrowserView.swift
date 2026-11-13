@@ -20,6 +20,13 @@ struct BrowserView: View {
                 .ignoresSafeArea(.container, edges: .top)
         }
         .background(Color(nsColor: .underPageBackgroundColor))
+        .overlay {
+            if model.isShortcutHelpVisible {
+                ShortcutHelpOverlay(close: model.hideShortcutHelp)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.snappy(duration: 0.2), value: model.isShortcutHelpVisible)
         .navigationTitle(model.selected?.displayTitle ?? "Lodge")
         .environment(\.webViewRegistry, model.registry)
         .frame(minWidth: 800, minHeight: 500)

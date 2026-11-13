@@ -44,7 +44,7 @@ struct BrowserCommands: Commands {
                 .shortcut(.reload)
             Button("Stop", action: model.stopLoading)
             Divider()
-            Button(model.isDownloadsVisible ? "Hide Downloads" : "Show Downloads") { model.isDownloadsVisible.toggle() }
+            Button(model.isDownloadsVisible ? "Hide Downloads" : "Show Downloads", action: model.toggleDownloads)
                 .shortcut(.toggleDownloads)
             Divider()
             Button(ShortcutCatalog[.zoomIn].title, action: model.zoomIn)
@@ -80,7 +80,7 @@ struct BrowserCommands: Commands {
             Divider()
         }
         CommandGroup(after: .help) {
-            Button("Keyboard Shortcuts") { model.isShortcutHelpVisible = true }
+            Button("Keyboard Shortcuts", action: model.showShortcutHelp)
         }
     }
 }
