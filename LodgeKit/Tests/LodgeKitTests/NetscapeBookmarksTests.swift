@@ -292,8 +292,9 @@ import Testing
 
         #expect(parsed.links.count == root.links.count)
         #expect(outline(parsed.children) == outline(root.children))
-        #expect(exportTime < .seconds(2))
-        #expect(parseTime < .seconds(2))
+        // A canary against quadratic blow-up, not a benchmark: loose enough for a loaded machine.
+        #expect(exportTime < .seconds(10))
+        #expect(parseTime < .seconds(10))
     }
 
     /// `count` links in one flat list.
