@@ -167,6 +167,8 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     /// What the session store keeps: the workspaces in bar order with each one's content, the windows (key first)
     /// with the tab each shows and its frame, and the deletions still under way. A built workspace's selected tab is
     /// the first window's (key first) remembering one there, else the one it was restored with, while open (D8).
+    /// At most `SessionSnapshot.maxWindows` windows are kept, key first: the rest are not restored, though their
+    /// tabs stay in the workspace.
     var snapshot: SessionSnapshot {
         let active = activeWorkspaceID
         return SessionSnapshot(
