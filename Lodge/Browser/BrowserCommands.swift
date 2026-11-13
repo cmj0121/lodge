@@ -47,6 +47,13 @@ struct BrowserCommands: Commands {
             Button(model.isDownloadsVisible ? "Hide Downloads" : "Show Downloads") { model.isDownloadsVisible.toggle() }
                 .shortcut(.toggleDownloads)
             Divider()
+            Button(ShortcutCatalog[.zoomIn].title, action: model.zoomIn)
+                .shortcut(.zoomIn, enabled: model.canZoomIn)
+            Button(ShortcutCatalog[.zoomOut].title, action: model.zoomOut)
+                .shortcut(.zoomOut, enabled: model.canZoomOut)
+            Button(ShortcutCatalog[.actualSize].title, action: model.resetZoom)
+                .shortcut(.actualSize, enabled: model.canResetZoom)
+            Divider()
         }
         CommandMenu("History") {
             Button("Back", action: model.goBack)

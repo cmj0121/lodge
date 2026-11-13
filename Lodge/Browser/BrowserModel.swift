@@ -21,6 +21,8 @@ final class BrowserModel {
     private(set) var loadProgress: [TabID: Double] = [:]
     /// Each page's security, kept apart from `tabs` like progress; gone with the tab.
     private(set) var security: [TabID: SiteSecurity] = [:]
+    /// Each tab's page zoom; absent means `PageZoom.actual`. Gone with the tab.
+    private(set) var zoom: [TabID: Double] = [:]
     var findText = ""
     var isFindVisible = false
     private(set) var findMissed = false
@@ -186,7 +188,8 @@ final class BrowserModel {
         guard let tab = tabs[id] else { return nil }
         if let view = registry.webView(for: id) { return view }
         let isRestoring = restoredTabs.remove(id) != nil
-        let view = registry.make(for: id, store: tab.store, configuration: configuration)
+        let view = registry.make(
+            for: id, store: tab.store, configuration: configuration, zoom: zoom[id] ?? PageZoom.actual)
         update(id) { $0.isLive = true }
         // Built once the tab is listed, so the controller's initial KVO values reach it.
         let controller = TabController(tab: id, webView: view, model: self)
@@ -222,6 +225,7 @@ final class BrowserModel {
             if loadProgress[id] != nil { loadProgress[id] = nil }
             if favicons[id] != nil { favicons[id] = nil }
             if security[id] != nil { security[id] = nil }
+            if zoom[id] != nil { zoom[id] = nil }
         }
         Task { @MainActor [registry] in
             for id in dropped { registry.destroy(id) }
@@ -426,6 +430,40 @@ final class BrowserModel {
     func stopLoading() { selectedView?.stopLoading() }
 
     func focusAddressBar() { addressFocusRequest += 1 }
+
+    // MARK: Zoom
+
+    /// The selected tab's zoom, nil when it has no page.
+    private var selectedPageZoom: Double? {
+        guard let id = tabs.selectedID, tabs[id]?.url != nil else { return nil }
+        return zoom[id] ?? PageZoom.actual
+    }
+
+    var canZoomIn: Bool { selectedPageZoom.map(PageZoom.canZoomIn) == true }
+
+    var canZoomOut: Bool { selectedPageZoom.map(PageZoom.canZoomOut) == true }
+
+    var canResetZoom: Bool { selectedPageZoom.map { $0 != PageZoom.actual } == true }
+
+    func zoomIn() {
+        if canZoomIn { setSelectedZoom(PageZoom.zoomedIn) }
+    }
+
+    func zoomOut() {
+        if canZoomOut { setSelectedZoom(PageZoom.zoomedOut) }
+    }
+
+    func resetZoom() {
+        if canResetZoom { setSelectedZoom { _ in PageZoom.actual } }
+    }
+
+    /// Stores the selected tab's new zoom (dropping the entry at actual size) and applies it to its web view.
+    private func setSelectedZoom(_ next: (Double) -> Double) {
+        guard let id = tabs.selectedID, let current = selectedPageZoom else { return }
+        let value = next(current)
+        zoom[id] = value == PageZoom.actual ? nil : value
+        ensureView(for: id, load: false)?.pageZoom = value
+    }
 
     /// Each sidebar mode anchors the Downloads popover on its own button, so it closes before the mode changes rather
     /// than leave the flag set with its anchor gone; ⌘J then opens it on the new button.

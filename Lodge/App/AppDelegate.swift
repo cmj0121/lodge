@@ -33,12 +33,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return browser
     }()
 
+    /// The ⌘+ alias of Zoom In (D9), which a menu item cannot carry beside its ⌘= key.
+    private var zoomInAliasMonitor: Any?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         openHistory()
         restoreDownloads()
+        installZoomInAlias()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let zoomInAliasMonitor { NSEvent.removeMonitor(zoomInAliasMonitor) }
+        zoomInAliasMonitor = nil
         downloads.cancelAllForQuit()
         store.schedule(browser.snapshot)
         store.flush()
@@ -47,6 +53,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             Self.logger.error("Could not close history: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Runs Zoom In for ⌘+ in the browser window when it can zoom in, swallowing the key; any other key passes on.
+    private func installZoomInAlias() {
+        zoomInAliasMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.characters == "+",
+                event.modifierFlags.intersection([.command, .control, .option]) == [.command]
+            else { return event }
+            let zoomed = MainActor.assumeIsolated {
+                guard let self, self.isBrowserWindowKey, self.browser.canZoomIn else { return false }
+                self.browser.zoomIn()
+                return true
+            }
+            return zoomed ? nil : event
+        }
+    }
+
+    /// The key window shows the selected tab's web view, so it is the browser window.
+    private var isBrowserWindowKey: Bool {
+        guard let key = NSApp.keyWindow, let id = browser.tabs.selectedID else { return false }
+        return browser.registry.webView(for: id)?.window === key
     }
 
     /// Loads downloads.json off the main actor, interrupting what was running at the last quit and deleting the

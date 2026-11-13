@@ -11,12 +11,15 @@ final class WebViewRegistry {
     func webView(for tab: TabID) -> LodgeWebView? { views[tab] }
 
     /// A new web view for `tab` on `store`, or on `configuration` when WebKit hands one over in
-    /// `createWebViewWith` (the popup keeps its opener's store, D3).
-    func make(for tab: TabID, store: StoreRef, configuration: WKWebViewConfiguration? = nil) -> LodgeWebView {
+    /// `createWebViewWith` (the popup keeps its opener's store, D3), shown at the tab's page `zoom`.
+    func make(
+        for tab: TabID, store: StoreRef, configuration: WKWebViewConfiguration? = nil, zoom: Double = PageZoom.actual
+    ) -> LodgeWebView {
         let config = configuration ?? newConfiguration(for: store)
         let view = LodgeWebView(frame: .zero, configuration: config)
         view.allowsBackForwardNavigationGestures = true
         view.allowsMagnification = true
+        view.pageZoom = zoom
         views[tab] = view
         return view
     }
