@@ -24,6 +24,8 @@ final class BrowserModel {
     var findText = ""
     var isFindVisible = false
     private(set) var findMissed = false
+    /// The sidebar's Downloads popover is open.
+    var isDownloadsVisible = false
     /// Each tab's decoded favicon, kept apart from `tabs` so an icon arriving redraws only its icon.
     private(set) var favicons: [TabID: NSImage] = [:]
     /// Bumped to ask the window to focus the address bar or the find field.
@@ -401,6 +403,10 @@ final class BrowserModel {
     func stopLoading() { selectedView?.stopLoading() }
 
     func focusAddressBar() { addressFocusRequest += 1 }
+
+    /// Each sidebar mode anchors the Downloads popover on its own button, so it closes before the mode changes rather
+    /// than leave the flag set with its anchor gone; ⌥⌘L then opens it on the new button.
+    func closeDownloadsForModeChange() { isDownloadsVisible = false }
 
     // MARK: Find
 

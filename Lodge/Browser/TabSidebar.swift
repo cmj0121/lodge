@@ -24,7 +24,7 @@ struct TabSidebar: View {
 }
 
 /// Navigation beside the window buttons, the address, pins, the workspace's bookmarks and loose
-/// tabs, and the workspace bar.
+/// tabs, and the workspace bar with Downloads.
 private struct ExpandedSidebar: View {
     let model: BrowserModel
     let toggle: () -> Void
@@ -78,8 +78,14 @@ private struct ExpandedSidebar: View {
             }
             .scrollIndicators(.never)
             Divider()
-            WorkspaceBar(axis: .horizontal)
-                .padding(.top, 8)
+            HStack(spacing: 6) {
+                WorkspaceBar(axis: .horizontal)
+                if let downloads = model.downloads {
+                    DownloadsButton(model: model, manager: downloads, isRail: false)
+                        .padding(.trailing, 4)
+                }
+            }
+            .padding(.top, 8)
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 10)
@@ -104,7 +110,7 @@ extension SidebarNode {
     }
 }
 
-/// Icons only: expand, pins, the bookmarks menu and the workspace bar.
+/// Icons only: expand, pins, the bookmarks menu, and the workspace bar with Downloads.
 private struct RailSidebar: View {
     let model: BrowserModel
     let toggle: () -> Void
@@ -127,7 +133,12 @@ private struct RailSidebar: View {
                 }
             }
             .scrollIndicators(.never)
-            WorkspaceBar(axis: .vertical)
+            VStack(spacing: 12) {
+                WorkspaceBar(axis: .vertical)
+                if let downloads = model.downloads {
+                    DownloadsButton(model: model, manager: downloads, isRail: true)
+                }
+            }
         }
         .padding(.horizontal, 8)
         .padding(.bottom, 10)

@@ -404,9 +404,11 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     }
 
     /// Downloads an ended GET http(s) item again on the default store, once at a time per row; the row is replaced
-    /// by the new one when it gets its destination.
+    /// by the new one when it gets its destination. A finished item retries only once its file is missing.
     func retry(_ id: UUID) {
-        guard let item = list[id], item.canRetry, let url = item.sourceURL, !retrying.contains(id) else { return }
+        guard let item = list[id], item.canRetry(isMissing: missing.contains(id)), let url = item.sourceURL,
+            !retrying.contains(id)
+        else { return }
         retrying.insert(id)
         Task {
             let download = await retryView.startDownload(using: URLRequest(url: url))

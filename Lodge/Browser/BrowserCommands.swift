@@ -32,7 +32,10 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("g", modifiers: [.command, .shift])
         }
         CommandGroup(replacing: .sidebar) {
-            Button("Toggle Sidebar") { withAnimation(.snappy(duration: 0.25)) { sidebarMode = sidebarMode.toggled } }
+            Button("Toggle Sidebar") {
+                model.closeDownloadsForModeChange()
+                withAnimation(.snappy(duration: 0.25)) { sidebarMode = sidebarMode.toggled }
+            }
                 .keyboardShortcut("s", modifiers: [.command, .control])
         }
         CommandGroup(before: .toolbar) {
@@ -40,6 +43,9 @@ struct BrowserCommands: Commands {
                 .keyboardShortcut("r")
             Button("Stop", action: model.stopLoading)
                 .keyboardShortcut(".")
+            Divider()
+            Button(model.isDownloadsVisible ? "Hide Downloads" : "Show Downloads") { model.isDownloadsVisible.toggle() }
+                .keyboardShortcut("l", modifiers: [.command, .option])
             Divider()
         }
         CommandMenu("History") {

@@ -53,14 +53,23 @@ public struct DownloadItem: Identifiable, Codable, Equatable, Sendable {
         self.endedAt = endedAt
     }
 
-    /// Ended without a file (failed, cancelled or interrupted), and the request was a GET over http(s).
-    public var canRetry: Bool {
-        switch state {
-        case .failed, .cancelled, .interrupted: break
-        case .waitingForLocation, .running, .finished: return false
-        }
+    /// The request was a GET over http(s), so it can be sent again (D8).
+    public var isReplayable: Bool {
         guard method.uppercased() == "GET", let scheme = sourceURL?.scheme?.lowercased() else { return false }
         return scheme == "http" || scheme == "https"
+    }
+
+    /// Ended without a file (failed, cancelled or interrupted), and the request is replayable.
+    public var canRetry: Bool {
+        switch state {
+        case .failed, .cancelled, .interrupted: isReplayable
+        case .waitingForLocation, .running, .finished: false
+        }
+    }
+
+    /// `canRetry`, or finished with its file moved or deleted (`isMissing`, D5) and the request replayable.
+    public func canRetry(isMissing: Bool) -> Bool {
+        canRetry || (state == .finished && isMissing && isReplayable)
     }
 
     /// Allowed: waitingForLocation → running | cancelled | failed; running → finished | failed | cancelled |

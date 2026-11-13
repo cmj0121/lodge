@@ -10,6 +10,7 @@ struct BrowserView: View {
     var body: some View {
         HStack(spacing: 0) {
             TabSidebar(model: model, mode: sidebarMode) {
+                model.closeDownloadsForModeChange()
                 withAnimation(.snappy(duration: 0.25)) { sidebarMode = sidebarMode.toggled }
             }
             .frame(width: sidebarMode.width)

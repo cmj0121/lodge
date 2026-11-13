@@ -4,8 +4,9 @@
     import SwiftUI
 
     /// Debug aid: `Lodge -renderLayout YES` draws the window's layout (both sidebar modes, and
-    /// find open) and the History window, from an in-memory history, to PNG files off screen, then
-    /// exits. It never shows a window or takes focus, so it can run while someone uses the machine.
+    /// find open), the History window from an in-memory history, and the Downloads popover and button
+    /// from sample items, to PNG files off screen, then exits. It never shows a window or takes focus,
+    /// so it can run while someone uses the machine. No download runs.
     @MainActor
     enum LayoutRenderer {
         static func runIfRequested() {
@@ -18,6 +19,7 @@
             }
             render(.rail, find: true, to: directory.appending(path: "layout-find.png"))
             renderHistory(to: directory.appending(path: "layout-history.png"))
+            renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
             exit(0)
         }
@@ -33,6 +35,11 @@
             // Opens the sample's folder, so the render shows a nested bookmark.
             for case .folder(let folder) in model.library.bookmarks.children { model.setFolderExpanded(folder.id, true) }
             if let bookmark = model.library.links(on: .bookmarks).first { model.openLink(bookmark, load: false) }
+            // An in-memory manager over one running sample, so the sidebar shows the Downloads ring.
+            let downloads = DownloadManager(directory: nil, defaults: defaults)
+            let running = sampleDownloads.filter { $0.state == .running && $0.totalBytes != nil }
+            downloads.restore(DownloadList(items: running))
+            model.downloads = downloads
             if find {
                 model.showFind()
                 model.findText = "lodge"
@@ -66,6 +73,64 @@
             }
             RunLoop.main.run(until: Date().addingTimeInterval(1))
             snapshot(HistoryView(model: model), size: NSSize(width: 640, height: 600), title: "History", to: url)
+        }
+
+        /// One sample item per D5 state, newest first; the second finished one stands for a moved file.
+        private static let sampleDownloads: [DownloadItem] = {
+            let now = Date.now
+            func item(
+                _ name: String, _ state: DownloadItem.State, received: Int64 = 0, total: Int64? = nil,
+                method: String = "GET", minutesAgo: Double
+            ) -> DownloadItem {
+                DownloadItem(
+                    sourceURL: URL(string: "https://downloads.example/\(name)"), method: method, fileName: name,
+                    state: state, receivedBytes: received, totalBytes: total,
+                    startedAt: now.addingTimeInterval(-minutesAgo * 60))
+            }
+            return [
+                item("Lodge-Notes.pdf", .waitingForLocation, minutesAgo: 0),
+                item("Xcode_26.xip", .running, received: 12_300_000, total: 40_000_000, minutesAgo: 1),
+                item("stream-capture.mov", .running, received: 12_300_000, minutesAgo: 2),
+                item("swift-6.2-RELEASE.pkg", .finished, received: 40_000_000, total: 40_000_000, minutesAgo: 5),
+                item("Old Invoice.pdf", .finished, received: 182_000, total: 182_000, minutesAgo: 30),
+                item("dataset.zip", .failed(reason: "The network connection was lost."), minutesAgo: 60),
+                item("form-export.csv", .failed(reason: "The form could not be sent."), method: "POST", minutesAgo: 70),
+                item("photos.zip", .cancelled, minutesAgo: 90),
+                item("archive.tar.gz", .interrupted, received: 5_000_000, total: 90_000_000, minutesAgo: 120),
+            ]
+        }()
+
+        /// The popover with every D5 state, the empty popover, and the button's four looks.
+        private static func renderDownloads(in directory: URL) {
+            let list = DownloadList(items: sampleDownloads)
+            let missing: Set<UUID> = [list.items[4].id]
+            // Every row at once, no scrolling.
+            let all = DownloadsList(
+                list: list, missing: missing, onAction: { _, _ in }, clear: {}, visibleRows: list.items.count)
+            snapshot(
+                all.frame(maxHeight: .infinity, alignment: .top), size: NSSize(width: DownloadsList.width, height: 580),
+                title: "Downloads", to: directory.appending(path: "layout-downloads.png"))
+            let empty = DownloadsList(list: DownloadList(), missing: [], onAction: { _, _ in }, clear: {})
+            snapshot(
+                empty.frame(maxHeight: .infinity, alignment: .top), size: NSSize(width: DownloadsList.width, height: 130),
+                title: "Downloads", to: directory.appending(path: "layout-downloads-empty.png"))
+            let looks: [(DownloadOverallProgress, Bool)] = [
+                (.none, false), (.determinate(0.3), false), (.indeterminate, false), (.none, true),
+            ]
+            let strip = VStack(spacing: 16) {
+                ForEach([DownloadsButtonLabel.barSymbolSize, SidebarMode.railSymbolSize], id: \.self) { size in
+                    HStack(spacing: 20) {
+                        ForEach(looks.indices, id: \.self) {
+                            DownloadsButtonLabel(progress: looks[$0].0, hasUnseen: looks[$0].1, size: size)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(20)
+            snapshot(
+                strip, size: NSSize(width: 240, height: 120),
+                to: directory.appending(path: "layout-downloads-button.png"))
         }
 
         /// Draws `view` in an off-screen window; with no `title`, the title bar is hidden as the browser's is.
