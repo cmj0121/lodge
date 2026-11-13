@@ -96,6 +96,15 @@ struct BrowserCommands: Commands {
                     .shortcut(.workspace(slot: slot)!, enabled: isBrowserWindow == true)
                 }
             }
+            let anonymous = coordinator.workspaces.anonymous
+            Toggle(
+                anonymous.name,
+                isOn: Binding(get: { anonymous.id == activeID }, set: { _ in
+                    model.closeFloatingSurfaces()
+                    coordinator.switchTo(anonymous.id)
+                })
+            )
+            .disabled(isBrowserWindow != true)
         }
         CommandGroup(before: .windowList) {
             Button("Show Next Tab", action: model.selectNextTab)

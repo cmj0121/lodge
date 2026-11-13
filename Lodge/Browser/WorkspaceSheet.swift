@@ -52,12 +52,17 @@ struct WorkspaceSheetCard: View {
         }
     }
 
+    /// Anonymous keeps its name and icon; a sheet opened for it anyway says so and offers nothing to change.
+    private var isFixed: Bool { target?.kind == .anonymous }
+
     private var asksName: Bool {
-        if case .changeIcon = editor { false } else { true }
+        if isFixed { return false }
+        if case .changeIcon = editor { return false } else { return true }
     }
 
     private var asksSymbol: Bool {
-        if case .rename = editor { false } else { true }
+        if isFixed { return false }
+        if case .rename = editor { return false } else { return true }
     }
 
     private var validation: Result<String, WorkspaceList.EditError> {
@@ -71,7 +76,7 @@ struct WorkspaceSheetCard: View {
     }
 
     private var canCommit: Bool {
-        if case .create = editor {} else if target == nil { return false }
+        if case .create = editor {} else if target == nil || isFixed { return false }
         if asksName, case .failure = validation { return false }
         return true
     }
@@ -104,6 +109,12 @@ struct WorkspaceSheetCard: View {
             header
             Divider()
             VStack(alignment: .leading, spacing: 14) {
+                if isFixed {
+                    Text(WorkspaceForm.message(for: .anonymousIsFixed, name: name))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if asksName { nameField }
                 if asksSymbol {
                     SymbolGrid(selection: $symbol, focusesOnAppear: !asksName)
@@ -135,7 +146,7 @@ struct WorkspaceSheetCard: View {
     /// The workspace as the bar will show it, next to what the sheet does.
     private var header: some View {
         HStack(spacing: 14) {
-            Image(systemName: symbol)
+            Image(systemName: asksSymbol ? symbol : target?.symbol ?? symbol)
                 .symbolVariant(.fill)
                 .font(.system(size: 22, weight: .medium))
                 .foregroundStyle(.primary)

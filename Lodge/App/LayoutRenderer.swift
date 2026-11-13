@@ -33,6 +33,7 @@
             }
             renderWorkspace(to: directory.appending(path: "layout-workspace.png"))
             renderWorkspaceUI(in: directory)
+            renderAnonymous(in: directory)
             checkDeletion(to: directory.appending(path: "layout-delete.png"))
             checkAnonymous()
             checkSharedPins(to: directory.appending(path: "layout-shared-pins.png"))
@@ -114,6 +115,45 @@
                     BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
                     size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-workspace-rename-\(name).png"))
+            }
+        }
+
+        /// Anonymous shown after Default and two custom workspaces: its bar tile and header in both sidebar modes and
+        /// both appearances, a Rename sheet opened for it anyway, and the History window while it is shown. Prints
+        /// ok or FAILED for: History says Not Kept on Anonymous and leaves that state on Default.
+        private static func renderAnonymous(in directory: URL) {
+            let suite = "dev.lodge.render-layout"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                let name = appearance == .aqua ? "light" : "dark"
+                let coordinator = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+                _ = try? coordinator.create(name: "Personal", symbol: "house")
+                _ = try? coordinator.create(name: "Work", symbol: "briefcase")
+                coordinator.switchTo(Workspace.anonymousID)
+                for mode in SidebarMode.allCases {
+                    defaults.set(mode.rawValue, forKey: SidebarMode.defaultsKey)
+                    snapshot(
+                        BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                        size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
+                        to: directory.appending(path: "layout-anonymous-\(mode.rawValue)-\(name).png"))
+                }
+                guard appearance == .aqua else { continue }
+                defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+                coordinator.window.workspaceEditor = .rename(Workspace.anonymousID)
+                snapshot(
+                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-anonymous-sheet.png"))
+                coordinator.window.workspaceEditor = nil
+                let notKept = coordinator.history.state == .notKept
+                snapshot(
+                    HistoryView(model: coordinator.history), size: NSSize(width: 640, height: 600), title: "History",
+                    to: directory.appending(path: "layout-history-not-kept.png"))
+                coordinator.switchTo(Workspace.defaultID)
+                let left = coordinator.history.state != .notKept
+                print("History is Not Kept on Anonymous: \(notKept && left ? "ok" : "FAILED")")
             }
         }
 

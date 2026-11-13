@@ -4,8 +4,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// The sidebar's foot: one icon per workspace in bar order, New Workspace and Settings. A click switches, the
-/// context menu renames or changes the icon, and a drag reorders, Default staying first. Past a few workspaces the
-/// icons scroll: sideways in the sidebar, up and down in the rail.
+/// context menu renames or changes the icon, and a drag reorders, Default staying first and Anonymous last: Anonymous
+/// has no edits and no drag, and a drop onto it lands just before it. Past a few workspaces the icons scroll:
+/// sideways in the sidebar, up and down in the rail.
 struct WorkspaceBar: View {
     let coordinator: WorkspaceCoordinator
     let axis: Axis
