@@ -63,6 +63,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         downloads?.storeHold = { [registry] id, store in
             if let store { registry.hold(download: id, on: store) } else { registry.releaseHold(download: id) }
         }
+        registry.storeDropped = { [weak downloads] store in downloads?.forget(store: store) }
         active.didShow(in: window)
     }
 

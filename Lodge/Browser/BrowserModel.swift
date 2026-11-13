@@ -380,7 +380,8 @@ final class BrowserModel {
             for: id, store: tab.store, configuration: configuration, zoom: zoom[id] ?? PageZoom.actual)
         update(id) { $0.isLive = true }
         // Built once the tab is listed, so the controller's initial KVO values reach it.
-        let controller = TabController(tab: id, webView: view, model: self)
+        let controller = TabController(
+            tab: id, webView: view, model: self, faviconSession: registry.faviconSession(for: tab.store))
         controllers[id] = controller
         if load, let saved {
             controller.browserWillLoad()
@@ -457,7 +458,8 @@ final class BrowserModel {
         if shelf == .pins, let sharedPins { return sharedPins.pinFavicon(link.id) }
         guard let data = link.icon else { return nil }
         if let cached = storedIcons[link.id], cached.data == data { return cached.image }
-        guard let image = NSImage(data: data) else { return nil }
+        guard let cgImage = LinkIcon.image(from: data) else { return nil }
+        let image = NSImage(cgImage: cgImage, size: .zero)
         storedIcons[link.id] = (data, image)
         return image
     }

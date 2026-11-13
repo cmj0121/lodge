@@ -45,6 +45,17 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             WorkspaceContent(tabs: [], selectedTab: nil, pins: [], bookmarks: bookmarks)
         }
 
+        /// Icons checked: an Anonymous bookmark (`anonymous`) keeps one only when `LinkIcon.isValid`; every other
+        /// pin and bookmark keeps none.
+        func checkingIcons(anonymous: Bool) -> WorkspaceContent {
+            var content = self
+            for index in content.pins.indices { content.pins[index].icon = nil }
+            content.bookmarks = bookmarks.mappingLinks { link in
+                if !anonymous || link.icon.map(LinkIcon.isValid) != true { link.icon = nil }
+            }
+            return content
+        }
+
         /// Tabs on `store`, isLive false, dangling link dropped, unknown selection → first tab. A nil `store`
         /// (Anonymous) gives no tabs, only the library.
         public func restored(store: StoreRef?) -> (tabs: TabList, library: LinkLibrary) {
@@ -97,7 +108,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     /// `anonymized()`); duplicate ids, stray `.anonymous` and pending ids dropped. Pins fold into Default: its own
     /// pins in order, then each custom workspace's in bar order unless that URL is already pinned (the first id is
     /// kept); custom workspaces' pins become [] and their tabs linked to one of them lose the link. Pending drops
-    /// Default and Anonymous; empty windows → [Default]; unknown active → Default (Anonymous is valid).
+    /// Default and Anonymous; empty windows → [Default]; unknown active → Default (Anonymous is valid). Only
+    /// Anonymous bookmarks keep an icon, and only a `LinkIcon.isValid` one.
     public init(workspaces: [WorkspaceSnapshot], windows: [WindowSnapshot], pendingDeletions: [UUID]) {
         var seen: Set<UUID> = [Workspace.defaultID, Workspace.anonymousID]
         let pending = pendingDeletions.filter { seen.insert($0).inserted }
@@ -120,7 +132,9 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
                 contents[index].tabs[tab].link = nil
             }
         }
-        let workspaces = zip(list.workspaces, contents).map { WorkspaceSnapshot(workspace: $0, content: $1) }
+        let workspaces = zip(list.workspaces, contents).map {
+            WorkspaceSnapshot(workspace: $0, content: $1.checkingIcons(anonymous: $0.kind == .anonymous))
+        }
         let windows = windows.isEmpty ? [WindowSnapshot(activeWorkspace: Workspace.defaultID)] : windows
         version = Self.currentVersion
         self.workspaces = workspaces

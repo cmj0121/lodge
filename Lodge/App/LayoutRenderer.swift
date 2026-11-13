@@ -7,7 +7,7 @@
     /// Debug aid: `Lodge -renderLayout YES` draws the window's layout (both sidebar modes, find
     /// open, and the shortcut overlay and the location prompt in light and dark), the History window from an in-memory history, and the Downloads popover and button
     /// from sample items, to PNG files off screen, then exits. It never shows a window or takes focus,
-    /// so it can run while someone uses the machine. No download runs.
+    /// so it can run while someone uses the machine. The only download is a `data:` URL saved to a temporary folder.
     @MainActor
     enum LayoutRenderer {
         static func runIfRequested() {
@@ -36,6 +36,7 @@
             renderAnonymous(in: directory)
             checkDeletion(to: directory.appending(path: "layout-delete.png"))
             checkAnonymous()
+            checkPrivateDownloadRow()
             checkSharedPins(to: directory.appending(path: "layout-shared-pins.png"))
             checkMoveTabs()
             renderHistory(to: directory.appending(path: "layout-history.png"))
@@ -232,6 +233,20 @@
             }
             report("Anonymous stores keep cookies apart", apart.0 == ["first"] && apart.1 == ["second"])
 
+            let anonymousStore = StoreRef.ephemeral(UUID())
+            let faviconTab = TabID()
+            registry.attach(tab: faviconTab, to: anonymousStore)
+            let ownSession = registry.faviconSession(for: anonymousStore)
+            var dropped: StoreRef?
+            registry.storeDropped = { dropped = $0 }
+            registry.detach(tab: faviconTab)
+            report(
+                "Anonymous favicon sessions are per store and dropped with it",
+                ownSession !== registry.faviconSession(for: .ephemeral(UUID()))
+                    && registry.faviconSession(for: .global) === FaviconLoader.shared
+                    && registry.faviconSession(for: .workspace(UUID())) === FaviconLoader.shared
+                    && dropped == anonymousStore && registry.faviconSession(for: anonymousStore) !== ownSession)
+
             let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
             coordinator.switchTo(Workspace.anonymousID)
             let model = coordinator.active
@@ -273,6 +288,77 @@
                 "Anonymous session leaves no URLs",
                 !session.isEmpty && !session.contains(secret) && session.contains("kept-bookmark.example")
                     && saved.map { !$0.contains(secret) } == true && model.tabs.tabs.contains { $0.url?.host() == secret })
+        }
+
+        /// Checks in the background, printing ok or FAILED, that a private download still running when its anonymous
+        /// tab closes leaves no row once it ends and its store is dropped. Downloads a `data:` URL into a temporary
+        /// folder, removed afterwards; it does not download unless that folder can be accessed, and a file that lands
+        /// anywhere else fails the check (it is left there, as only its planned name is known).
+        private static func checkPrivateDownloadRow() {
+            let name = "Anonymous download ended after its tab closed leaves no row"
+            func report(_ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            let files = FileManager.default
+            let folder = files.temporaryDirectory.appending(
+                path: "LodgeSelfCheck-\(UUID())", directoryHint: .isDirectory)
+            let suiteName = "dev.lodge.selfcheck.\(UUID().uuidString)"
+            defer {
+                try? files.removeItem(at: folder)
+                UserDefaults.standard.removePersistentDomain(forName: suiteName)
+            }
+            var isStale = false
+            guard (try? files.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
+                let bookmark = try? folder.bookmarkData(
+                    options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil),
+                let resolved = try? URL(
+                    resolvingBookmarkData: bookmark, options: .withSecurityScope, relativeTo: nil,
+                    bookmarkDataIsStale: &isStale),
+                let defaults = UserDefaults(suiteName: suiteName)
+            else { return report(false) }
+            // DownloadManager falls back to ~/Downloads when the folder cannot be accessed: then nothing is downloaded.
+            guard resolved.startAccessingSecurityScopedResource() else { return report(false) }
+            defer { resolved.stopAccessingSecurityScopedResource() }
+            defaults.set(bookmark, forKey: DownloadSettings.folderKey)
+            let downloads = DownloadManager(directory: nil, defaults: defaults)
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: downloads)
+            coordinator.switchTo(Workspace.anonymousID)
+            guard let tab = coordinator.active.selected, case .ephemeral = tab.store else { return report(false) }
+            let config = WKWebViewConfiguration()
+            config.websiteDataStore = coordinator.registry.dataStore(for: tab.store)
+            let view = WKWebView(frame: .zero, configuration: config)
+            var started: WKDownload?
+            Task { started = await view.startDownload(using: URLRequest(url: URL(string: "data:text/plain,lodge")!)) }
+            var deadline = Date.now.addingTimeInterval(5)
+            while started == nil, Date.now < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01)) }
+            guard let download = started else { return report(false) }
+            downloads.start(download, store: tab.store, site: nil, userInitiated: true, isMainFrame: true)
+            // Closed before the download can end: only the download holds the store now.
+            coordinator.active.close(tab.id)
+            coordinator.registry.detach(tab: tab.id)
+            let heldByDownload = coordinator.registry.isHeld(tab.store)
+            // Where the file goes, seen while its row runs (the row goes with its store as the download ends).
+            var saved: URL?
+            deadline = Date.now.addingTimeInterval(10)
+            while !downloads.hasUnseenEnded || coordinator.registry.isHeld(tab.store), Date.now < deadline {
+                if let row = downloads.list.items.first(where: { $0.store == tab.store }),
+                    let directory = row.directory
+                {
+                    saved = row.fileURL ?? directory.appending(path: row.fileName)
+                }
+                RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.005))
+            }
+            func identity(_ url: URL) -> (any NSObjectProtocol)? {
+                try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier
+            }
+            let inFolder =
+                saved.flatMap { identity($0.deletingLastPathComponent()) }.map { $0.isEqual(identity(folder)) }
+                == true
+            if !inFolder { print("\(name): the test file may have been saved in the Downloads folder") }
+            let landed = (try? files.contentsOfDirectory(atPath: folder.path(percentEncoded: false)))?
+                .contains { !$0.hasSuffix(".lodgedownload") }
+            report(
+                heldByDownload && downloads.hasUnseenEnded && !coordinator.registry.isHeld(tab.store)
+                    && !downloads.list.items.contains { $0.store == tab.store } && inFolder && landed == true)
         }
 
         /// Draws a custom workspace showing Default's sample pins, then checks in the background, printing ok or FAILED

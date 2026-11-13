@@ -58,7 +58,8 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     @ObservationIgnored private var pendingProgress: [UUID: (received: Int64, total: Int64?)] = [:]
     @ObservationIgnored private var throttle = DownloadProgressThrottle()
     @ObservationIgnored private var isRestored = false
-    /// Which pages may start downloads (CWE-770); answers last until quit.
+    /// Which pages may start downloads (CWE-770), per store; answers last until quit or the anonymous tab's store
+    /// is dropped.
     @ObservationIgnored private var gate = DownloadGate()
     /// The "Too many downloads" alert is up, so another refusal does not stack one more.
     @ObservationIgnored private var isShowingTooMany = false
@@ -141,7 +142,7 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     /// downloads join the one list; an Anonymous tab's are private: never saved, and their files keep no origin.
     func start(_ download: WKDownload, store: StoreRef, site: Origin?, userInitiated: Bool, isMainFrame: Bool) {
         let decision = gate.decide(
-            site: site, userInitiated: userInitiated, isMainFrame: isMainFrame, activeCount: active.count)
+            store: store, site: site, userInitiated: userInitiated, isMainFrame: isMainFrame, activeCount: active.count)
         switch decision {
         case .allow:
             track(download, store: store, replacing: nil)
@@ -153,7 +154,7 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             let window = download.webView?.window
             track(
                 download, store: store, replacing: nil,
-                permission: Task { await askPermission(for: site, in: window) })
+                permission: Task { await askPermission(for: site, on: store, in: window) })
         case .refuse(let refusal):
             download.cancel(nil)
             if case .ephemeral = store {
@@ -191,15 +192,16 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         }
     }
 
-    /// Asks whether `site` may download multiple files, as a sheet on the tab's window, and records the answer.
-    private func askPermission(for site: Origin, in window: NSWindow?) async -> Bool {
+    /// Asks whether `site` may download multiple files, as a sheet on the tab's window, and records the answer for
+    /// `store`.
+    private func askPermission(for site: Origin, on store: StoreRef, in window: NSWindow?) async -> Bool {
         let alert = NSAlert()
         alert.messageText = DownloadGate.prompt(for: site)
         alert.addButton(withTitle: "Allow")
         alert.addButton(withTitle: "Don't Allow")
         let response = if let window { await alert.beginSheetModal(for: window) } else { alert.runModal() }
         let allowed = response == .alertFirstButtonReturn
-        gate.answer(allowed, for: site)
+        gate.answer(allowed, for: site, on: store)
         return allowed
     }
 
@@ -430,20 +432,16 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         }
     }
 
-    /// Clears a private file's origin; when that fails, at least its where-froms, else its row says the source stayed.
+    /// Clears a private file's origin (`Provenance.clear`); when its where-froms or a mark other than Lodge's stay,
+    /// its row says the source stayed.
     private func stripProvenance(of file: URL, id: UUID) {
-        do {
-            try Provenance.strip(file)
-        } catch {
+        let (cleared, errors) = Provenance.clear(file)
+        for error in errors {
             Self.logger.error("Cannot clear a private download's origin: \(error.localizedDescription, privacy: .public)")
-            do {
-                try Provenance.removeWhereFroms(file)
-            } catch {
-                Self.logger.error(
-                    "Cannot remove a private download's source: \(error.localizedDescription, privacy: .public)")
-                keptOrigin.insert(id)
-            }
         }
+        guard !cleared else { return }
+        Self.logger.error("A private download keeps its source or a quarantine mark Lodge did not write")
+        keptOrigin.insert(id)
     }
 
     func download(_ download: WKDownload, didFailWithError error: any Error, resumeData: Data?) {
@@ -457,7 +455,6 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         _ download: WKDownload, as state: DownloadItem.State, _ change: (inout DownloadItem) -> Void = { _ in }
     ) {
         guard let entry = active.removeValue(forKey: ObjectIdentifier(download)) else { return }
-        if case .ephemeral = entry.store { storeHold(entry.id, nil) }
         if let panel = entry.panel { close(panel) }
         entry.observations.forEach { $0.invalidate() }
         if state != .finished, let partial = entry.partialURL { DownloadFiles.deletePartial(partial) }
@@ -483,6 +480,18 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         }
         if didEnd { hasUnseenEnded = true }
         persist()
+        // Released once the row has ended, so dropping its store (`forget(store:)`) removes it.
+        if case .ephemeral = entry.store { storeHold(entry.id, nil) }
+    }
+
+    /// An anonymous tab's store is gone: its site answers and its ended rows go too (never saved, so nothing to
+    /// write). Its running downloads held it, so none is left.
+    func forget(store: StoreRef) {
+        gate.forget(store: store)
+        for id in list.removeEnded(on: store) {
+            missing.remove(id)
+            keptOrigin.remove(id)
+        }
     }
 
     // MARK: Row actions

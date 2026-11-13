@@ -11,6 +11,10 @@ final class WebViewRegistry {
     private var viewStores: [TabID: StoreRef] = [:]
     /// Which tabs (a released one too) and running downloads keep each store alive.
     private var holders = StoreHolders()
+    /// Each anonymous tab's store's favicon session, invalidated when the store is dropped.
+    private var faviconSessions: [StoreRef: URLSession] = [:]
+    /// Called with an anonymous tab's store once it is dropped, so what was kept for it goes too.
+    var storeDropped: @MainActor (StoreRef) -> Void = { _ in }
 
     func webView(for tab: TabID) -> LodgeWebView? { views[tab] }
 
@@ -62,9 +66,25 @@ final class WebViewRegistry {
     /// The store's data store when one was made and not dropped since; never makes one.
     func existingDataStore(for ref: StoreRef) -> WKWebsiteDataStore? { stores[ref] }
 
+    /// The session a tab on `ref` fetches favicons on: an anonymous tab's store has one of its own, every other
+    /// store shares `FaviconLoader.shared`.
+    func faviconSession(for ref: StoreRef) -> URLSession {
+        guard case .ephemeral = ref else { return FaviconLoader.shared }
+        if let session = faviconSessions[ref] { return session }
+        let session = FaviconLoader.makeSession()
+        faviconSessions[ref] = session
+        return session
+    }
+
     private func dropIfEphemeral(_ ref: StoreRef) {
-        guard case .ephemeral = ref, let store = stores.removeValue(forKey: ref) else { return }
-        Task { await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) }
+        guard case .ephemeral = ref else { return }
+        faviconSessions.removeValue(forKey: ref)?.invalidateAndCancel()
+        if let store = stores.removeValue(forKey: ref) {
+            Task {
+                await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
+            }
+        }
+        storeDropped(ref)
     }
 
     /// Destroys the tab's view like `destroy`, returning its `interactionState` first so a rebuilt view can pick

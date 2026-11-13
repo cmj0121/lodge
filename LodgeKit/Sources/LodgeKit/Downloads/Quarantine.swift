@@ -48,6 +48,41 @@ public enum Provenance {
         }
     }
 
+    /// Clears a private download's origin with `strip`; when that fails, removes its where-froms and its quarantine
+    /// mark (WebKit's or the sandbox's may name the origin) and marks it again as Lodge. `cleared` only when the
+    /// where-froms are gone and the mark left is Lodge's own (`isOwnMark`); `errors` holds every `POSIXError` met,
+    /// `strip`'s first, even when the fallback cleared it. No error names the file.
+    public static func clear(
+        _ url: URL, agent: String = "Lodge", at date: Date = Date()
+    ) -> (cleared: Bool, errors: [any Error]) {
+        do {
+            try strip(url, agent: agent, at: date)
+            return (true, [])
+        } catch {
+            var errors: [any Error] = [error]
+            var removed = true
+            do { try removeWhereFroms(url) } catch {
+                errors.append(error)
+                removed = false
+            }
+            let path = url.path(percentEncoded: false)
+            if removexattr(path, Quarantine.attribute, XATTR_NOFOLLOW) != 0, errno != ENOATTR {
+                errors.append(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
+            }
+            do { try Quarantine.ensure(url, agent: agent, at: date) } catch { errors.append(error) }
+            return (removed && isOwnMark(Quarantine.read(url), agent: agent), errors)
+        }
+    }
+
+    /// Whether `mark` is exactly what Lodge writes (`Quarantine.value(agent:at:)`), which names no origin.
+    public static func isOwnMark(_ mark: String?, agent: String = "Lodge") -> Bool {
+        guard let fields = mark?.split(separator: ";", omittingEmptySubsequences: false), fields.count == 4 else {
+            return false
+        }
+        return fields[0] == "0083" && !fields[1].isEmpty && fields[1].allSatisfy(\.isHexDigit)
+            && fields[2] == agent && fields[3].isEmpty
+    }
+
     /// Removes only the file's where-froms, the fallback when `strip` fails; a file without them is fine. Throws the
     /// `POSIXError` of a failed removal.
     public static func removeWhereFroms(_ url: URL) throws {

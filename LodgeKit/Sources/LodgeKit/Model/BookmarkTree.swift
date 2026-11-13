@@ -24,6 +24,21 @@ public struct BookmarkFolder: Identifiable, Hashable, Codable, Sendable {
         }
     }
 
+    /// The folder with `change` applied to every link in it, at any depth.
+    func mappingLinks(_ change: (inout SavedLink) -> Void) -> BookmarkFolder {
+        var folder = self
+        folder.children = children.map { node in
+            switch node {
+            case .link(var link):
+                change(&link)
+                return .link(link)
+            case .folder(let child):
+                return .folder(child.mappingLinks(change))
+            }
+        }
+        return folder
+    }
+
     /// The folder with `id`: this one or one anywhere below it.
     func folder(_ id: UUID) -> BookmarkFolder? {
         if self.id == id { return self }
