@@ -1,7 +1,7 @@
 public enum ShortcutID: String, CaseIterable, Sendable {
-    case newTab, closeTab, openLocation, reload, find, bookmarkTab, toggleDownloads, zoomIn, zoomOut, actualSize,
-        shortcutHelp, workspace1, workspace2, workspace3, workspace4, workspace5, workspace6, workspace7, workspace8,
-        workspace9
+    case newTab, newWindow, closeTab, openLocation, reload, find, bookmarkTab, toggleDownloads, zoomIn, zoomOut,
+        actualSize, shortcutHelp, workspace1, workspace2, workspace3, workspace4, workspace5, workspace6, workspace7,
+        workspace8, workspace9
 }
 
 extension ShortcutID {
@@ -83,6 +83,7 @@ public struct Shortcut: Identifiable, Hashable, Sendable {
 public enum ShortcutCatalog {
     public static let all: [Shortcut] = [
         Shortcut(.newTab, "New Tab", .file, KeyCombo("t")),
+        Shortcut(.newWindow, "New Window", .file, KeyCombo("n")),
         Shortcut(.closeTab, "Close Tab", .file, KeyCombo("w")),
         Shortcut(.openLocation, "Open Location…", .file, KeyCombo("l")),
         Shortcut(.reload, "Reload Page", .view, KeyCombo("r")),

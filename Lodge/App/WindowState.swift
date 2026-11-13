@@ -11,6 +11,8 @@ final class WindowState {
     let id: WindowID
     /// The window on screen, once `WindowRegistrar` has seen it.
     @ObservationIgnored weak var nsWindow: NSWindow?
+    /// The frame the session saved for this window, applied (clamped to a visible screen) once it is on screen.
+    @ObservationIgnored var pendingFrame: SessionSnapshot.WindowFrame?
     var findText = ""
     var isFindVisible = false
     var findMissed = false

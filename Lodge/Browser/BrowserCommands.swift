@@ -19,15 +19,22 @@ struct BrowserCommands: Commands {
         return pane.model.canAddLink(from: id)
     }
 
+    /// No browser window to act in: every item acting on one is disabled.
+    private var noPane: Bool { pane == nil }
+
     /// The window the bookmark file panels go on.
     private var browserWindow: NSWindow? { coordinator.lastActiveBrowserWindow?.nsWindow }
 
     var body: some Commands {
+        // The scene's opener, which works with no window open, is how the coordinator opens browser windows.
+        let _ = installWindowOpener()
         CommandGroup(replacing: .newItem) {
             Button(ShortcutCatalog[.newTab].title) { pane?.newTab() }
-                .shortcut(.newTab)
+                .shortcut(.newTab, enabled: !noPane)
+            Button(ShortcutCatalog[.newWindow].title) { coordinator.newWindow() }
+                .shortcut(.newWindow)
             Button(ShortcutCatalog[.openLocation].title) { pane?.focusAddressBar() }
-                .shortcut(.openLocation)
+                .shortcut(.openLocation, enabled: !noPane)
         }
         CommandGroup(replacing: .saveItem) {
             Button(isBrowserWindow == true ? ShortcutCatalog[.closeTab].title : "Close Window") {
@@ -41,23 +48,27 @@ struct BrowserCommands: Commands {
         CommandGroup(after: .textEditing) {
             Divider()
             Button(ShortcutCatalog[.find].title) { pane?.showFind() }
-                .shortcut(.find)
+                .shortcut(.find, enabled: !noPane)
             Button("Find Next") { pane?.findNext() }
+                .disabled(noPane)
             Button("Find Previous") { pane?.findPrevious() }
+                .disabled(noPane)
         }
         CommandGroup(replacing: .sidebar) {
             Button("Toggle Sidebar") {
                 pane?.closeDownloadsForModeChange()
                 withAnimation(.snappy(duration: 0.25)) { sidebarMode = sidebarMode.toggled }
             }
+            .disabled(noPane)
         }
         CommandGroup(before: .toolbar) {
             Button(ShortcutCatalog[.reload].title) { pane?.reload() }
-                .shortcut(.reload)
+                .shortcut(.reload, enabled: !noPane)
             Button("Stop") { pane?.stopLoading() }
+                .disabled(noPane)
             Divider()
             Button(pane?.window.isDownloadsVisible == true ? "Hide Downloads" : "Show Downloads") { pane?.toggleDownloads() }
-                .shortcut(.toggleDownloads)
+                .shortcut(.toggleDownloads, enabled: !noPane)
             Divider()
             Button(ShortcutCatalog[.zoomIn].title) { pane?.zoomIn() }
                 .shortcut(.zoomIn, enabled: pane?.canZoomIn == true)
@@ -69,7 +80,9 @@ struct BrowserCommands: Commands {
         }
         CommandMenu("History") {
             Button("Back") { pane?.goBack() }
+                .disabled(noPane)
             Button("Forward") { pane?.goForward() }
+                .disabled(noPane)
             Divider()
             Button("Show All History") { openWindow(id: "history") }
             Button("Clear All History…") { HistoryPrompts.clearAll(model: history) }
@@ -81,6 +94,7 @@ struct BrowserCommands: Commands {
             Button(pane?.isSelectedTabPinned == true ? "Unpin Tab" : "Pin This Tab") { pane?.togglePinSelectedTab() }
                 .disabled(!canAddLink)
             Button("New Folder…") { if let model = pane?.model { BookmarkPrompts.newFolder(in: nil, model: model) } }
+                .disabled(noPane)
             Divider()
             Button("Import Bookmarks…") {
                 if let model = pane?.model { BookmarkTransfer.importBookmarks(into: model, on: browserWindow) }
@@ -89,6 +103,7 @@ struct BrowserCommands: Commands {
             Button("Export Bookmarks…") {
                 if let model = pane?.model { BookmarkTransfer.exportBookmarks(from: model, on: browserWindow) }
             }
+            .disabled(noPane)
         }
         CommandMenu("Workspaces") {
             Button("New Workspace…") { pane?.showWorkspaceEditor(.create) }
@@ -121,12 +136,22 @@ struct BrowserCommands: Commands {
         }
         CommandGroup(before: .windowList) {
             Button("Show Next Tab") { pane?.selectNextTab() }
+                .disabled(noPane)
             Button("Show Previous Tab") { pane?.selectPreviousTab() }
+                .disabled(noPane)
             Divider()
         }
         CommandGroup(after: .help) {
             Button(ShortcutCatalog[.shortcutHelp].title) { pane?.showShortcutHelp() }
-                .shortcut(.shortcutHelp)
+                .shortcut(.shortcutHelp, enabled: !noPane)
         }
+    }
+
+    /// Hands the coordinator this scene's `openWindow` for browser windows, once. It reads only the unobserved
+    /// `windowOpener`, and the coordinator opens windows from it on a later main turn, never in this update.
+    private func installWindowOpener() {
+        guard coordinator.windowOpener == nil else { return }
+        let openWindow = openWindow
+        coordinator.windowOpener = { openWindow(id: "browser", value: $0) }
     }
 }

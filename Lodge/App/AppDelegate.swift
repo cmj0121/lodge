@@ -30,9 +30,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        coordinator.openRestoredWindows()
         openHistory()
         restoreDownloads()
         installKeyMonitor()
+    }
+
+    /// D5: closing the last window leaves the app running.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// A Dock click with no browser window opens a new one (D1); with one, the front one comes forward. SwiftUI is
+    /// told not to, as it would open a window of its own.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if let window = coordinator.windows.first {
+            if !flag { coordinator.bringForward(window) }
+        } else {
+            coordinator.newWindow()
+        }
+        return false
+    }
+
+    /// Windows closing as the app quits stay in the saved session.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        coordinator.prepareForQuit()
+        return .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {

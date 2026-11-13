@@ -39,6 +39,7 @@
             checkPrivateDownloadRow()
             checkSharedPins(to: directory.appending(path: "layout-shared-pins.png"))
             checkMoveTabs()
+            checkTwoWindows()
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -490,13 +491,144 @@
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
         }
 
+        /// Two browser windows on one coordinator, each in its own off-screen `NSWindow`, checked in the background and
+        /// printed ok or FAILED for each: ⌘N's window shows a new blank tab of the active workspace with the prompt
+        /// open; each window's web view is in that window and no tab is shown twice, after a switch, a pin opened from
+        /// the second window and deleting the workspace both are on; switching moves and closes no tab but the blanks
+        /// the windows made; the saved session brings both windows back with their tabs and frames, the frame on a
+        /// visible screen; closing a window keeps its tabs. Pages are `about:blank`, so no request goes out.
+        private static func checkTwoWindows() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            let first = coordinator.windows[0]
+            guard let firstTab = coordinator.selections.shown(in: first.id) else {
+                return report("New window shows a new tab of the active workspace", false)
+            }
+            coordinator.active.update(firstTab) { $0.url = URL(string: "about:blank#one")! }
+            coordinator.newWindow()
+            let second = coordinator.windows[0]
+            let secondTab = coordinator.selections.shown(in: second.id)
+            report(
+                "New window shows a new tab of the active workspace",
+                second !== first && coordinator.windows.count == 2 && secondTab != nil && secondTab != firstTab
+                    && secondTab.flatMap { coordinator.active.tabs[$0] }?.url == nil
+                    && second.locationPrompt == .newTab && coordinator.selections.shown(in: first.id) == firstTab
+                    && coordinator.lastActiveBrowserWindow === second)
+            guard let secondTab else { return }
+            coordinator.active.update(secondTab) { $0.url = URL(string: "about:blank#two")! }
+            second.locationPrompt = nil
+
+            let hosts = [first, second].map { host(root(coordinator, $0), size: NSSize(width: 900, height: 600)) }
+            defer { for window in hosts { window.close() } }
+            settle(0.5)
+            func isPlaced() -> Bool {
+                let shown = [first, second].map { coordinator.selections.shown(in: $0.id) }
+                return zip([first, second], hosts).allSatisfy { window, host in
+                    window.nsWindow === host
+                        && coordinator.selections.shown(in: window.id)
+                            .flatMap { coordinator.registry.webView(for: $0) }?.window === host
+                } && Set(shown.compactMap { $0 }).count == 2
+            }
+            /// Each window's web view in that window, once SwiftUI has redrawn both (up to 3 s).
+            func placed() -> Bool {
+                let deadline = Date.now.addingTimeInterval(3)
+                while !isPlaced(), Date.now < deadline { settle(0.05) }
+                return isPlaced()
+            }
+            report("Two windows on one workspace show their own tabs", placed())
+
+            let homeTabs = Set(coordinator.active.tabs.tabs.map(\.id))
+            // Its own pools, so Work's web views this run loop never drains are freed before its data store is removed.
+            let made: Workspace? = autoreleasepool { try? coordinator.create(name: "Work", symbol: "briefcase") }
+            guard let work = made, let workModel = coordinator.model(for: work.id)
+            else { return report("Switching moves every window", false) }
+            settle()
+            let home = coordinator.model(for: Workspace.defaultID)
+            report(
+                "Switching moves every window",
+                coordinator.activeWorkspaceID == work.id && placed()
+                    && [first, second].allSatisfy {
+                        coordinator.selections.shown(in: $0.id).map { workModel.tabs[$0] != nil } == true
+                    }
+                    && home.map { Set($0.tabs.tabs.map(\.id)) } == homeTabs)
+
+            let pinned = BrowserTab(url: URL(string: "about:blank#pinned")!, title: "Pinned")
+            coordinator.pin(from: pinned)
+            guard let pin = coordinator.pins.last else { return report("Opening a pin moves every window", false) }
+            coordinator.pane(for: second).activate(.link(pin))
+            settle()
+            let pinTab = coordinator.selections.shown(in: second.id).flatMap { home?.tabs[$0] }
+            report(
+                "Opening a pin moves every window",
+                coordinator.activeWorkspaceID == Workspace.defaultID && placed() && pinTab?.link == pin.id
+                    && coordinator.selections.shown(in: first.id) == firstTab
+                    && home.map { homeTabs.isSubset(of: Set($0.tabs.tabs.map(\.id))) } == true)
+
+            autoreleasepool { coordinator.switchTo(work.id) }
+            settle()
+            var deleted: Bool?
+            Task { deleted = await coordinator.delete(work.id) }
+            let deadline = Date.now.addingTimeInterval(10)
+            while deleted == nil, Date.now < deadline { settle(0.05) }
+            settle()
+            report(
+                "Deleting the active workspace moves every window to Default",
+                deleted == true && coordinator.activeWorkspaceID == Workspace.defaultID && placed()
+                    && coordinator.selections.shown(in: first.id) == firstTab
+                    && coordinator.selections.shown(in: second.id) == pinTab?.id)
+
+            let saved = (try? coordinator.snapshot.encoded()).flatMap { try? SessionSnapshot.decode($0) }
+            let restored = saved.map {
+                WorkspaceCoordinator(restoring: $0, session: nil, appDirectory: nil, downloads: nil)
+            }
+            let expectedFrames = [second, first].map { $0.nsWindow.map { SessionSnapshot.WindowFrame($0.frame) } }
+            let restoredTabs = restored.map { restored in
+                restored.windows.map { restored.selections.shown(in: $0.id) }
+            }
+            var onScreen = false
+            if let restored, restored.windows.count == 2 {
+                let window = restored.windows[0]
+                let restoredHost = host(root(restored, window), size: NSSize(width: 900, height: 600))
+                settle()
+                let frame = restoredHost.frame
+                onScreen = NSScreen.screens.contains { $0.visibleFrame.contains(frame) }
+                restoredHost.close()
+            }
+            report(
+                "Relaunch restores each window's tab and frame",
+                saved?.windows.map(\.frame) == expectedFrames && expectedFrames.allSatisfy { $0 != nil }
+                    && restoredTabs == [pinTab?.id, firstTab]
+                    && (NSScreen.screens.isEmpty || onScreen))
+
+            hosts[1].close()
+            settle()
+            report(
+                "Closing a window keeps its tabs",
+                coordinator.windows.count == 1 && coordinator.windows[0] === first
+                    && coordinator.lastActiveBrowserWindow === first && pinTab.map { home?.tabs[$0.id] != nil } == true
+                    && coordinator.snapshot.windows.count == 1)
+        }
+
+        /// An off-screen window hosting `view`, never shown; it is not freed on closing, so closing it is safe.
+        private static func host(_ view: some View, size: NSSize) -> NSWindow {
+            let window = NSWindow(
+                contentRect: NSRect(origin: .zero, size: size),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: view)
+            window.setFrame(NSRect(origin: NSPoint(x: -10_000, y: -10_000), size: size), display: false)
+            return window
+        }
+
         /// The first window's view of the active workspace.
         private static func firstPane(_ coordinator: WorkspaceCoordinator) -> BrowserPane {
             coordinator.pane(for: coordinator.windows[0])
         }
 
-        private static func root(_ coordinator: WorkspaceCoordinator) -> BrowserRoot {
-            BrowserRoot(coordinator: coordinator, window: coordinator.windows[0])
+        private static func root(_ coordinator: WorkspaceCoordinator, _ window: WindowState? = nil) -> BrowserRoot {
+            BrowserRoot(coordinator: coordinator, window: window ?? coordinator.windows[0])
         }
 
         /// The tab a window remembers in the model's workspace: what it shows there on switching to it.

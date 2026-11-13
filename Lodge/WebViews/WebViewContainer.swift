@@ -3,15 +3,16 @@ import LodgeKit
 import SwiftUI
 import WebKit
 
-/// Hosts at most one registry-owned web view; showing another one reparents it here.
+/// Hosts at most one registry-owned web view; showing another one reparents it here. A view another window's
+/// container has taken since is never pulled back out of it by this one letting go.
 final class WebViewContainer: NSView {
     private weak var current: WKWebView?
 
     func show(_ view: WKWebView?) {
-        guard view !== current else { return }
-        current?.removeFromSuperview()
+        if let current, current !== view, current.superview === self { current.removeFromSuperview() }
         current = view
-        guard let view else { return }
+        guard let view, view.superview !== self else { return }
+        view.removeFromSuperview()
         view.translatesAutoresizingMaskIntoConstraints = false
         addSubview(view)
         NSLayoutConstraint.activate([
