@@ -37,7 +37,7 @@ struct BrowserView: View {
         }
         .animation(.snappy(duration: 0.2), value: model.isShortcutHelpVisible)
         .animation(.snappy(duration: 0.2), value: model.locationPrompt)
-        .navigationTitle(model.selected?.displayTitle ?? "Lodge")
+        .navigationTitle(model.windowTitle)
         .environment(\.webViewRegistry, model.registry)
         .frame(minWidth: 800, minHeight: 500)
         .focusedSceneValue(\.isBrowserWindow, true)

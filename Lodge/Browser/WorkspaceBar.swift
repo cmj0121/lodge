@@ -4,8 +4,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// The sidebar's foot: one icon per workspace in bar order, New Workspace and Settings. A click switches, the
-/// context menu renames or changes the icon, and a drag reorders, Default staying first. Past a few workspaces the
-/// icons scroll: sideways in the sidebar, up and down in the rail.
+/// context menu renames or changes the icon, and a drag reorders, Default staying first and Anonymous last: Anonymous
+/// has no edits and no drag, and a drop onto it lands just before it. Past a few workspaces the icons scroll:
+/// sideways in the sidebar, up and down in the rail.
 struct WorkspaceBar: View {
     let coordinator: WorkspaceCoordinator
     let axis: Axis
@@ -70,7 +71,7 @@ private struct WorkspaceIcon: View {
     let isRail: Bool
     @State private var isHovered = false
 
-    private var isDefault: Bool { workspace.kind == .default }
+    private var isAnonymous: Bool { workspace.kind == .anonymous }
 
     private var index: Int? { coordinator.workspaces.workspaces.firstIndex { $0.id == workspace.id } }
 
@@ -98,27 +99,31 @@ private struct WorkspaceIcon: View {
         .accessibilityLabel("Workspace: \(workspace.name)")
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
         .accessibilityActions {
-            if !isDefault {
+            if !workspace.isFixed {
                 Button(isRail ? "Move Up" : "Move Left") { move(by: -1) }
                 Button(isRail ? "Move Down" : "Move Right") { move(by: 1) }
                 Button("Rename…") { edit(.rename(workspace.id)) }
             }
-            Button("Change Icon…") { edit(.changeIcon(workspace.id)) }
-            if !isDefault {
+            if !isAnonymous {
+                Button("Change Icon…") { edit(.changeIcon(workspace.id)) }
+            }
+            if !workspace.isFixed {
                 Button("Delete…") { WorkspacePrompts.delete(workspace, coordinator: coordinator) }
             }
         }
         .contextMenu {
-            if !isDefault {
+            if !workspace.isFixed {
                 Button("Rename…") { edit(.rename(workspace.id)) }
             }
-            Button("Change Icon…") { edit(.changeIcon(workspace.id)) }
-            if !isDefault {
+            if !isAnonymous {
+                Button("Change Icon…") { edit(.changeIcon(workspace.id)) }
+            }
+            if !workspace.isFixed {
                 Divider()
                 Button("Delete…") { WorkspacePrompts.delete(workspace, coordinator: coordinator) }
             }
         }
-        .modifier(WorkspaceDrag(workspace: isDefault ? nil : workspace.id))
+        .modifier(WorkspaceDrag(workspace: workspace.isFixed ? nil : workspace.id))
         .dropDestination(for: WorkspaceDragItem.self) { payload, _ in
             guard let dragged = payload.first?.ownWorkspace,
                 let move = coordinator.workspaces.reorder(dragging: dragged, onto: workspace.id)
@@ -189,7 +194,7 @@ private struct SettingsButton: View {
 @MainActor
 enum WorkspacePrompts {
     static func delete(_ workspace: Workspace, coordinator: WorkspaceCoordinator) {
-        guard workspace.kind != .default else { return }
+        guard workspace.kind == .custom else { return }
         let alert = NSAlert()
         alert.messageText = "Delete “\(workspace.name)”?"
         alert.informativeText =

@@ -1,10 +1,11 @@
 import Foundation
 
 /// What Lodge keeps across launches: the workspaces in bar order, each with its tabs, selected tab, pins and
-/// bookmarks; the windows and the workspace each shows; and the workspaces still being deleted.
-/// Runtime state (loading, history buttons, crashes, progress, favicons, security) is not stored.
+/// bookmarks; the windows and the workspace each shows; and the workspaces still being deleted. Anonymous keeps
+/// only its bookmarks, and pins live only in Default. Runtime state (loading, history buttons, crashes, progress,
+/// favicons, security) is not stored.
 public struct SessionSnapshot: Codable, Equatable, Sendable {
-    public static let currentVersion = 3
+    public static let currentVersion = 4
 
     public struct Tab: Codable, Equatable, Sendable {
         public var id: TabID
@@ -39,15 +40,34 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             self.bookmarks = bookmarks
         }
 
-        /// Tabs on `store`, isLive false, dangling link dropped, unknown selection → first tab.
-        public func restored(store: StoreRef) -> (tabs: TabList, library: LinkLibrary) {
+        /// Only the bookmarks: what Anonymous keeps across launches.
+        public func anonymized() -> WorkspaceContent {
+            WorkspaceContent(tabs: [], selectedTab: nil, pins: [], bookmarks: bookmarks)
+        }
+
+        /// Icons checked: an Anonymous bookmark (`anonymous`) keeps one only when `LinkIcon.isValid`; every other
+        /// pin and bookmark keeps none.
+        func checkingIcons(anonymous: Bool) -> WorkspaceContent {
+            var content = self
+            for index in content.pins.indices { content.pins[index].icon = nil }
+            content.bookmarks = bookmarks.mappingLinks { link in
+                if !anonymous || link.icon.map(LinkIcon.isValid) != true { link.icon = nil }
+            }
+            return content
+        }
+
+        /// Tabs on `store`, isLive false, dangling link dropped, unknown selection → first tab. A nil `store`
+        /// (Anonymous) gives no tabs, only the library.
+        public func restored(store: StoreRef?) -> (tabs: TabList, library: LinkLibrary) {
+            let library = LinkLibrary(pins: pins, bookmarks: bookmarks)
+            guard let store else { return (TabList(), library) }
             let links = Set((pins + bookmarks.links).map(\.id))
             let restored = tabs.map {
                 BrowserTab(
                     id: $0.id, store: store, url: $0.url, title: $0.title,
                     link: $0.link.flatMap { links.contains($0) ? $0 : nil }, isLive: false)
             }
-            return (TabList(tabs: restored, selectedID: selectedTab), LinkLibrary(pins: pins, bookmarks: bookmarks))
+            return (TabList(tabs: restored, selectedID: selectedTab), library)
         }
     }
 
@@ -76,23 +96,44 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
 
     /// `currentVersion` when written.
     public var version: Int
-    /// Bar order, Default first, never `.anonymous`.
+    /// Bar order: Default first, then the custom workspaces, then Anonymous with its bookmarks only. Only Default
+    /// has pins.
     public var workspaces: [WorkspaceSnapshot]
     /// At least one; an unknown active workspace reads as Default.
     public var windows: [WindowSnapshot]
-    /// Disjoint from `workspaces`.
+    /// Disjoint from `workspaces`; never Default or Anonymous.
     public var pendingDeletions: [UUID]
 
-    /// Normalizes: Default inserted/moved first, duplicate ids and .anonymous dropped, pending ids dropped from
-    /// workspaces, empty windows → [Default], unknown active → Default.
+    /// Normalizes: Default first, the custom workspaces, Anonymous last (always present, its content
+    /// `anonymized()`); duplicate ids, stray `.anonymous` and pending ids dropped. Pins fold into Default: its own
+    /// pins in order, then each custom workspace's in bar order unless that URL is already pinned (the first id is
+    /// kept); custom workspaces' pins become [] and their tabs linked to one of them lose the link. Pending drops
+    /// Default and Anonymous; empty windows → [Default]; unknown active → Default (Anonymous is valid). Only
+    /// Anonymous bookmarks keep an icon, and only a `LinkIcon.isValid` one.
     public init(workspaces: [WorkspaceSnapshot], windows: [WindowSnapshot], pendingDeletions: [UUID]) {
-        var seen: Set<UUID> = [Workspace.defaultID]
+        var seen: Set<UUID> = [Workspace.defaultID, Workspace.anonymousID]
         let pending = pendingDeletions.filter { seen.insert($0).inserted }
-        let kept = workspaces.filter { $0.workspace.kind != .anonymous && !pending.contains($0.workspace.id) }
+        let kept = workspaces.filter {
+            ($0.workspace.kind == .anonymous) == ($0.workspace.id == Workspace.anonymousID)
+                && !pending.contains($0.workspace.id)
+        }
         let list = WorkspaceList(workspaces: kept.map(\.workspace))
-        let workspaces = list.workspaces.map { workspace in
-            WorkspaceSnapshot(
-                workspace: workspace, content: kept.first { $0.workspace.id == workspace.id }?.content ?? .empty)
+        var contents = list.workspaces.map { workspace in
+            kept.first { $0.workspace.id == workspace.id }?.content ?? .empty
+        }
+        contents[contents.count - 1] = contents[contents.count - 1].anonymized()
+        for index in contents.indices.dropFirst().dropLast() {
+            let folded = Set(contents[index].pins.map(\.id))
+            for pin in contents[index].pins where !contents[0].pins.contains(where: { $0.url == pin.url }) {
+                contents[0].pins.append(pin)
+            }
+            contents[index].pins = []
+            for tab in contents[index].tabs.indices where contents[index].tabs[tab].link.map(folded.contains) == true {
+                contents[index].tabs[tab].link = nil
+            }
+        }
+        let workspaces = zip(list.workspaces, contents).map {
+            WorkspaceSnapshot(workspace: $0, content: $1.checkingIcons(anonymous: $0.kind == .anonymous))
         }
         let windows = windows.isEmpty ? [WindowSnapshot(activeWorkspace: Workspace.defaultID)] : windows
         version = Self.currentVersion
@@ -119,8 +160,9 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     }
 
     /// v1/v2: every tab (any saved store, stray .workspace included), pins, bookmarks fold into Default;
-    /// windows = [Default]; pending = []. v1's flat bookmarks become an expanded root folder. v3: read then
-    /// normalized. > 3 throws .unsupportedVersion. Always holds `currentVersion` afterwards.
+    /// windows = [Default]; pending = []. v1's flat bookmarks become an expanded root folder. v3 and v4: read then
+    /// normalized (the pins fold changes only v3). > 4 throws .unsupportedVersion. Always holds `currentVersion`
+    /// afterwards.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         // The version is read first, so a newer file is reported as such rather than as malformed.

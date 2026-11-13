@@ -6,22 +6,34 @@ import Testing
 @Suite struct WorkspaceListTests {
     typealias EditError = WorkspaceList.EditError
 
-    /// Default, then `names` in order.
+    /// Default, then `names` in order, then Anonymous.
     private func list(_ names: String...) throws -> (WorkspaceList, [Workspace]) {
         var list = WorkspaceList()
         let created = try names.map { try list.create(name: $0, symbol: "star") }
         return (list, created)
     }
 
-    @Test func startsWithJustDefault() {
+    @Test func startsWithDefaultAndAnonymous() {
         let list = WorkspaceList()
-        #expect(list.workspaces == [.default])
+        #expect(list.workspaces == [.default, .anonymous])
+        #expect(list.anonymous == .anonymous)
         #expect(list.default == .default)
         #expect(Workspace.default.id == UUID(uuidString: "00000000-0000-0000-0000-000000000000")!)
         #expect(Workspace.default.name == "Default")
         #expect(Workspace.default.symbol == "square.stack.3d.up")
         #expect(Workspace.default.kind == .default)
         #expect(Workspace.default.store == .global)
+        #expect(Workspace.default.isFixed)
+    }
+
+    @Test func anonymousIsFixedWithNoStore() {
+        #expect(Workspace.anonymous.id == UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+        #expect(Workspace.anonymous.name == "Anonymous")
+        #expect(Workspace.anonymous.symbol == "theatermasks")
+        #expect(Workspace.anonymous.kind == .anonymous)
+        #expect(Workspace.anonymous.store == nil)
+        #expect(Workspace.anonymous.isFixed)
+        #expect(!Workspace(name: "Work", symbol: "briefcase").isFixed)
     }
 
     @Test func initPutsOneDefaultFirstAndDropsDuplicates() {
@@ -30,8 +42,19 @@ import Testing
         var restyled = Workspace.default
         restyled.symbol = "star"
         let list = WorkspaceList(workspaces: [work, restyled, work, stray, .default])
-        #expect(list.workspaces == [restyled, work])
-        #expect(WorkspaceList(workspaces: [work]).workspaces == [.default, work])
+        #expect(list.workspaces == [restyled, work, .anonymous])
+        #expect(WorkspaceList(workspaces: [work]).workspaces == [.default, work, .anonymous])
+    }
+
+    @Test func initPutsExactlyOneFixedAnonymousLast() {
+        let work = Workspace(name: "Work", symbol: "briefcase")
+        var restyled = Workspace.anonymous
+        restyled.name = "Private"
+        restyled.symbol = "eye.slash"
+        let stray = Workspace(name: "Stray", symbol: "x", kind: .anonymous)
+        let impostor = Workspace(id: Workspace.anonymousID, name: "Impostor", symbol: "x")
+        let list = WorkspaceList(workspaces: [restyled, stray, impostor, work, .anonymous])
+        #expect(list.workspaces == [.default, work, .anonymous])
     }
 
     @Test func createAppendsACustomWorkspaceWithATrimmedName() throws {
@@ -41,19 +64,20 @@ import Testing
         #expect(work.symbol == "briefcase")
         #expect(work.kind == .custom)
         #expect(work.store == .workspace(work.id))
-        #expect(list.workspaces == [.default, work])
+        #expect(list.workspaces == [.default, work, .anonymous])
         #expect(list[work.id] == work)
         #expect(list[UUID()] == nil)
     }
 
     @Test(arguments: [
         ("", EditError.emptyName), ("   ", .emptyName), ("work", .duplicateName), ("DEFAULT", .duplicateName),
+        ("Anonymous", .duplicateName), (" anonymous ", .duplicateName),
         (String(repeating: "x", count: WorkspaceList.nameLimit + 1), .nameTooLong),
     ])
     func createRejectsABadName(name: String, error: EditError) throws {
         var (list, _) = try list("Work")
         #expect(throws: error) { try list.create(name: name, symbol: "star") }
-        #expect(list.workspaces.count == 2)
+        #expect(list.workspaces.count == 3)
     }
 
     @Test func nameLimitIsInclusive() throws {
@@ -67,7 +91,12 @@ import Testing
     func createRejectsAnEmptySymbol(symbol: String) {
         var list = WorkspaceList()
         #expect(throws: EditError.emptySymbol) { try list.create(name: "Work", symbol: symbol) }
-        #expect(list.workspaces == [.default])
+        #expect(list.workspaces == [.default, .anonymous])
+    }
+
+    @Test func createInsertsBeforeAnonymous() throws {
+        let (list, created) = try list("A", "B")
+        #expect(list.workspaces == [.default] + created + [.anonymous])
     }
 
     @Test func renameTrimsAndKeepsItsOwnNameFree() throws {
@@ -79,12 +108,13 @@ import Testing
         #expect(list[created[0].id]?.name == "WORK")
     }
 
-    @Test func renameRejectsDefaultAndUnknown() throws {
+    @Test func renameRejectsDefaultAnonymousAndUnknown() throws {
         var list = WorkspaceList()
         #expect(throws: EditError.defaultIsFixed) { try list.rename(Workspace.defaultID, to: "Main") }
+        #expect(throws: EditError.anonymousIsFixed) { try list.rename(Workspace.anonymousID, to: "Main") }
         let id = UUID()
         #expect(throws: EditError.unknown(id)) { try list.rename(id, to: "Main") }
-        #expect(list.workspaces == [.default])
+        #expect(list.workspaces == [.default, .anonymous])
     }
 
     @Test func setSymbolChangesAnyWorkspaceIncludingDefault() throws {
@@ -96,6 +126,8 @@ import Testing
         #expect(throws: EditError.emptySymbol) { try list.setSymbol(created[0].id, " ") }
         let id = UUID()
         #expect(throws: EditError.unknown(id)) { try list.setSymbol(id, "star") }
+        #expect(throws: EditError.anonymousIsFixed) { try list.setSymbol(Workspace.anonymousID, "star") }
+        #expect(list.anonymous == .anonymous)
     }
 
     @Test func moveReordersAfterDefault() throws {
@@ -103,10 +135,10 @@ import Testing
         let (a, b, c) = (created[0], created[1], created[2])
         let first = list.move(from: 3, to: 1)
         #expect(first)
-        #expect(list.workspaces == [.default, c, a, b])
+        #expect(list.workspaces == [.default, c, a, b, .anonymous])
         let second = list.move(from: 1, to: 3)
         #expect(second)
-        #expect(list.workspaces == [.default, a, b, c])
+        #expect(list.workspaces == [.default, a, b, c, .anonymous])
     }
 
     @Test func moveClampsTheDestination() throws {
@@ -114,14 +146,14 @@ import Testing
         let (a, b, c) = (created[0], created[1], created[2])
         let toDefault = list.move(from: 2, to: 0)
         #expect(toDefault)
-        #expect(list.workspaces == [.default, b, a, c])
+        #expect(list.workspaces == [.default, b, a, c, .anonymous])
         let pastTheEnd = list.move(from: 1, to: 99)
         #expect(pastTheEnd)
-        #expect(list.workspaces == [.default, a, c, b])
+        #expect(list.workspaces == [.default, a, c, b, .anonymous])
     }
 
-    @Test(arguments: [(0, 2), (-1, 1), (4, 1), (2, 2), (1, 0)])
-    func moveRefusesDefaultOutOfRangeAndNoChange(source: Int, destination: Int) throws {
+    @Test(arguments: [(0, 2), (-1, 1), (4, 1), (5, 1), (2, 2), (1, 0), (3, 4)])
+    func moveRefusesDefaultAnonymousOutOfRangeAndNoChange(source: Int, destination: Int) throws {
         var (list, _) = try list("A", "B", "C")
         let before = list
         let moved = list.move(from: source, to: destination)
@@ -132,17 +164,18 @@ import Testing
     @Test func removeDropsTheWorkspaceAndFreesItsName() throws {
         var (list, created) = try list("Work", "Home")
         #expect(try list.remove(created[0].id) == created[0])
-        #expect(list.workspaces == [.default, created[1]])
+        #expect(list.workspaces == [.default, created[1], .anonymous])
         let again = try list.create(name: "Work", symbol: "star")
         #expect(again.id != created[0].id)
     }
 
-    @Test func removeRejectsDefaultAndUnknown() {
+    @Test func removeRejectsDefaultAnonymousAndUnknown() {
         var list = WorkspaceList()
         #expect(throws: EditError.defaultIsFixed) { try list.remove(Workspace.defaultID) }
+        #expect(throws: EditError.anonymousIsFixed) { try list.remove(Workspace.anonymousID) }
         let id = UUID()
         #expect(throws: EditError.unknown(id)) { try list.remove(id) }
-        #expect(list.workspaces == [.default])
+        #expect(list.workspaces == [.default, .anonymous])
     }
 
     @Test func validateReportsWithoutChanging() throws {
@@ -159,12 +192,12 @@ import Testing
         #expect(list.resolve(created[0].id) == created[0].id)
         #expect(list.resolve(UUID()) == Workspace.defaultID)
         #expect(list.resolve(nil) == Workspace.defaultID)
+        #expect(list.resolve(Workspace.anonymousID) == Workspace.anonymousID)
     }
 
     @Test func slotsNumberDefaultThenTheNextEightSkippingAnonymous() throws {
-        var (list, created) = try list("1", "2", "3", "4", "5", "6", "7", "8", "9")
-        let anonymous = Workspace(name: "Private", symbol: "eye.slash", kind: .anonymous)
-        list = WorkspaceList(workspaces: [.default, created[0], anonymous] + created.dropFirst())
+        let (list, created) = try list("1", "2", "3", "4", "5", "6", "7", "8", "9")
+        let anonymous = Workspace.anonymous
         #expect(list.workspace(forSlot: 1) == .default)
         #expect(list.workspace(forSlot: 2) == created[0])
         #expect(list.workspace(forSlot: 3) == created[1])

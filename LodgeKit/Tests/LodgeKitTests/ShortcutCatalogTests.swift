@@ -130,4 +130,17 @@ import Testing
         }
         #expect(!ShortcutID.workspaceSlots.map { ShortcutCatalog[$0].combo }.contains(KeyCombo("0")))
     }
+
+    @Test func noWorkspaceKeyEverReachesAnonymous() throws {
+        var list = WorkspaceList()
+        for count in 0...ShortcutID.workspaceSlots.count {
+            if count > 0 { try list.create(name: "Custom \(count)", symbol: "folder") }
+            for id in ShortcutID.workspaceSlots {
+                let slot = try #require(id.workspaceSlot)
+                #expect(list.workspace(forSlot: slot)?.kind != .anonymous)
+            }
+            #expect(list.slot(of: Workspace.anonymousID) == nil)
+            #expect(list.workspaces.last == .anonymous)
+        }
+    }
 }

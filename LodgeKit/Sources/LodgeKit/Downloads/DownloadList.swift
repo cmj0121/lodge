@@ -31,6 +31,18 @@ public struct DownloadList: Codable, Equatable, Sendable {
         items.removeAll { $0.id == id }
     }
 
+    /// The list as downloads.json keeps it: without private rows.
+    public func persistable() -> DownloadList {
+        DownloadList(items: items.filter { !$0.isPrivate })
+    }
+
+    /// Removes the ended rows of `store`, an anonymous tab's that is gone, and returns their ids.
+    @discardableResult public mutating func removeEnded(on store: StoreRef) -> [UUID] {
+        let ended = items.filter { $0.store == store && !$0.state.isActive }.map(\.id)
+        items.removeAll { ended.contains($0.id) }
+        return ended
+    }
+
     /// Removes every item that is not active.
     public mutating func clearEnded() {
         items.removeAll { !$0.state.isActive }

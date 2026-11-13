@@ -22,11 +22,11 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// The next main-frame action is a load the browser started (`browserWillLoad()`).
     private var nextLoadIsBrowserInitiated = false
 
-    init(tab: TabID, webView: LodgeWebView, model: BrowserModel) {
+    init(tab: TabID, webView: LodgeWebView, model: BrowserModel, faviconSession: URLSession) {
         self.tab = tab
         self.model = model
         history = HistoryEventFilter(tab: tab)
-        favicons = FaviconLoader { [weak model] image in model?.setFavicon(image, for: tab) }
+        favicons = FaviconLoader(session: faviconSession) { [weak model] image in model?.setFavicon(image, for: tab) }
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self

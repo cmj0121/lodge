@@ -103,9 +103,10 @@ import Testing
         #expect(!steps.order.contains(.clearPending))
     }
 
-    @Test func defaultIsRefused() async {
+    @Test(arguments: [Workspace.defaultID, Workspace.anonymousID])
+    func fixedWorkspacesAreRefused(id: UUID) async {
         let steps = Steps()
-        let done = await WorkspaceDeletion.run(Workspace.defaultID, steps: steps, sleep: sleep)
+        let done = await WorkspaceDeletion.run(id, steps: steps, sleep: sleep)
         #expect(!done)
         #expect(steps.log.isEmpty)
     }
@@ -128,9 +129,9 @@ import Testing
         #expect(steps.log.contains { $0.0 == .clearPending && $0.1 == other })
     }
 
-    @Test func retrySkipsDefault() async {
+    @Test func retrySkipsDefaultAndAnonymous() async {
         let steps = Steps()
-        await WorkspaceDeletion.retry([Workspace.defaultID], steps: steps, sleep: sleep)
+        await WorkspaceDeletion.retry([Workspace.defaultID, Workspace.anonymousID], steps: steps, sleep: sleep)
         #expect(steps.log.isEmpty)
     }
 }

@@ -9,11 +9,11 @@ import Testing
     private let start = ContinuousClock.now
 
     private func decide(
-        _ gate: inout DownloadGate, _ origin: Origin?? = .none, gesture: Bool = false, mainFrame: Bool = true,
-        active: Int = 0, after seconds: Double = 0
+        _ gate: inout DownloadGate, _ origin: Origin?? = .none, on store: StoreRef = .global, gesture: Bool = false,
+        mainFrame: Bool = true, active: Int = 0, after seconds: Double = 0
     ) -> DownloadGate.Decision {
         gate.decide(
-            site: origin ?? site, userInitiated: gesture, isMainFrame: mainFrame, activeCount: active,
+            store: store, site: origin ?? site, userInitiated: gesture, isMainFrame: mainFrame, activeCount: active,
             at: start + .seconds(seconds))
     }
 
@@ -39,7 +39,7 @@ import Testing
         var gate = DownloadGate()
         for second in 0..<3 { #expect(decide(&gate, gesture: true, after: Double(second)) == .allow) }
         #expect(decide(&gate, gesture: true, after: 9.9) == .ask)
-        gate.answer(false, for: site)
+        gate.answer(false, for: site, on: .global)
         #expect(decide(&gate, gesture: true, after: 9.95) == .refuse(.denied))
         // Once the window has passed, a gestured download runs again.
         #expect(decide(&gate, gesture: true, after: 15) == .allow)
@@ -49,7 +49,7 @@ import Testing
         var gate = DownloadGate()
         for second in 0..<3 { _ = decide(&gate, gesture: true, after: Double(second)) }
         #expect(decide(&gate, gesture: true, after: 3) == .ask)
-        gate.answer(true, for: site)
+        gate.answer(true, for: site, on: .global)
         for second in 4..<10 { #expect(decide(&gate, gesture: true, after: Double(second)) == .allow) }
     }
 
@@ -66,13 +66,13 @@ import Testing
         var gate = DownloadGate()
         _ = decide(&gate)
         _ = decide(&gate)
-        gate.answer(true, for: site)
+        gate.answer(true, for: site, on: .global)
         #expect(decide(&gate, after: 20) == .allow)
         #expect(decide(&gate, after: 40) == .allow)
 
         _ = decide(&gate, other)
         #expect(decide(&gate, other) == .ask)
-        gate.answer(false, for: other)
+        gate.answer(false, for: other, on: .global)
         #expect(decide(&gate, other, after: 20) == .refuse(.denied))
         #expect(decide(&gate, other, gesture: true, after: 40) == .allow)
     }
@@ -83,11 +83,11 @@ import Testing
         let sameHostOtherPort = Origin(url: URL(string: "https://a.example:8443/")!)
         _ = decide(&gate)
         #expect(decide(&gate) == .ask)
-        gate.answer(false, for: site)
+        gate.answer(false, for: site, on: .global)
         for origin in [other, sameHostOtherScheme, sameHostOtherPort] {
             #expect(decide(&gate, origin) == .allow)
             #expect(decide(&gate, origin) == .ask)
-            gate.answer(true, for: origin)
+            gate.answer(true, for: origin, on: .global)
         }
         #expect(decide(&gate, after: 20) == .refuse(.denied))
     }
@@ -140,6 +140,51 @@ import Testing
         let target = URL(string: "https://c.example/f.zip")
         #expect(DownloadGate.site(source: site, target: target, browserInitiated: true) == Origin(url: target!))
         #expect(DownloadGate.site(source: site, target: URL(string: "about:blank"), browserInitiated: true) == nil)
+    }
+
+    @Test func eachStoreHasItsOwnAnswersAndCounts() {
+        var gate = DownloadGate()
+        let anonymous = StoreRef.ephemeral(UUID())
+        _ = decide(&gate)
+        #expect(decide(&gate) == .ask)
+        gate.answer(false, for: site, on: .global)
+        #expect(decide(&gate, after: 20) == .refuse(.denied))
+        #expect(decide(&gate, on: anonymous, after: 20) == .allow)
+        #expect(decide(&gate, on: anonymous, after: 20) == .ask)
+        gate.answer(true, for: site, on: anonymous)
+        #expect(decide(&gate, on: anonymous, after: 30) == .allow)
+        #expect(decide(&gate, on: .workspace(UUID()), after: 30) == .allow)
+        #expect(decide(&gate, after: 40) == .refuse(.denied))
+    }
+
+    @Test func aPromptOnOneStoreDoesNotBlockAnother() {
+        var gate = DownloadGate()
+        _ = decide(&gate)
+        #expect(decide(&gate) == .ask)
+        #expect(decide(&gate) == .refuse(.prompting))
+        #expect(decide(&gate, on: .ephemeral(UUID())) == .allow)
+    }
+
+    @Test func downloadsWithoutASiteCountPerStore() {
+        var gate = DownloadGate()
+        for second in 0..<3 { _ = decide(&gate, .some(nil), gesture: true, after: Double(second)) }
+        #expect(decide(&gate, .some(nil), gesture: true, after: 4) == .refuse(.noSite))
+        #expect(decide(&gate, .some(nil), on: .ephemeral(UUID()), gesture: true, after: 4) == .allow)
+    }
+
+    @Test func forgettingAStoreClearsOnlyThatStore() {
+        var gate = DownloadGate()
+        let anonymous = StoreRef.ephemeral(UUID())
+        for store in [StoreRef.global, anonymous] {
+            _ = decide(&gate, on: store)
+            #expect(decide(&gate, on: store) == .ask)
+            gate.answer(false, for: site, on: store)
+        }
+        for second in 0..<3 { _ = decide(&gate, .some(nil), on: anonymous, gesture: true, after: Double(second)) }
+        gate.forget(store: anonymous)
+        #expect(decide(&gate, on: anonymous, after: 20) == .allow)
+        #expect(decide(&gate, .some(nil), on: anonymous, gesture: true, after: 4) == .allow)
+        #expect(decide(&gate, after: 20) == .refuse(.denied))
     }
 
     @Test func thePromptNamesTheHost() {

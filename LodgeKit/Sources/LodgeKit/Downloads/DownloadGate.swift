@@ -3,12 +3,13 @@ import Foundation
 /// Which downloads a page may start (CWE-770), kept for the run in memory only. A download is user-initiated when
 /// the user clicked a link (an `<a download>` included) or submitted a form: WebKit has no public user-gesture flag,
 /// so the navigation type stands in for one (a script's `a.click()` reports a link activation too, hence the burst
-/// rule). Per site (the origin of the frame that started the download, `site(source:target:)`):
+/// rule). Per site (the origin of the frame that started the download, `site(source:target:)`) on each store, so
+/// no two workspaces or Anonymous tabs share an answer or a count:
 /// - the first download without a gesture runs; each further one asks;
 /// - more than `burstLimit` downloads within `burstWindow`, gestured or not, ask too;
-/// - the answer holds for that site until quit.
+/// - the answer holds for that site on that store until quit, or until `forget(store:)`.
 /// A download without a site (an opaque frame) runs only with a gesture, so no two pages share an answer; those
-/// share one burst count, and past it they are refused, as there is no host to name in a prompt.
+/// share one burst count per store, and past it they are refused, as there is no host to name in a prompt.
 public struct DownloadGate: Sendable {
     public enum Refusal: Equatable, Sendable {
         /// From a subframe without a gesture: refused silently.
@@ -34,11 +35,16 @@ public struct DownloadGate: Sendable {
     static let burstLimit = 3
     static let burstWindow: Duration = .seconds(10)
 
-    private var startedUnprompted: Set<Origin> = []
-    private var answers: [Origin: Bool] = [:]
-    private var prompting: Set<Origin> = []
-    private var recent: [Origin: [ContinuousClock.Instant]] = [:]
-    private var recentWithoutSite: [ContinuousClock.Instant] = []
+    private struct Key: Hashable, Sendable {
+        let store: StoreRef
+        let site: Origin
+    }
+
+    private var startedUnprompted: Set<Key> = []
+    private var answers: [Key: Bool] = [:]
+    private var prompting: Set<Key> = []
+    private var recent: [Key: [ContinuousClock.Instant]] = [:]
+    private var recentWithoutSite: [StoreRef: [ContinuousClock.Instant]] = [:]
 
     public init() {}
 
@@ -54,45 +60,57 @@ public struct DownloadGate: Sendable {
 
     private static func isSite(_ origin: Origin) -> Bool { !origin.isOpaque && !origin.host.isEmpty }
 
-    /// Decides one download of `site`, `activeCount` downloads already running, and records it when it may run or
-    /// asks. `.ask` marks the site's prompt open until `answer(_:for:)`.
+    /// Decides one download of `site` on `store`, `activeCount` downloads already running, and records it when it
+    /// may run or asks. `.ask` marks the site's prompt open until `answer(_:for:on:)`.
     public mutating func decide(
-        site: Origin?, userInitiated: Bool, isMainFrame: Bool, activeCount: Int,
+        store: StoreRef, site: Origin?, userInitiated: Bool, isMainFrame: Bool, activeCount: Int,
         at now: ContinuousClock.Instant = .now
     ) -> Decision {
         guard isMainFrame || userInitiated else { return .refuse(.subframe) }
         guard let site else {
             guard userInitiated else { return .refuse(.noSite) }
             guard activeCount < Self.maxActive else { return .refuse(.tooMany) }
-            recentWithoutSite.removeAll { now - $0 >= Self.burstWindow }
-            guard recentWithoutSite.count < Self.burstLimit else { return .refuse(.noSite) }
-            recentWithoutSite.append(now)
+            var starts = recentWithoutSite[store, default: []].filter { now - $0 < Self.burstWindow }
+            guard starts.count < Self.burstLimit else { return .refuse(.noSite) }
+            starts.append(now)
+            recentWithoutSite[store] = starts
             return .allow
         }
-        guard !prompting.contains(site) else { return .refuse(.prompting) }
+        let key = Key(store: store, site: site)
+        guard !prompting.contains(key) else { return .refuse(.prompting) }
         guard activeCount < Self.maxActive else { return .refuse(.tooMany) }
-        var starts = recent[site, default: []].filter { now - $0 < Self.burstWindow }
+        var starts = recent[key, default: []].filter { now - $0 < Self.burstWindow }
         let isBurst = starts.count >= Self.burstLimit
-        let needsAnswer = isBurst || (!userInitiated && startedUnprompted.contains(site))
+        let needsAnswer = isBurst || (!userInitiated && startedUnprompted.contains(key))
         let decision: Decision
         if !needsAnswer {
-            if !userInitiated { startedUnprompted.insert(site) }
+            if !userInitiated { startedUnprompted.insert(key) }
             decision = .allow
-        } else if let allowed = answers[site] {
+        } else if let allowed = answers[key] {
             decision = allowed ? .allow : .refuse(.denied)
         } else {
-            prompting.insert(site)
+            prompting.insert(key)
             decision = .ask
         }
         if decision != .refuse(.denied) { starts.append(now) }
-        recent[site] = starts
+        recent[key] = starts
         return decision
     }
 
-    /// Closes the site's prompt and remembers the answer for the rest of the run.
-    public mutating func answer(_ allowed: Bool, for site: Origin) {
-        prompting.remove(site)
-        answers[site] = allowed
+    /// Closes the site's prompt on `store` and remembers the answer for the rest of the run.
+    public mutating func answer(_ allowed: Bool, for site: Origin, on store: StoreRef) {
+        let key = Key(store: store, site: site)
+        prompting.remove(key)
+        answers[key] = allowed
+    }
+
+    /// Drops everything recorded for `store`, an anonymous tab's that is gone.
+    public mutating func forget(store: StoreRef) {
+        startedUnprompted = startedUnprompted.filter { $0.store != store }
+        answers = answers.filter { $0.key.store != store }
+        prompting = prompting.filter { $0.store != store }
+        recent = recent.filter { $0.key.store != store }
+        recentWithoutSite[store] = nil
     }
 
     public static func prompt(for site: Origin) -> String {

@@ -26,9 +26,10 @@ one you are in uses resources.
 | --------------------- | ---------------------------------------------------------------------------------------- |
 | Default workspace     | The built-in shared browser, always there; pinned tabs belong to it, at hand everywhere  |
 | Custom workspace      | A new browser: every site gets its own site data and sign-ins                            |
+| Anonymous workspace   | Always last; each tab is its own browser, gone with the tab; only bookmarks are kept     |
 | Own identity          | Sign-ins, cookies and site data stay in the workspace they were made in                  |
 | Own fingerprint       | Every workspace presents a distinct, stable fingerprint to each site                     |
-| Own history           | Each browser keeps the pages visited in it                                               |
+| Own history           | Each browser keeps the pages visited in it; Anonymous keeps none                         |
 | One page, one browser | A page stays in its browser; opening it in another workspace carries the address there   |
 | Clear ownership       | Every page shows which browser it belongs to                                             |
 | Resources for now     | Release first, then suspend, then hibernate; coming back wakes only the page on screen   |

@@ -241,4 +241,49 @@ import Testing
         #expect(sections.neighbour(ofClosing: laterTab.id) == bookmarkTab.id)
         #expect(sections.neighbour(ofClosing: bookmarkTab.id) == loose.id)
     }
+
+    @Test func closingSeveralSelectsTheNextTabThatStays() {
+        var list = TabList()
+        let tabs = (0..<5).map { _ in BrowserTab() }
+        for tab in tabs { list.open(tab) }
+        let sections = SidebarSections(pins: [], bookmarks: root(), tabs: list)
+        #expect(sections.neighbour(ofClosing: [tabs[1].id, tabs[2].id], selected: tabs[1].id) == tabs[3].id)
+        #expect(sections.neighbour(ofClosing: [tabs[3].id, tabs[4].id], selected: tabs[3].id) == tabs[2].id)
+        #expect(sections.neighbour(ofClosing: [tabs[3].id, tabs[1].id], selected: tabs[3].id) == tabs[4].id)
+        #expect(sections.neighbour(ofClosing: [tabs[4].id, tabs[2].id], selected: tabs[4].id) == tabs[3].id)
+    }
+
+    @Test func closingEveryTabOrFromAnUnknownOneHasNoNeighbour() {
+        var list = TabList()
+        let tabs = [BrowserTab(), BrowserTab()]
+        for tab in tabs { list.open(tab) }
+        let sections = SidebarSections(pins: [], bookmarks: root(), tabs: list)
+        #expect(sections.neighbour(ofClosing: Set(tabs.map(\.id)), selected: tabs[0].id) == nil)
+        #expect(sections.neighbour(ofClosing: [tabs[0].id], selected: TabID()) == nil)
+    }
+    @Test func sharedPinsCarryNoTabAndLeaveEveryTabLoose() {
+        var list = TabList()
+        let pinTab = BrowserTab(link: pin.id)
+        list.open(pinTab)
+        let sections = SidebarSections(pins: [pin], bookmarks: root(), tabs: list, pinsAreShared: true)
+        #expect(sections.pins == [.link(pin, .pins, nil)])
+        #expect(sections.loose == [.tab(pinTab)])
+    }
+
+    @Test func steppingAndClosingSkipSharedPins() {
+        var list = TabList()
+        let tabs = [BrowserTab(), BrowserTab()]
+        for tab in tabs { list.open(tab) }
+        let sections = SidebarSections(pins: [pin, shown], bookmarks: root(), tabs: list, pinsAreShared: true)
+        #expect(sections.target(1, from: tabs[1].id) == .tab(tabs[0].id))
+        #expect(sections.target(-1, from: tabs[0].id) == .tab(tabs[1].id))
+        #expect(sections.target(1, from: nil) == .tab(tabs[0].id))
+        #expect(sections.neighbour(ofClosing: tabs[0].id) == tabs[1].id)
+        #expect(sections.neighbour(ofClosing: tabs[1].id) == tabs[0].id)
+    }
+
+    @Test func onlySharedPinsHaveNoTarget() {
+        let sections = SidebarSections(pins: [pin], bookmarks: root(), tabs: TabList(), pinsAreShared: true)
+        #expect(sections.target(1, from: nil) == nil)
+    }
 }

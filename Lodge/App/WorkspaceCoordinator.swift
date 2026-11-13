@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import LodgeKit
 import Observation
@@ -59,11 +60,17 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         self.registry = registry
         self.defaultLibrary = defaultLibrary
         downloads?.dataStore = { [weak self] in self?.dataStore(for: $0) }
+        downloads?.storeHold = { [registry] id, store in
+            if let store { registry.hold(download: id, on: store) } else { registry.releaseHold(download: id) }
+        }
+        registry.storeDropped = { [weak downloads] store in downloads?.forget(store: store) }
         active.didShow(in: window)
     }
 
-    /// The data store of a listed workspace's store, for a download's Retry; nil once the workspace is gone.
+    /// The data store a download's Retry runs on: a listed workspace's, nil once the workspace is gone; an anonymous
+    /// tab's only while its tab or a download still holds it.
     func dataStore(for store: StoreRef) -> WKWebsiteDataStore? {
+        if case .ephemeral = store { return registry.isHeld(store) ? registry.existingDataStore(for: store) : nil }
         guard workspaces.workspaces.contains(where: { $0.store == store }) else { return nil }
         return registry.dataStore(for: store)
     }
@@ -86,8 +93,17 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
             defaultLibrary: workspace.id == Workspace.defaultID ? defaultLibrary : LinkLibrary())
         model.downloads = downloads
         if let store = historyStores[workspace.id] { model.historyRecorder = HistoryRecorder(store: store) }
-        model.onContentChange = { [weak self] _ in self?.didChange() }
         models[workspace.id] = model
+        if workspace.id == Workspace.defaultID {
+            model.onContentChange = { [weak self] _ in
+                self?.didChange()
+                self?.pinsDidChange()
+            }
+        } else {
+            model.onContentChange = { [weak self] _ in self?.didChange() }
+            model.sharedPins = self
+            model.sharedPinsDidChange()
+        }
         return model
     }
 
@@ -131,7 +147,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
 
     // MARK: Editing
 
-    /// Adds an empty workspace at the end of the bar and switches to it.
+    /// Adds an empty workspace just before Anonymous and switches to it.
     @discardableResult
     func create(name: String, symbol: String) throws(WorkspaceList.EditError) -> Workspace {
         let workspace = try workspaces.create(name: name, symbol: symbol)
@@ -150,12 +166,101 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         didChange()
     }
 
-    /// Moves a workspace in the bar; Default stays first.
+    /// Moves a custom workspace in the bar; Default stays first and Anonymous stays last.
     @discardableResult
     func move(from source: Int, to destination: Int) -> Bool {
         guard workspaces.move(from: source, to: destination) else { return false }
         didChange()
         return true
+    }
+}
+
+// MARK: Moving tabs
+
+extension WorkspaceCoordinator {
+    /// Opens the tab's page in a new selected tab of `destination`, on that workspace's own sign-ins (in Anonymous a
+    /// new browser); only the address and title go along. The tab stays, and the window stays where it is. False for
+    /// a tab with no address, an unknown tab, or a destination that is the tab's own workspace or not listed.
+    @discardableResult
+    func open(tab id: TabID, in destination: UUID) -> Bool {
+        guard let source = model(holding: id), let tab = source.tabs[id], let url = tab.url,
+            destination != source.workspaceID, let target = model(for: destination)
+        else { return false }
+        target.receive(url: url, title: tab.title)
+        return true
+    }
+
+    /// `open(tab:in:)`, then closes the tab with every popup it opened.
+    @discardableResult
+    func move(tab id: TabID, to destination: UUID) -> Bool {
+        guard let source = model(holding: id), open(tab: id, in: destination) else { return false }
+        source.close(id)
+        return true
+    }
+
+    /// Where a tab of `source` can go: every other workspace in bar order, Anonymous last.
+    func destinations(from source: UUID) -> [Workspace] {
+        workspaces.workspaces.filter { $0.id != source }
+    }
+
+    /// The built model with the tab open; a tab only opens in a built one.
+    private func model(holding tab: TabID) -> BrowserModel? {
+        models.values.first { $0.tabs[tab] != nil }
+    }
+}
+
+// MARK: Shared pins
+
+/// Default's pins, shown and changed from every other workspace.
+@MainActor
+protocol SharedPins: AnyObject {
+    /// Default's pins, its model built (without web views) when needed.
+    var pins: [SavedLink] { get }
+    /// The favicon of the pin's open tab in Default.
+    func pinFavicon(_ pin: UUID) -> NSImage?
+    /// Pins a copy of the tab's page in Default, deduped by URL; the tab and the window stay as they are.
+    func pin(from tab: BrowserTab)
+    /// Pins a copy of the bookmark in Default (a new link, no icon); the bookmark stays.
+    func pin(from link: SavedLink)
+    /// Removes the pin from Default; Default's tab of it becomes loose.
+    func unpin(_ id: UUID)
+    func movePin(_ id: UUID, to index: Int)
+    /// Switches the window to Default and opens the pin there, or selects its open tab.
+    func openPin(_ link: SavedLink, from window: WindowState)
+}
+
+extension WorkspaceCoordinator: SharedPins {
+    private var defaultModel: BrowserModel { model(of: workspaces.default) }
+
+    var pins: [SavedLink] { defaultModel.library.links(on: .pins) }
+
+    func pinFavicon(_ pin: UUID) -> NSImage? {
+        let model = defaultModel
+        return model.tabs.tab(forLink: pin).flatMap { model.favicons[$0.id] }
+    }
+
+    func pin(from tab: BrowserTab) {
+        guard let url = tab.url else { return }
+        defaultModel.addPin(url, title: tab.displayTitle)
+    }
+
+    func pin(from link: SavedLink) {
+        defaultModel.addPin(link.url, title: link.title)
+    }
+
+    func unpin(_ id: UUID) { defaultModel.unpin(id) }
+
+    func movePin(_ id: UUID, to index: Int) { defaultModel.movePin(id, to: index) }
+
+    func openPin(_ link: SavedLink, from window: WindowState) {
+        guard window === self.window else { return }
+        switchTo(Workspace.defaultID)
+        defaultModel.openLink(link)
+    }
+
+    /// Default's content changed: every built model of another workspace shows its pins again.
+    fileprivate func pinsDidChange() {
+        for (id, model) in models where id != Workspace.defaultID { model.sharedPinsDidChange() }
     }
 }
 
@@ -268,10 +373,11 @@ extension WorkspaceCoordinator {
     private static let deletionLogger = Logger(subsystem: "dev.lodge", category: "workspaces")
 
     /// Deletes a custom workspace with its tabs, bookmarks, history, sign-ins and site data; a window showing it
-    /// goes to Default. A deletion that fails stays pending and is finished at the next launch. Default is refused.
+    /// goes to Default. A deletion that fails stays pending and is finished at the next launch. Default and Anonymous
+    /// are refused.
     @discardableResult
     func delete(_ id: UUID) async -> Bool {
-        guard let workspace = workspaces[id], workspace.kind != .default else { return false }
+        guard let workspace = workspaces[id], workspace.kind == .custom else { return false }
         let done = await WorkspaceDeletion.run(id, steps: self)
         if !done {
             Self.deletionLogger.error(
@@ -296,7 +402,7 @@ extension WorkspaceCoordinator {
     func removeFromList(_ id: UUID) {
         guard let workspace = workspaces[id] else { return }
         if window.activeWorkspace == id { switchTo(Workspace.defaultID) }
-        deletingStores[id] = workspace.store
+        if let store = workspace.store { deletingStores[id] = store }
         _ = try? workspaces.remove(id)
         if !pendingDeletions.contains(id) { pendingDeletions.append(id) }
     }
@@ -311,7 +417,7 @@ extension WorkspaceCoordinator {
         model.onContentChange = nil
         if let recorder = model.historyRecorder { deletingRecorders[id] = recorder }
         model.historyRecorder = nil
-        registry.destroyAll(on: model.store)
+        registry.detach(tabs: model.tabs.tabs.map(\.id))
     }
 
     func cancelDownloads(of id: UUID) {

@@ -86,10 +86,12 @@ public struct SidebarSections: Equatable, Sendable {
     /// Tabs no link holds, in tab order: loose tabs, a tab whose link was removed, and any tab past
     /// the first one of the same link.
     public private(set) var loose: [SidebarItem] = []
+    /// The pins are another workspace's (Default's): they carry no tab, and stepping and closing pass them by.
+    public private(set) var pinsAreShared = false
 
     public init() {}
 
-    public init(pins: [SavedLink], bookmarks: BookmarkFolder, tabs: TabList) {
+    public init(pins: [SavedLink], bookmarks: BookmarkFolder, tabs: TabList, pinsAreShared: Bool = false) {
         var firstTab: [UUID: BrowserTab] = [:]
         for tab in tabs.tabs {
             if let link = tab.link, firstTab[link] == nil { firstTab[link] = tab }
@@ -103,11 +105,15 @@ public struct SidebarSections: Equatable, Sendable {
                     children: folder.children.map(sidebarNode))
             }
         }
-        self.pins = pins.map { .link($0, .pins, firstTab[$0.id]) }
+        self.pinsAreShared = pinsAreShared
+        self.pins = pins.map { .link($0, .pins, pinsAreShared ? nil : firstTab[$0.id]) }
         self.bookmarks = bookmarks.children.map(sidebarNode)
         let paired = Set((self.pins + bookmarkItems(includingCollapsed: true)).compactMap(\.tab?.id))
         loose = tabs.tabs.filter { !paired.contains($0.id) }.map(SidebarItem.tab)
     }
+
+    /// The pins stepping and closing go through: none while they are shared.
+    private var ownPins: [SidebarItem] { pinsAreShared ? [] : pins }
 
     private func bookmarkItems(includingCollapsed: Bool) -> [SidebarItem] {
         bookmarks.flatMap { $0.items(includingCollapsed: includingCollapsed) }
@@ -119,12 +125,12 @@ public struct SidebarSections: Equatable, Sendable {
         case link(SavedLink)
     }
 
-    /// The entry `offset` entries away from the one holding `tab`, in sidebar order (pins, bookmarks
+    /// The entry `offset` entries away from the one holding `tab`, in sidebar order (own pins, bookmarks
     /// depth-first, loose tabs), wrapping around. A bookmark inside a closed folder counts only while it
     /// has an open tab. From no tab, or one no entry holds, a forward step lands on the first entry and a
     /// backward one on the last. Nil when there are no entries.
     public func target(_ offset: Int, from tab: TabID?) -> Target? {
-        let targets = (pins + bookmarkItems(includingCollapsed: false) + loose).map(\.target)
+        let targets = (ownPins + bookmarkItems(includingCollapsed: false) + loose).map(\.target)
         guard !targets.isEmpty else { return nil }
         guard let tab, let index = targets.firstIndex(of: .tab(tab)) else {
             return offset > 0 ? targets.first : targets.last
@@ -137,9 +143,16 @@ public struct SidebarSections: Equatable, Sendable {
     /// (pins, bookmarks depth-first in every folder, loose), skipping links with no tab; else the previous
     /// one; nil when `tab` is the only one.
     public func neighbour(ofClosing tab: TabID) -> TabID? {
-        let open = (pins + bookmarkItems(includingCollapsed: true) + loose).compactMap(\.tab?.id)
-        guard let index = open.firstIndex(of: tab) else { return nil }
-        if index + 1 < open.count { return open[index + 1] }
-        return index > 0 ? open[index - 1] : nil
+        neighbour(ofClosing: [tab], selected: tab)
+    }
+
+    /// The open tab to select when every tab in `closing` closes at once and `selected` is among them: the next
+    /// entry after `selected` holding an open tab that stays, in sidebar order; else the nearest such one before it;
+    /// nil when none stays or `selected` is on no entry.
+    public func neighbour(ofClosing closing: Set<TabID>, selected: TabID) -> TabID? {
+        let open = (ownPins + bookmarkItems(includingCollapsed: true) + loose).compactMap(\.tab?.id)
+        guard let index = open.firstIndex(of: selected) else { return nil }
+        if let next = open[(index + 1)...].first(where: { !closing.contains($0) }) { return next }
+        return open[..<index].last { !closing.contains($0) }
     }
 }

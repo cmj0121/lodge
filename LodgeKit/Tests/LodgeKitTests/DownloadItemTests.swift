@@ -90,9 +90,19 @@ import Testing
         #expect(decoded.retryStore == .global)
     }
 
-    @Test func aPrivateStoreRowDoesNotRetry() {
+    @Test func aPrivateStoreRowRetriesOnItsOwnStore() {
         var private_ = item(.failed(reason: "x"))
-        private_.store = .ephemeral(UUID())
-        #expect(private_.retryStore == nil)
+        let store = StoreRef.ephemeral(UUID())
+        private_.store = store
+        #expect(private_.isPrivate)
+        #expect(private_.retryStore == store)
+    }
+
+    @Test func onlyAnEphemeralStoreRowIsPrivate() {
+        var row = item(.finished)
+        for store in [nil, StoreRef.global, .workspace(UUID())] {
+            row.store = store
+            #expect(!row.isPrivate)
+        }
     }
 }

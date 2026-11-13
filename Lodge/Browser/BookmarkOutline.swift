@@ -7,6 +7,8 @@ import SwiftUI
 /// sidebar's scroll view scrolls it.
 struct BookmarkOutline: NSViewRepresentable {
     let model: BrowserModel
+    /// Lists the workspaces a bookmark's open tab can move or open in; the outline's menu cannot read the environment.
+    let workspaces: WorkspaceCoordinator
     let nodes: [SidebarNode]
 
     static let rowHeight = SidebarRowLabel.Metrics.height
@@ -14,7 +16,7 @@ struct BookmarkOutline: NSViewRepresentable {
     /// How far each folder level sets its rows in.
     static let indent: CGFloat = 16
 
-    func makeCoordinator() -> Coordinator { Coordinator(model: model) }
+    func makeCoordinator() -> Coordinator { Coordinator(model: model, workspaces: workspaces) }
 
     func makeNSView(context: Context) -> OutlineContainer {
         let container = OutlineContainer(outline: context.coordinator.outline)
@@ -24,6 +26,7 @@ struct BookmarkOutline: NSViewRepresentable {
 
     func updateNSView(_ container: OutlineContainer, context: Context) {
         context.coordinator.model = model
+        context.coordinator.workspaces = workspaces
         context.coordinator.update(nodes)
     }
 
@@ -36,6 +39,7 @@ struct BookmarkOutline: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate {
         var model: BrowserModel
+        var workspaces: WorkspaceCoordinator
         let outline = TreeOutlineView()
         let rows = BookmarkRows()
 
@@ -54,8 +58,9 @@ struct BookmarkOutline: NSViewRepresentable {
         private static let cellID = NSUserInterfaceItemIdentifier("BookmarkCell")
         private static let rowID = NSUserInterfaceItemIdentifier("BookmarkRow")
 
-        init(model: BrowserModel) {
+        init(model: BrowserModel, workspaces: WorkspaceCoordinator) {
             self.model = model
+            self.workspaces = workspaces
             super.init()
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Bookmark"))
             outline.addTableColumn(column)
@@ -315,14 +320,37 @@ struct BookmarkOutline: NSViewRepresentable {
                 menu.addItem(
                     ClosureMenuItem("Rename…") { [model] in BookmarkPrompts.rename(link.id, title: link.title, model: model) })
                 menu.addItem(.separator())
+                menu.addItem(ClosureMenuItem("Pin") { [model] in model.pin(bookmark: link) })
                 menu.addItem(ClosureMenuItem("Remove from Bookmarks") { [model] in model.removeLink(link.id) })
                 if let tab {
+                    if tab.url != nil {
+                        menu.addItem(workspaceMenu("Move to Workspace") { [workspaces] in
+                            workspaces.move(tab: tab.id, to: $0)
+                        })
+                        menu.addItem(workspaceMenu("Open in Workspace") { [workspaces] in
+                            workspaces.open(tab: tab.id, in: $0)
+                        })
+                    }
                     menu.addItem(.separator())
                     menu.addItem(ClosureMenuItem("Close Tab") { [model] in model.close(tab.id) })
                 }
             case .item(.tab)?, nil:
                 menu.addItem(ClosureMenuItem("New Folder…") { [model] in BookmarkPrompts.newFolder(in: nil, model: model) })
             }
+        }
+
+        /// A submenu of every other workspace, each with its icon, as the sidebar's own item menu has; left out for a
+        /// tab with no address.
+        private func workspaceMenu(_ title: String, action: @escaping (UUID) -> Void) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            let submenu = NSMenu(title: title)
+            for workspace in workspaces.destinations(from: model.workspaceID) {
+                let entry = ClosureMenuItem(workspace.name) { action(workspace.id) }
+                entry.image = NSImage(systemSymbolName: workspace.symbol, accessibilityDescription: nil)
+                submenu.addItem(entry)
+            }
+            item.submenu = submenu
+            return item
         }
     }
 

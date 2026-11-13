@@ -13,6 +13,7 @@ public enum WorkspaceForm {
         case .emptySymbol: "Choose an icon."
         case .unknown: "This workspace no longer exists."
         case .defaultIsFixed: "The Default workspace can’t be renamed."
+        case .anonymousIsFixed: "The Anonymous workspace can’t be changed."
         }
     }
 
@@ -84,13 +85,13 @@ extension WorkspaceSymbols {
 
 extension WorkspaceList {
     /// The `move(from:to:)` arguments for dropping workspace `dragged` onto workspace `target`: it takes the
-    /// target's place, and a drop onto Default lands just after it. Nil when `dragged` is Default, either is not
-    /// listed, or nothing would move.
+    /// target's place, a drop onto Default lands just after it and one onto Anonymous just before it. Nil when
+    /// `dragged` is Default or Anonymous, either is not listed, or nothing would move.
     public func reorder(dragging dragged: UUID, onto target: UUID) -> (from: Int, to: Int)? {
-        guard let from = workspaces.firstIndex(where: { $0.id == dragged }), from != 0,
+        guard let from = workspaces.firstIndex(where: { $0.id == dragged }), workspaces[from].kind == .custom,
             let index = workspaces.firstIndex(where: { $0.id == target })
         else { return nil }
-        let to = Swift.max(index, 1)
+        let to = Swift.min(Swift.max(index, 1), workspaces.count - 2)
         return to == from ? nil : (from, to)
     }
 }

@@ -120,6 +120,21 @@ import Testing
         #expect(library.bookmarks.isExpanded)
     }
 
+    @Test func pinIconsCodeTolerantlyAndCanBeSet() throws {
+        var library = LinkLibrary()
+        let pin = library.add(a, title: "A", to: .pins)
+        #expect(pin.icon == nil)
+        library.setIcon(pin.id, Data([7]))
+        #expect(library.links(on: .pins).map(\.icon) == [Data([7])])
+        let data = try JSONEncoder().encode(library.links(on: .pins))
+        #expect(try JSONDecoder().decode([SavedLink].self, from: data) == library.links(on: .pins))
+        let plain = try JSONEncoder().encode(SavedLink(url: b, title: "B"))
+        #expect(!String(decoding: plain, as: UTF8.self).contains("icon"))
+        let id = UUID()
+        let old = Data(#"{"id":"\#(id.uuidString)","title":"B","url":"https://b.example"}"#.utf8)
+        #expect(try JSONDecoder().decode(SavedLink.self, from: old) == SavedLink(id: id, url: b, title: "B"))
+    }
+
     @Test func defaultLibraryIsEmpty() {
         let library = LinkLibrary()
         #expect(LinkShelf.allCases.allSatisfy { library.links(on: $0).isEmpty })

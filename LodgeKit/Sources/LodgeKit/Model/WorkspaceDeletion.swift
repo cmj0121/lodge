@@ -29,13 +29,13 @@ public enum WorkspaceDeletion {
     public typealias Sleep = @Sendable (Duration) async throws -> Void
 
     /// removeFromList → saveNow → destroyViews → cancelDownloads → closeHistory → forgetStore → removeWebsiteData
-    /// (retried) → removeFiles → clearPending → saveNow. A failing step stops it, leaving the id pending; Default is
-    /// refused. True when fully done.
+    /// (retried) → removeFiles → clearPending → saveNow. A failing step stops it, leaving the id pending; Default and
+    /// Anonymous are refused. True when fully done.
     @discardableResult
     public static func run(
         _ id: UUID, steps: some WorkspaceDeletionSteps, sleep: Sleep = { try await Task.sleep(for: $0) }
     ) async -> Bool {
-        guard id != Workspace.defaultID else { return false }
+        guard !isFixed(id) else { return false }
         steps.removeFromList(id)
         steps.saveNow()
         steps.destroyViews(of: id)
@@ -50,13 +50,17 @@ public enum WorkspaceDeletion {
     }
 
     /// Launch retry, per id: removeWebsiteData (retried) → removeFiles → clearPending → saveNow. One that fails stays
-    /// pending; the rest still run. Default is skipped.
+    /// pending; the rest still run. Default and Anonymous are skipped.
     public static func retry(
         _ ids: [UUID], steps: some WorkspaceDeletionSteps, sleep: Sleep = { try await Task.sleep(for: $0) }
     ) async {
-        for id in ids where id != Workspace.defaultID {
+        for id in ids where !isFixed(id) {
             await finish(id, steps: steps, sleep: sleep)
         }
+    }
+
+    private static func isFixed(_ id: UUID) -> Bool {
+        id == Workspace.defaultID || id == Workspace.anonymousID
     }
 
     @discardableResult

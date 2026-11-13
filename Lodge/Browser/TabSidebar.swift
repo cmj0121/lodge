@@ -67,7 +67,7 @@ private struct ExpandedSidebar: View {
                         Button("New Folder…") { BookmarkPrompts.newFolder(in: nil, model: model) }
                     }
                     if !items.bookmarks.isEmpty {
-                        BookmarkOutline(model: model, nodes: items.bookmarks)
+                        BookmarkOutline(model: model, workspaces: coordinator, nodes: items.bookmarks)
                     }
                     if !items.bookmarks.isEmpty && !items.loose.isEmpty {
                         Divider()
@@ -149,10 +149,11 @@ private struct RailSidebar: View {
 }
 
 /// The rail's stand-in for the bookmark and loose tab rows: one button whose menu lists them, each
-/// folder as a submenu, filled while one of them is selected.
+/// folder as a submenu, filled while one of them is selected; below them, Move and Open in Workspace for each open tab.
 private struct BookmarksMenu: View {
     let model: BrowserModel
     let items: SidebarSections
+    @Environment(WorkspaceCoordinator.self) private var coordinator
     @State private var isHovered = false
 
     var body: some View {
@@ -165,6 +166,24 @@ private struct BookmarksMenu: View {
                 Divider()
             }
             ForEach(items.loose) { MenuEntry(model: model, item: $0, selected: selected) }
+            let open = (items.bookmarks.flatMap(\.bookmarkItems) + items.loose).compactMap(\.tab)
+            if !open.isEmpty {
+                Divider()
+                Menu("Move to Workspace") {
+                    ForEach(open) { tab in
+                        WorkspaceMenu(title: tab.displayTitle, tab: tab, from: model.workspaceID, coordinator: coordinator) {
+                            coordinator.move(tab: tab.id, to: $0)
+                        }
+                    }
+                }
+                Menu("Open in Workspace") {
+                    ForEach(open) { tab in
+                        WorkspaceMenu(title: tab.displayTitle, tab: tab, from: model.workspaceID, coordinator: coordinator) {
+                            coordinator.open(tab: tab.id, in: $0)
+                        }
+                    }
+                }
+            }
         } label: {
             Image(systemName: isSelected ? "book.fill" : "book")
                 .font(.system(size: SidebarMode.railSymbolSize))
@@ -282,24 +301,23 @@ private enum MenuImages {
     }
 }
 
-extension BrowserModel {
-    fileprivate func favicon(for item: SidebarItem) -> NSImage? {
-        item.tab.flatMap { favicons[$0.id] }
-    }
-}
-
 /// Open, Pin, Bookmark, Unpin or Remove, and Close, as fit the item.
 private struct ItemMenu: View {
     let model: BrowserModel
     let item: SidebarItem
+    @Environment(WorkspaceCoordinator.self) private var coordinator
 
     var body: some View {
         switch item {
         case .link(let link, let shelf, let tab):
             if shelf == .pins && tab == nil {
-                Button("Open") { model.openLink(link) }
+                Button("Open") { model.activate(.link(link)) }
             }
-            Button(shelf == .pins ? "Unpin" : "Remove from Bookmarks") { model.removeLink(link.id) }
+            if shelf == .pins {
+                Button("Unpin") { model.unpin(link.id) }
+            } else {
+                Button("Remove from Bookmarks") { model.removeLink(link.id) }
+            }
         case .tab(let tab):
             Button("Pin Tab") { model.addLink(.pins, from: tab.id) }
                 .disabled(!model.canAddLink(from: tab.id))
@@ -307,9 +325,37 @@ private struct ItemMenu: View {
                 .disabled(!model.canAddLink(from: tab.id))
         }
         if let tab = item.tab {
+            WorkspaceMenu(title: "Move to Workspace", tab: tab, from: model.workspaceID, coordinator: coordinator) {
+                coordinator.move(tab: tab.id, to: $0)
+            }
+            WorkspaceMenu(title: "Open in Workspace", tab: tab, from: model.workspaceID, coordinator: coordinator) {
+                coordinator.open(tab: tab.id, in: $0)
+            }
             Divider()
             Button("Close Tab") { model.close(tab.id) }
         }
+    }
+}
+
+/// A submenu of every other workspace, each with its icon; disabled for a tab with no address.
+private struct WorkspaceMenu: View {
+    let title: String
+    let tab: BrowserTab
+    let from: UUID
+    let coordinator: WorkspaceCoordinator
+    let action: (UUID) -> Void
+
+    var body: some View {
+        Menu(title) {
+            ForEach(coordinator.destinations(from: from)) { workspace in
+                Button {
+                    action(workspace.id)
+                } label: {
+                    Label { Text(workspace.name) } icon: { Image(systemName: workspace.symbol) }
+                }
+            }
+        }
+        .disabled(tab.url == nil)
     }
 }
 
@@ -329,7 +375,7 @@ extension View {
 }
 
 /// What an item's icon shows, decided once for the sidebar and the rail's bookmarks menu: the
-/// open tab's status, else the first letter of a link that is not open.
+/// open tab's status, else a link's kept icon (a shared pin's, an Anonymous bookmark's) or its first letter.
 private enum IconContent {
     case crashed
     case loading
@@ -339,7 +385,7 @@ private enum IconContent {
 
     init(item: SidebarItem, favicon: NSImage?) {
         guard let tab = item.tab else {
-            self = .letter(item.title.first.map { String($0).uppercased() } ?? "")
+            self = favicon.map { .favicon($0) } ?? .letter(item.title.first.map { String($0).uppercased() } ?? "")
             return
         }
         if tab.hasCrashed {
@@ -354,7 +400,8 @@ private enum IconContent {
     }
 }
 
-/// The item's icon: the open tab's status, else a dimmed letter tile for a link that is not open.
+/// The item's icon: the open tab's status; a link that is not open shows, dimmed, its kept icon (a shared pin's
+/// from Default, or an Anonymous bookmark's stored one), else the letter tile.
 private struct ItemIcon: View {
     let item: SidebarItem
     let image: NSImage?
@@ -683,22 +730,34 @@ private struct ShortcutHelpButton: View {
 
 /// The shown workspace's symbol and name over its bookmarks and tabs (D6).
 private struct WorkspaceHeader: View {
+    static let anonymousHint = "Nothing is kept"
+
     let workspace: Workspace
 
+    private var isAnonymous: Bool { workspace.kind == .anonymous }
+
     var body: some View {
-        Label {
-            Text(workspace.name)
-                .lineLimit(1)
-                .truncationMode(.tail)
-        } icon: {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: workspace.symbol)
                 .symbolVariant(.fill)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(workspace.name)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                // Anonymous says what sets it apart, in the header's own colour, so it reads in light and dark.
+                if isAnonymous {
+                    Text(Self.anonymousHint)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
         }
-        .labelStyle(.titleAndIcon)
         .font(.subheadline.weight(.semibold))
         .foregroundStyle(.secondary)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Workspace: \(workspace.name)")
+        .accessibilityHint(isAnonymous ? Self.anonymousHint : "")
         .accessibilityAddTraits(.isHeader)
     }
 }

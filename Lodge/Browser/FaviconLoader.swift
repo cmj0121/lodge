@@ -5,10 +5,14 @@ import WebKit
 /// Keeps one tab's favicon current: drops it when the tab commits a page on another origin, and
 /// loads the page's declared icon when a new page finishes. The fetch runs outside every website
 /// data store and sends no cookies or credentials, so it cannot tie the tab's identity to the
-/// icon request.
+/// icon request. Each anonymous tab's store fetches on a session of its own (`WebViewRegistry.faviconSession`), so
+/// a server cannot link two of them by a shared connection or TLS session.
 @MainActor
 final class FaviconLoader {
-    private nonisolated static let session: URLSession = {
+    /// Default's and the custom workspaces' icons.
+    static let shared = makeSession()
+
+    static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = false
         config.httpCookieAcceptPolicy = .never
@@ -17,7 +21,7 @@ final class FaviconLoader {
         config.urlCache = nil
         config.timeoutIntervalForRequest = 10
         return URLSession(configuration: config)
-    }()
+    }
 
     /// Reads `link[rel~=icon]` in an isolated script world, so page scripts cannot change what it returns.
     private static let script = """
@@ -28,12 +32,14 @@ final class FaviconLoader {
 
     /// Receives the decoded icon, or nil when the tab's icon is dropped.
     private let apply: @MainActor (NSImage?) -> Void
+    private let session: URLSession
     private var origin: Origin?
     private var scrapedPage: URL?
     private var iconURL: URL?
     private var task: Task<Void, Never>?
 
-    init(apply: @escaping @MainActor (NSImage?) -> Void) {
+    init(session: URLSession, apply: @escaping @MainActor (NSImage?) -> Void) {
+        self.session = session
         self.apply = apply
     }
 
@@ -53,13 +59,14 @@ final class FaviconLoader {
         guard let page = webView.url, page != scrapedPage else { return }
         scrapedPage = page
         task?.cancel()
-        task = Task { [weak self] in
+        task = Task { [weak self, session] in
             let raw = try? await webView.callAsyncJavaScript(Self.script, contentWorld: .defaultClient)
             let links = (raw as? [Any] ?? []).compactMap(FaviconSource.Link.init(scriptResult:))
             guard let self, !Task.isCancelled, let url = FaviconSource.candidate(page: page, links: links),
                 url != self.iconURL
             else { return }
-            guard let data = await Self.fetch(url), !Task.isCancelled, let image = NSImage(data: data) else { return }
+            guard let data = await Self.fetch(url, on: session), !Task.isCancelled, let image = NSImage(data: data)
+            else { return }
             // Recorded only once shown, so a cancelled or failed fetch is tried again on the next page.
             self.iconURL = url
             self.apply(image)
@@ -67,7 +74,7 @@ final class FaviconLoader {
     }
 
     /// Checks the response before reading the body, and stops reading once it passes the size cap.
-    private nonisolated static func fetch(_ url: URL) async -> Data? {
+    private nonisolated static func fetch(_ url: URL, on session: URLSession) async -> Data? {
         guard let (bytes, response) = try? await session.bytes(from: url),
             FaviconSource.accepts(
                 statusCode: (response as? HTTPURLResponse)?.statusCode, mimeType: response.mimeType,

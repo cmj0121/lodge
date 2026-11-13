@@ -108,7 +108,7 @@ struct DownloadsPopover: View {
 
     var body: some View {
         DownloadsList(
-            list: manager.list, missing: manager.missing, onAction: manager.rowAction, clear: manager.clearEnded
+            list: manager.list, missing: manager.missing, keptOrigin: manager.keptOrigin, onAction: manager.rowAction, clear: manager.clearEnded
         )
         .onAppear {
             manager.markSeen()
@@ -139,6 +139,8 @@ struct DownloadsList: View {
 
     let list: DownloadList
     let missing: Set<UUID>
+    /// Private files that still name their source.
+    var keptOrigin: Set<UUID> = []
     /// One handler for every row, told which row it is for.
     let onAction: (UUID, DownloadRowModel.Action) -> Void
     let clear: () -> Void
@@ -159,7 +161,10 @@ struct DownloadsList: View {
                             ForEach(list.items) { item in
                                 DownloadRow(
                                     id: item.id, name: item.fileName, fileURL: item.fileURL,
-                                    row: DownloadRowModel(item, isMissing: missing.contains(item.id)), onAction: onAction
+                                    row: DownloadRowModel(
+                                        item, isMissing: missing.contains(item.id),
+                                        keptOrigin: keptOrigin.contains(item.id)),
+                                    onAction: onAction
                                 )
                                 .equatable()
                             }

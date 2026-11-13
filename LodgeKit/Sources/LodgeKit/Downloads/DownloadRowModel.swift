@@ -19,8 +19,12 @@ public struct DownloadRowModel: Equatable, Sendable {
     public let progress: Progress
     public let actions: [Action]
 
-    /// `isMissing`: a finished item's file cannot be reached; ignored in every other state.
-    public init(_ item: DownloadItem, isMissing: Bool) {
+    /// The note on a finished private file whose source address could not be removed.
+    public static let keptOriginNote = "Couldn't remove the source address from this file"
+
+    /// `isMissing`: a finished item's file cannot be reached; ignored in every other state. `keptOrigin`: a finished
+    /// private file still names its source (`keptOriginNote`).
+    public init(_ item: DownloadItem, isMissing: Bool, keptOrigin: Bool = false) {
         let retry: [Action] = item.canRetry(isMissing: isMissing) ? [.retry] : []
         switch item.state {
         case .waitingForLocation:
@@ -43,7 +47,7 @@ public struct DownloadRowModel: Equatable, Sendable {
             progress = .none
             actions = retry + [.remove]
         case .finished:
-            status = Self.size(item.receivedBytes)
+            status = keptOrigin ? "\(Self.size(item.receivedBytes)) — \(Self.keptOriginNote)" : Self.size(item.receivedBytes)
             progress = .none
             actions = [.open, .showInFinder, .remove]
         case .failed(let reason):

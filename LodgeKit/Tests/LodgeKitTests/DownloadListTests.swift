@@ -83,4 +83,27 @@ import Testing
         #expect(list.items.map(\.state) == [.interrupted, .finished, .interrupted])
         #expect(list[items[1].id] == items[1])
     }
+
+    @Test func persistableLeavesOutPrivateRows() {
+        var shared = item(.finished, "shared"), private_ = item(.running, "private")
+        shared.store = .workspace(UUID())
+        private_.store = .ephemeral(UUID())
+        let list = DownloadList(items: [private_, shared, item(.cancelled, "old")])
+        #expect(list.persistable().items.map(\.fileName) == ["shared", "old"])
+        #expect(list.items.count == 3)
+    }
+
+    @Test func removeEndedDropsOnlyThatStoresEndedRows() {
+        let anonymous = StoreRef.ephemeral(UUID())
+        var finished = item(.finished, "finished"), running = item(.running, "running")
+        var failed = item(.failed(reason: "x"), "failed"), other = item(.finished, "other")
+        finished.store = anonymous
+        running.store = anonymous
+        failed.store = anonymous
+        other.store = .ephemeral(UUID())
+        var list = DownloadList(items: [finished, running, failed, other, item(.cancelled, "default")])
+        #expect(Set(list.removeEnded(on: anonymous)) == [finished.id, failed.id])
+        #expect(list.items.map(\.fileName) == ["running", "other", "default"])
+        #expect(list.removeEnded(on: anonymous).isEmpty)
+    }
 }

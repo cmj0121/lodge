@@ -43,6 +43,8 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     private(set) var hasUnseenEnded = false
     /// Finished items whose file cannot be reached (D5 "File moved or deleted"); kept in memory only.
     private(set) var missing: Set<UUID> = []
+    /// Finished private files whose source address could not be removed; kept in memory only, as their rows are.
+    private(set) var keptOrigin: Set<UUID> = []
 
     /// Partials created before this belong to an earlier run.
     @ObservationIgnored let createdAt = Date()
@@ -56,7 +58,8 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     @ObservationIgnored private var pendingProgress: [UUID: (received: Int64, total: Int64?)] = [:]
     @ObservationIgnored private var throttle = DownloadProgressThrottle()
     @ObservationIgnored private var isRestored = false
-    /// Which pages may start downloads (CWE-770); answers last until quit.
+    /// Which pages may start downloads (CWE-770), per store; answers last until quit or the anonymous tab's store
+    /// is dropped.
     @ObservationIgnored private var gate = DownloadGate()
     /// The "Too many downloads" alert is up, so another refusal does not stack one more.
     @ObservationIgnored private var isShowingTooMany = false
@@ -68,6 +71,9 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     /// The data store a Retry sends its request on, nil once that store's workspace is gone. Without a coordinator
     /// (layout renders) only Default's.
     @ObservationIgnored var dataStore: @MainActor (StoreRef) -> WKWebsiteDataStore? = { $0 == .global ? .default() : nil }
+    /// Called with an anonymous tab's store when a download on it starts running, so the store outlives its tab
+    /// until the download ends, and then with nil.
+    @ObservationIgnored var storeHold: @MainActor (_ download: UUID, _ store: StoreRef?) -> Void = { _, _ in }
 
     /// `directory` holds downloads.json; nil keeps the list in memory only.
     init(directory: URL?, defaults: UserDefaults = .standard) {
@@ -103,17 +109,18 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         return list
     }
 
-    /// Puts the saved list under the downloads started since launch, then saves the result.
+    /// Puts the saved list, without any private row, under the downloads started since launch, then saves the result.
     func restore(_ saved: DownloadList) {
-        list = DownloadList(items: list.items + saved.items)
+        list = DownloadList(items: list.items + saved.persistable().items)
         isRestored = true
         persist()
     }
 
-    /// At quit: cancels every download, deletes its partial, marks it interrupted and writes the list before
-    /// returning.
+    /// At quit: cancels every download, deletes its partial, marks it interrupted and writes the list, without its
+    /// private rows, before returning.
     func cancelAllForQuit() {
         for entry in active.values {
+            storeHold(entry.id, nil)
             if let panel = entry.panel { close(panel) }
             entry.download.cancel(nil)
             entry.observations.forEach { $0.invalidate() }
@@ -125,24 +132,17 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         applyPendingProgress()
         _ = list.interruptActive(at: Date())
         guard isRestored, let file else { return }
-        let snapshot = list
+        let snapshot = list.persistable()
         writes.sync { Self.write(snapshot, to: file) }
     }
 
     // MARK: Starting
 
     /// Takes over a download a tab's navigation became, when `DownloadGate` lets `site` start it. Every workspace's
-    /// downloads join the one list; a private (ephemeral) store's do not run.
+    /// downloads join the one list; an Anonymous tab's are private: never saved, and their files keep no origin.
     func start(_ download: WKDownload, store: StoreRef, site: Origin?, userInitiated: Bool, isMainFrame: Bool) {
-        if case .ephemeral = store {
-            download.cancel(nil)
-            let alert = NSAlert()
-            alert.messageText = "Downloads aren't available in this workspace yet."
-            present(alert, in: download.webView?.window)
-            return
-        }
         let decision = gate.decide(
-            site: site, userInitiated: userInitiated, isMainFrame: isMainFrame, activeCount: active.count)
+            store: store, site: site, userInitiated: userInitiated, isMainFrame: isMainFrame, activeCount: active.count)
         switch decision {
         case .allow:
             track(download, store: store, replacing: nil)
@@ -154,11 +154,15 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             let window = download.webView?.window
             track(
                 download, store: store, replacing: nil,
-                permission: Task { await askPermission(for: site, in: window) })
+                permission: Task { await askPermission(for: site, on: store, in: window) })
         case .refuse(let refusal):
             download.cancel(nil)
-            let from = site?.description ?? "a page without a site"
-            Self.logger.notice("Refused a download from \(from, privacy: .private): \(String(describing: refusal))")
+            if case .ephemeral = store {
+                Self.logger.notice("Refused a private download: \(String(describing: refusal))")
+            } else {
+                let from = site?.description ?? "a page without a site"
+                Self.logger.notice("Refused a download from \(from, privacy: .private): \(String(describing: refusal))")
+            }
             if refusal == .tooMany { alertTooMany(in: download.webView?.window) }
         }
     }
@@ -167,8 +171,10 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         _ download: WKDownload, store: StoreRef, replacing: UUID?, permission: Task<Bool, Never>? = nil
     ) {
         download.delegate = self
+        let id = UUID()
         active[ObjectIdentifier(download)] = Active(
-            id: UUID(), download: download, store: store, replacing: replacing, permission: permission)
+            id: id, download: download, store: store, replacing: replacing, permission: permission)
+        if case .ephemeral = store { storeHold(id, store) }
     }
 
     private func alertTooMany(in window: NSWindow?) {
@@ -186,15 +192,16 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         }
     }
 
-    /// Asks whether `site` may download multiple files, as a sheet on the tab's window, and records the answer.
-    private func askPermission(for site: Origin, in window: NSWindow?) async -> Bool {
+    /// Asks whether `site` may download multiple files, as a sheet on the tab's window, and records the answer for
+    /// `store`.
+    private func askPermission(for site: Origin, on store: StoreRef, in window: NSWindow?) async -> Bool {
         let alert = NSAlert()
         alert.messageText = DownloadGate.prompt(for: site)
         alert.addButton(withTitle: "Allow")
         alert.addButton(withTitle: "Don't Allow")
         let response = if let window { await alert.beginSheetModal(for: window) } else { alert.runModal() }
         let allowed = response == .alertFirstButtonReturn
-        gate.answer(allowed, for: site)
+        gate.answer(allowed, for: site, on: store)
         return allowed
     }
 
@@ -401,6 +408,7 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             } catch {
                 Self.logger.error("Cannot quarantine a download: \(error.localizedDescription, privacy: .public)")
             }
+            if case .ephemeral = entry.store { stripProvenance(of: target, id: entry.id) }
             let size = (try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
                 ?? download.progress.completedUnitCount
             let bookmark: Data?
@@ -422,6 +430,18 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             Self.logger.error("Cannot move a finished download: \(error.localizedDescription, privacy: .public)")
             end(download, as: .failed(reason: error.localizedDescription))
         }
+    }
+
+    /// Clears a private file's origin (`Provenance.clear`); when its where-froms or a mark other than Lodge's stay,
+    /// its row says the source stayed.
+    private func stripProvenance(of file: URL, id: UUID) {
+        let (cleared, errors) = Provenance.clear(file)
+        for error in errors {
+            Self.logger.error("Cannot clear a private download's origin: \(error.localizedDescription, privacy: .public)")
+        }
+        guard !cleared else { return }
+        Self.logger.error("A private download keeps its source or a quarantine mark Lodge did not write")
+        keptOrigin.insert(id)
     }
 
     func download(_ download: WKDownload, didFailWithError error: any Error, resumeData: Data?) {
@@ -460,6 +480,18 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         }
         if didEnd { hasUnseenEnded = true }
         persist()
+        // Released once the row has ended, so dropping its store (`forget(store:)`) removes it.
+        if case .ephemeral = entry.store { storeHold(entry.id, nil) }
+    }
+
+    /// An anonymous tab's store is gone: its site answers and its ended rows go too (never saved, so nothing to
+    /// write). Its running downloads held it, so none is left.
+    func forget(store: StoreRef) {
+        gate.forget(store: store)
+        for id in list.removeEnded(on: store) {
+            missing.remove(id)
+            keptOrigin.remove(id)
+        }
     }
 
     // MARK: Row actions
@@ -484,14 +516,18 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
 
     /// Downloads an ended GET http(s) item again on the store it came from (D8), once at a time per row; the row is
     /// replaced by the new one when it gets its destination. A finished item retries only once its file is missing.
-    /// A row whose workspace is gone, or that came from a private store, is not retried.
+    /// A row whose workspace is gone, or whose Anonymous tab has closed with no download left on its store, is not
+    /// retried.
     func retry(_ id: UUID) {
         guard let item = list[id], item.canRetry(isMissing: missing.contains(id)), let url = item.sourceURL,
             !retrying.contains(id)
         else { return }
         guard let store = item.retryStore, let dataStore = dataStore(store) else {
             let alert = NSAlert()
-            alert.messageText = "This download's workspace no longer exists, so it can't be retried."
+            alert.messageText =
+                item.isPrivate
+                ? "This download's anonymous tab has closed, so it can't be retried."
+                : "This download's workspace no longer exists, so it can't be retried."
             present(alert, in: NSApp.keyWindow)
             return
         }
@@ -650,12 +686,14 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         guard let item = list[id], !item.state.isActive else { return }
         list.remove(id)
         missing.remove(id)
+        keptOrigin.remove(id)
         persist()
     }
 
     func clearEnded() {
         list.clearEnded()
         missing = missing.filter { list[$0] != nil }
+        keptOrigin = keptOrigin.filter { list[$0] != nil }
         persist()
     }
 
@@ -677,7 +715,7 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     /// Queues a write of the list as it is now; writes run one at a time, in order.
     private func persist() {
         guard isRestored, let file else { return }
-        let snapshot = list
+        let snapshot = list.persistable()
         writes.async { Self.write(snapshot, to: file) }
     }
 
