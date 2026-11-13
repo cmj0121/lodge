@@ -31,9 +31,12 @@ public struct HistoryEventFilter: Sendable {
     }
 
     /// The primary blank-title guard: WebKit blanks the title at a commit, before the new page's visit exists.
-    public func titleChanged(_ title: String, store: StoreRef?) -> HistoryRecorder.Event? {
-        guard store == .global, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return .title(tab: tab, title: title)
+    /// `url` is the page the title belongs to, the web view's URL when the title changed.
+    public func titleChanged(_ title: String, url: URL?, store: StoreRef?) -> HistoryRecorder.Event? {
+        guard store == .global, let url, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return .title(tab: tab, url: url, title: title)
     }
 
     /// A load ended: its final URL, so a pushState or replaceState made while loading is recorded too (the

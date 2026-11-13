@@ -29,6 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         store.schedule(browser.snapshot)
         store.flush()
+        do {
+            try historyStore?.close()
+        } catch {
+            Self.logger.error("Could not close history: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Opens the history file off the main actor (opening checks the whole file), then starts recording visits and

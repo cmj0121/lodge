@@ -29,7 +29,8 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.model?.update(self.tab) { $0.title = view.title ?? "" }
-                    self.sendHistory(self.history.titleChanged(view.title ?? "", store: self.store))
+                    self.sendHistory(
+                        self.history.titleChanged(view.title ?? "", url: view.url, store: self.store))
                 }
             },
             webView.observe(\.url, options: .initial) { [weak self] view, _ in

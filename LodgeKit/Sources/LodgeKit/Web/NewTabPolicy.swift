@@ -7,4 +7,10 @@ public enum NewTabPolicy {
     public static func allows(_ url: URL) -> Bool {
         Origin.isWeb(url) || url.absoluteString.lowercased() == "about:blank"
     }
+
+    /// Which history URLs may open as a new tab: only web pages, which is all the recorder keeps, so a row
+    /// written into the file by anything else cannot load `file:` or `javascript:` as a browser navigation.
+    public static func allowsFromHistory(_ url: URL) -> Bool {
+        Origin.isWeb(url)
+    }
 }

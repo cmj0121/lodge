@@ -34,6 +34,9 @@ final class HistoryModel {
     private(set) var isSearchPending = false
     /// Whether the last next-page read failed; the end of the list offers to try again instead of loading.
     private(set) var pageLoadFailed = false
+    /// Whether the last Clear All deleted the visits but left some old data on disk until Lodge closes; the
+    /// window says so.
+    var clearLeftData = false
     /// The shown visits by day: the search's matches while there is a query, else the loaded pages.
     private(set) var days: [HistoryDay] = []
     /// The visit a row near the end of the loaded pages, whose appearing loads the next page before the end shows.
@@ -252,6 +255,8 @@ final class HistoryModel {
         Task {
             do {
                 try await store.clearAll()
+            } catch HistoryStore.ClearError.checkpointBusy {
+                clearLeftData = true
             } catch {
                 Self.logger.error("Clear All History failed: \(error.localizedDescription, privacy: .public)")
             }

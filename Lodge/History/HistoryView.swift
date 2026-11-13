@@ -14,6 +14,11 @@ struct HistoryView: View {
             .onAppear(perform: model.windowAppeared)
             .onDisappear(perform: model.windowDisappeared)
             .searchable(text: $model.query, placement: .toolbar, prompt: "Search History")
+            .alert("History was cleared", isPresented: $model.clearLeftData) {
+                Button("OK") {}
+            } message: {
+                Text("Some data will be removed when Lodge closes.")
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button("Clear All History…", systemImage: "trash") { HistoryPrompts.clearAll(model: model) }

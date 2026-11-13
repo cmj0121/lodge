@@ -110,8 +110,10 @@ final class BrowserModel {
         open(BrowserTab(store: store, url: url), load: true)
     }
 
-    /// A History window entry: the page opens in a new selected tab on the default store.
+    /// A History window entry: the page opens in a new selected tab on the default store; a URL that is not a
+    /// web page opens nothing.
     func open(historyURL url: URL) {
+        guard NewTabPolicy.allowsFromHistory(url) else { return }
         open(BrowserTab(store: .global, url: url), load: true)
     }
 
