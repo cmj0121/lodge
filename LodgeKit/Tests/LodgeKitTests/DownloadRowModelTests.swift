@@ -104,4 +104,11 @@ import Testing
         #expect(!DownloadList(items: [item(.running), item(.waitingForLocation)]).hasEnded)
         #expect(DownloadList(items: [item(.running), item(.interrupted)]).hasEnded)
     }
+
+    @Test func aFinishedFileThatKeptItsOriginSaysSoAndStillOpens() {
+        let row = Row(item(.finished, received: 40_000_000), isMissing: false, keptOrigin: true)
+        #expect(row.status == "\(Row.size(40_000_000)) — \(Row.keptOriginNote)")
+        #expect(row.actions == [.open, .showInFinder, .remove])
+        #expect(Row(item(.failed(reason: "x")), isMissing: false, keptOrigin: true).status == "Failed — x")
+    }
 }

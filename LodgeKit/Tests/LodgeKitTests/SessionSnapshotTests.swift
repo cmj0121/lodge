@@ -161,7 +161,7 @@ import Testing
     @Test func migratesVersion1BookmarksIntoAnExpandedRoot() throws {
         let decoded = try SessionSnapshot.decode(Data(Self.version1.utf8))
         #expect(decoded.version == SessionSnapshot.currentVersion)
-        #expect(decoded.workspaces.map(\.workspace) == [.default])
+        #expect(decoded.workspaces.map(\.workspace) == [.default, .anonymous])
         #expect(decoded.windows == [SessionSnapshot.WindowSnapshot(activeWorkspace: Workspace.defaultID)])
         #expect(decoded.pendingDeletions.isEmpty)
         let bookmarks = try #require(decoded.content(of: Workspace.defaultID)?.bookmarks)
@@ -184,12 +184,12 @@ import Testing
 
         let rewritten = try roundTrip(decoded)
         #expect(rewritten == decoded)
-        #expect(rewritten.version == 3)
+        #expect(rewritten.version == 4)
     }
 
-    @Test func rejectsAVersion4File() {
-        let data = Data(Self.version1.replacingOccurrences(of: #""version" : 1"#, with: #""version" : 4"#).utf8)
-        #expect(throws: SessionSnapshot.DecodeError.unsupportedVersion(4)) { try SessionSnapshot.decode(data) }
+    @Test func rejectsAVersion5File() {
+        let data = Data(Self.version1.replacingOccurrences(of: #""version" : 1"#, with: #""version" : 5"#).utf8)
+        #expect(throws: SessionSnapshot.DecodeError.unsupportedVersion(5)) { try SessionSnapshot.decode(data) }
     }
 
     @Test func rejectsANewerVersion() throws {
@@ -263,8 +263,8 @@ import Testing
 
     @Test func migratesVersion2IntoDefaultIncludingAStrayWorkspaceTab() throws {
         let decoded = try SessionSnapshot.decode(Data(Self.version2.utf8))
-        #expect(decoded.version == 3)
-        #expect(decoded.workspaces.map(\.workspace) == [.default])
+        #expect(decoded.version == 4)
+        #expect(decoded.workspaces.map(\.workspace) == [.default, .anonymous])
         #expect(decoded.windows == [window(Workspace.defaultID)])
         #expect(decoded.pendingDeletions.isEmpty)
 
@@ -279,10 +279,10 @@ import Testing
 
         let rewritten = try roundTrip(decoded)
         #expect(rewritten == decoded)
-        #expect(rewritten.version == 3)
+        #expect(rewritten.version == 4)
     }
 
-    // MARK: v3
+    // MARK: v3 / v4
 
     private let work = Workspace(name: "Work", symbol: "briefcase")
     private let home = Workspace(name: "Home", symbol: "house")
@@ -302,25 +302,25 @@ import Testing
 
     private func window(_ id: UUID) -> SessionSnapshot.WindowSnapshot { .init(activeWorkspace: id) }
 
-    @Test func v3RoundTripKeepsWorkspacesWindowsAndPendingDeletions() throws {
+    @Test func v4RoundTripKeepsWorkspacesWindowsAndPendingDeletions() throws {
         let workTab = BrowserTab(url: URL(string: "https://work.example")!, title: "Work")
         let blank = BrowserTab()
         let homeTab = BrowserTab(url: pin.url, title: "Pin", link: pin.id)
         let pending = UUID()
         let snapshot = SessionSnapshot(
             workspaces: [
-                entry(.default, content([BrowserTab()])),
+                entry(.default, content([BrowserTab()], pins: [pin])),
                 entry(work, content([workTab, blank], selected: blank.id)),
-                entry(home, content([homeTab], pins: [pin])),
+                entry(home, content([homeTab])),
             ],
             windows: [window(home.id)], pendingDeletions: [pending])
         let decoded = try roundTrip(snapshot)
         #expect(decoded == snapshot)
-        #expect(decoded.version == 3)
-        #expect(decoded.workspaces.map(\.workspace) == [.default, work, home])
+        #expect(decoded.version == 4)
+        #expect(decoded.workspaces.map(\.workspace) == [.default, work, home, .anonymous])
         #expect(decoded.windows == [window(home.id)])
         #expect(decoded.pendingDeletions == [pending])
-        #expect(decoded.workspaceList.workspaces == [.default, work, home])
+        #expect(decoded.workspaceList.workspaces == [.default, work, home, .anonymous])
         #expect(decoded.content(of: UUID()) == nil)
 
         let restored = try #require(decoded.content(of: work.id)).restored(store: work.store)
@@ -328,11 +328,12 @@ import Testing
         #expect(restored.tabs.selectedID == blank.id)
         #expect(restored.tabs.tabs.allSatisfy { $0.store == .workspace(work.id) && !$0.isLive })
         let homeRestored = try #require(decoded.content(of: home.id)).restored(store: home.store)
-        #expect(homeRestored.tabs.tabs.map(\.link) == [pin.id])
-        #expect(homeRestored.library.links(on: .pins) == [pin])
+        #expect(homeRestored.tabs.tabs.map(\.link) == [nil])
+        #expect(homeRestored.library.links(on: .pins) == [])
+        #expect(decoded.content(of: Workspace.defaultID)?.pins == [pin])
     }
 
-    @Test func v3TabsCarryNoStore() throws {
+    @Test func tabsCarryNoStore() throws {
         let snapshot = SessionSnapshot(
             workspaces: [entry(work, content([BrowserTab(store: .workspace(work.id), url: pin.url)]))],
             windows: [window(work.id)], pendingDeletions: [])
@@ -345,12 +346,13 @@ import Testing
         let id = UUID()
         #expect(Workspace.default.store == .global)
         #expect(Workspace(id: id, name: "A", symbol: "a").store == .workspace(id))
-        #expect(Workspace(id: id, name: "A", symbol: "a", kind: .anonymous).store == .ephemeral(id))
+        #expect(Workspace(id: id, name: "A", symbol: "a", kind: .anonymous).store == nil)
+        #expect(Workspace.anonymous.store == nil)
     }
 
     @Test func normalizesAMissingDefaultToFirst() {
         let snapshot = SessionSnapshot(workspaces: [entry(work)], windows: [window(work.id)], pendingDeletions: [])
-        #expect(snapshot.workspaces.map(\.workspace) == [.default, work])
+        #expect(snapshot.workspaces.map(\.workspace) == [.default, work, .anonymous])
         #expect(snapshot.content(of: Workspace.defaultID) == .empty)
         #expect(snapshot.windows == [window(work.id)])
     }
@@ -362,7 +364,7 @@ import Testing
         let snapshot = SessionSnapshot(
             workspaces: [entry(work), entry(restyled, content([tab]))], windows: [window(work.id)],
             pendingDeletions: [])
-        #expect(snapshot.workspaces.map(\.workspace) == [restyled, work])
+        #expect(snapshot.workspaces.map(\.workspace) == [restyled, work, .anonymous])
         #expect(snapshot.content(of: Workspace.defaultID)?.tabs.map(\.id) == [tab.id])
     }
 
@@ -373,24 +375,185 @@ import Testing
         let snapshot = SessionSnapshot(
             workspaces: [entry(.default), entry(work, content([tab])), entry(copy, content([BrowserTab()]))],
             windows: [window(work.id)], pendingDeletions: [])
-        #expect(snapshot.workspaces.map(\.workspace) == [.default, work])
+        #expect(snapshot.workspaces.map(\.workspace) == [.default, work, .anonymous])
         #expect(snapshot.content(of: work.id)?.tabs.map(\.id) == [tab.id])
     }
 
-    @Test func normalizesAwayAnonymousWorkspaces() {
-        let anonymous = Workspace(name: "Private", symbol: "eye.slash", kind: .anonymous)
+    @Test func normalizesAwayStrayAnonymousWorkspacesKeepingTheFixedOneLast() {
+        let stray = Workspace(name: "Private", symbol: "eye.slash", kind: .anonymous)
+        let impostor = Workspace(id: Workspace.anonymousID, name: "Impostor", symbol: "x")
         let snapshot = SessionSnapshot(
-            workspaces: [entry(.default), entry(anonymous), entry(work)], windows: [window(anonymous.id)],
-            pendingDeletions: [])
-        #expect(snapshot.workspaces.map(\.workspace) == [.default, work])
+            workspaces: [entry(.default), entry(stray, content([BrowserTab()])), entry(impostor), entry(work)],
+            windows: [window(stray.id)], pendingDeletions: [])
+        #expect(snapshot.workspaces.map(\.workspace) == [.default, work, .anonymous])
+        #expect(snapshot.content(of: Workspace.anonymousID) == .empty)
         #expect(snapshot.windows == [window(Workspace.defaultID)])
+    }
+
+    @Test func anonymousIsAlwaysPresentAndLast() {
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(.anonymous), entry(work), entry(.default)], windows: [], pendingDeletions: [])
+        #expect(snapshot.workspaces.map(\.workspace) == [.default, work, .anonymous])
+        #expect(SessionSnapshot(workspaces: [], windows: [], pendingDeletions: []).workspaces.map(\.workspace)
+            == [.default, .anonymous])
+    }
+
+    private let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0])
+
+    @Test func onlyAnonymousBookmarksKeepAValidIcon() throws {
+        let iconned = SavedLink(url: bookmark.url, title: "Iconned", icon: png)
+        let notPNG = SavedLink(url: URL(string: "https://gif.example")!, title: "GIF", icon: Data("GIF89a".utf8))
+        let large = SavedLink(
+            url: URL(string: "https://large.example")!, title: "Large", icon: png + Data(count: LinkIcon.maxBytes))
+        let nested = BookmarkFolder(title: "Nested", children: [.link(notPNG), .link(large)])
+        let anonymousLibrary = LinkLibrary(
+            pins: [], bookmarks: BookmarkFolder(title: "", children: [.link(iconned), .folder(nested)]))
+        var iconnedPin = pin
+        iconnedPin.icon = png
+        let defaultLibrary = LinkLibrary(pins: [iconnedPin], bookmarks: [iconned])
+        let workLibrary = LinkLibrary(pins: [], bookmarks: [iconned])
+        let snapshot = SessionSnapshot(
+            workspaces: [
+                entry(.default, .init(tabs: TabList(), library: defaultLibrary)),
+                entry(work, .init(tabs: TabList(), library: workLibrary)),
+                entry(.anonymous, .init(tabs: TabList(), library: anonymousLibrary)),
+            ], windows: [], pendingDeletions: [])
+        let decoded = try roundTrip(snapshot)
+        let defaultContent = try #require(decoded.content(of: Workspace.defaultID))
+        #expect(defaultContent.pins.map(\.icon) == [nil])
+        #expect(defaultContent.bookmarks.links.map(\.icon) == [nil])
+        #expect(decoded.content(of: work.id)?.bookmarks.links.map(\.icon) == [nil])
+        let anonymous = try #require(decoded.content(of: Workspace.anonymousID))
+        #expect(anonymous.bookmarks.links.map(\.icon) == [png, nil, nil])
+        #expect(anonymous.bookmarks.links.map(\.title) == ["Iconned", "GIF", "Large"])
+    }
+
+    @Test func anonymousKeepsOnlyItsBookmarks() throws {
+        let tab = BrowserTab(url: bookmark.url, title: "Secret", link: bookmark.id)
+        let marked = SavedLink(url: bookmark.url, title: "Marked", icon: png)
+        let anonymousContent = SessionSnapshot.WorkspaceContent(
+            tabs: TabList(tabs: [tab], selectedID: tab.id), library: LinkLibrary(pins: [pin], bookmarks: [marked]))
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(.default), entry(.anonymous, anonymousContent)], windows: [], pendingDeletions: [])
+        let decoded = try roundTrip(snapshot)
+        let content = try #require(decoded.content(of: Workspace.anonymousID))
+        #expect(content == anonymousContent.anonymized())
+        #expect(content.tabs.isEmpty)
+        #expect(content.selectedTab == nil)
+        #expect(content.pins.isEmpty)
+        #expect(content.bookmarks.links == [marked])
+        #expect(decoded.content(of: Workspace.defaultID)?.pins == [])
+        let text = try #require(String(data: snapshot.encoded(), encoding: .utf8))
+        #expect(!text.contains("Secret"))
+        #expect(!text.contains("pin.example"))
+    }
+
+    @Test func anonymousActiveWorkspaceIsKept() throws {
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(.default), entry(work)], windows: [window(Workspace.anonymousID)],
+            pendingDeletions: [])
+        #expect(try roundTrip(snapshot).windows == [window(Workspace.anonymousID)])
+    }
+
+    @Test func restoredWithoutAStoreGivesNoTabsOnlyTheLibrary() {
+        let tab = BrowserTab(url: bookmark.url, link: bookmark.id)
+        let content = SessionSnapshot.WorkspaceContent(
+            tabs: TabList(tabs: [tab], selectedID: tab.id), library: LinkLibrary(pins: [], bookmarks: [bookmark]))
+        let restored = content.restored(store: nil)
+        #expect(restored.tabs == TabList())
+        #expect(restored.library.links(on: .bookmarks) == [bookmark])
+    }
+
+    @Test func pendingDropsDefaultAndAnonymous() {
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(.default), entry(work)], windows: [],
+            pendingDeletions: [Workspace.anonymousID, work.id, Workspace.defaultID])
+        #expect(snapshot.pendingDeletions == [work.id])
+        #expect(snapshot.workspaces.map(\.workspace) == [.default, .anonymous])
+    }
+
+    @Test func foldsCustomPinsIntoDefaultDedupedByURL() {
+        let duplicate = SavedLink(url: pin.url, title: "Pin again")
+        let homePin = SavedLink(url: URL(string: "https://home.example")!, title: "Home pin")
+        let workTab = BrowserTab(url: duplicate.url, link: duplicate.id)
+        let homeTab = BrowserTab(url: homePin.url, link: homePin.id)
+        let markedTab = BrowserTab(url: bookmark.url, link: bookmark.id)
+        let homeContent = SessionSnapshot.WorkspaceContent(
+            tabs: TabList(tabs: [homeTab, markedTab], selectedID: homeTab.id),
+            library: LinkLibrary(pins: [homePin, pin2], bookmarks: [bookmark]))
+        let snapshot = SessionSnapshot(
+            workspaces: [
+                entry(.default, content([], pins: [pin])),
+                entry(work, content([workTab], pins: [duplicate, pin2])),
+                entry(home, homeContent),
+            ],
+            windows: [], pendingDeletions: [])
+        #expect(snapshot.content(of: Workspace.defaultID)?.pins == [pin, pin2, homePin])
+        #expect(snapshot.content(of: work.id)?.pins == [])
+        #expect(snapshot.content(of: home.id)?.pins == [])
+        #expect(snapshot.content(of: work.id)?.tabs.map(\.link) == [nil])
+        #expect(snapshot.content(of: home.id)?.tabs.map(\.link) == [nil, bookmark.id])
+        #expect(snapshot.content(of: home.id)?.bookmarks.links == [bookmark])
+        let again = SessionSnapshot(workspaces: snapshot.workspaces, windows: [], pendingDeletions: [])
+        #expect(again == snapshot)
+    }
+
+    /// As #5 wrote it: a custom workspace with its own pin, already pinned in Default, and a tab linked to it.
+    private static let version3 = """
+        {
+          "pendingDeletions" : [],
+          "version" : 3,
+          "windows" : [{ "activeWorkspace" : "D0000000-0000-0000-0000-000000000001" }],
+          "workspaces" : [
+            {
+              "content" : {
+                "bookmarks" : { "children" : [], "id" : "F0000000-0000-0000-0000-000000000001", "isExpanded" : true, "title" : "Bookmarks" },
+                "pins" : [{ "id" : "A0000000-0000-0000-0000-000000000001", "title" : "Pin", "url" : "https://pin.example" }],
+                "tabs" : []
+              },
+              "workspace" : { "id" : "00000000-0000-0000-0000-000000000000", "kind" : "default", "name" : "Default", "symbol" : "square.stack.3d.up" }
+            },
+            {
+              "content" : {
+                "bookmarks" : { "children" : [], "id" : "F0000000-0000-0000-0000-000000000002", "isExpanded" : true, "title" : "Bookmarks" },
+                "pins" : [
+                  { "id" : "A0000000-0000-0000-0000-000000000002", "title" : "Pin copy", "url" : "https://pin.example" },
+                  { "id" : "A0000000-0000-0000-0000-000000000003", "title" : "Work pin", "url" : "https://work.example" }
+                ],
+                "selectedTab" : "C0000000-0000-0000-0000-000000000001",
+                "tabs" : [
+                  { "id" : "C0000000-0000-0000-0000-000000000001", "link" : "A0000000-0000-0000-0000-000000000002", "title" : "Pinned", "url" : "https://pin.example" },
+                  { "id" : "C0000000-0000-0000-0000-000000000002", "link" : "A0000000-0000-0000-0000-000000000003", "title" : "Work", "url" : "https://work.example" }
+                ]
+              },
+              "workspace" : { "id" : "D0000000-0000-0000-0000-000000000001", "kind" : "custom", "name" : "Work", "symbol" : "briefcase" }
+            }
+          ]
+        }
+        """
+
+    @Test func migratesVersion3FoldingCustomPinsIntoDefault() throws {
+        let decoded = try SessionSnapshot.decode(Data(Self.version3.utf8))
+        let workID = UUID(uuidString: "D0000000-0000-0000-0000-000000000001")!
+        #expect(decoded.version == 4)
+        #expect(decoded.workspaces.map(\.workspace.id) == [Workspace.defaultID, workID, Workspace.anonymousID])
+        #expect(decoded.windows == [window(workID)])
+        #expect(decoded.content(of: Workspace.defaultID)?.pins.map(\.id) == [
+            UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!,
+            UUID(uuidString: "A0000000-0000-0000-0000-000000000003")!,
+        ])
+        let work = try #require(decoded.content(of: workID))
+        #expect(work.pins.isEmpty)
+        #expect(work.tabs.map(\.link) == [nil, nil])
+        #expect(work.tabs.map(\.title) == ["Pinned", "Work"])
+        #expect(try roundTrip(decoded) == decoded)
     }
 
     @Test func normalizesPendingIdsOutOfWorkspaces() {
         let snapshot = SessionSnapshot(
             workspaces: [entry(.default), entry(work), entry(home)], windows: [window(work.id)],
             pendingDeletions: [work.id, work.id, Workspace.defaultID])
-        #expect(snapshot.workspaces.map(\.workspace) == [.default, home])
+        #expect(snapshot.workspaces.map(\.workspace) == [.default, home, .anonymous])
         #expect(snapshot.pendingDeletions == [work.id])
         #expect(snapshot.windows == [window(Workspace.defaultID)])
     }
@@ -404,12 +567,12 @@ import Testing
         #expect(unknown.windows == [window(Workspace.defaultID), window(work.id)])
     }
 
-    @Test func normalizesAV3FileWhenRead() throws {
+    @Test func normalizesAFileWhenRead() throws {
         var snapshot = SessionSnapshot(workspaces: [entry(.default), entry(work)], windows: [], pendingDeletions: [])
         snapshot.workspaces.reverse()
         snapshot.windows = [window(UUID())]
         let decoded = try roundTrip(snapshot)
-        #expect(decoded.workspaces.map(\.workspace) == [.default, work])
+        #expect(decoded.workspaces.map(\.workspace) == [.default, work, .anonymous])
         #expect(decoded.windows == [window(Workspace.defaultID)])
     }
 }

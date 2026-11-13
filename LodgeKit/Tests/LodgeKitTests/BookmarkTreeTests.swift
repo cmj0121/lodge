@@ -205,6 +205,32 @@ import Testing
         #expect(try JSONDecoder().decode(BookmarkFolder.self, from: data) == root)
     }
 
+    @Test func aLinkIconRoundTripsAndMayBeMissing() throws {
+        let link = SavedLink(url: a, title: "A", icon: Data([0x89, 0x50, 0x4E, 0x47]))
+        let data = try JSONEncoder().encode(BookmarkNode.link(link))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(Set(object.keys) == ["kind", "id", "url", "title", "icon"])
+        #expect(try JSONDecoder().decode(BookmarkNode.self, from: data) == .link(link))
+        let id = UUID()
+        let old = Data(#"{"kind":"link","id":"\#(id.uuidString)","title":"A","url":"https://a.example"}"#.utf8)
+        #expect(try JSONDecoder().decode(BookmarkNode.self, from: old) == .link(SavedLink(id: id, url: a, title: "A")))
+    }
+
+    @Test func setIconChangesANestedBookmarkOnly() {
+        var (library, work, _, d) = tree()
+        let icon = Data([1, 2, 3])
+        library.setIcon(d.id, icon)
+        #expect(library.links(on: .bookmarks).first { $0.id == d.id }?.icon == icon)
+        #expect(library.links(on: .bookmarks).filter { $0.id != d.id }.allSatisfy { $0.icon == nil })
+        let before = library
+        library.setIcon(work, icon)
+        library.setIcon(UUID(), icon)
+        library.setIcon(library.bookmarks.id, icon)
+        #expect(library == before)
+        library.setIcon(d.id, nil)
+        #expect(library.links(on: .bookmarks).allSatisfy { $0.icon == nil })
+    }
+
     @Test func anUnknownKindFailsToDecode() {
         let json = Data(#"{"kind":"separator","id":"\#(UUID().uuidString)","title":"-"}"#.utf8)
         #expect(throws: DecodingError.self) { try JSONDecoder().decode(BookmarkNode.self, from: json) }

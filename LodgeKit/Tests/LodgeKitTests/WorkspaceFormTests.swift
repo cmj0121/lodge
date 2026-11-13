@@ -30,6 +30,13 @@ import Testing
     @Test func duplicateNameNamesIt() throws {
         #expect(message(" work ", in: try list("Work")) == "A workspace named “work” already exists.")
         #expect(message("default", in: try list()) == "A workspace named “default” already exists.")
+        #expect(message("anonymous", in: try list()) == "A workspace named “anonymous” already exists.")
+    }
+
+    @Test func fixedWorkspacesExplainThemselves() {
+        #expect(WorkspaceForm.message(for: .defaultIsFixed, name: "") == "The Default workspace can’t be renamed.")
+        #expect(
+            WorkspaceForm.message(for: .anonymousIsFixed, name: "") == "The Anonymous workspace can’t be changed.")
     }
 
     @Test func renamingKeepsItsOwnName() throws {
@@ -71,10 +78,19 @@ import Testing
         #expect(list.reorder(dragging: ids[1], onto: ids[0]) == nil)
     }
 
-    @Test func defaultAndStrangersDoNotMove() throws {
+    @Test func dropOntoAnonymousLandsBeforeIt() throws {
+        let list = try list("A", "B")
+        let ids = list.workspaces.map(\.id)
+        #expect(list.reorder(dragging: ids[1], onto: Workspace.anonymousID).map { [$0.from, $0.to] } == [1, 2])
+        #expect(list.reorder(dragging: ids[2], onto: Workspace.anonymousID) == nil)
+    }
+
+    @Test func defaultAnonymousAndStrangersDoNotMove() throws {
         let list = try list("A")
         let ids = list.workspaces.map(\.id)
         #expect(list.reorder(dragging: ids[0], onto: ids[1]) == nil)
+        #expect(list.reorder(dragging: Workspace.anonymousID, onto: ids[1]) == nil)
+        #expect(list.reorder(dragging: Workspace.anonymousID, onto: ids[0]) == nil)
         #expect(list.reorder(dragging: UUID(), onto: ids[1]) == nil)
         #expect(list.reorder(dragging: ids[1], onto: UUID()) == nil)
         #expect(list.reorder(dragging: ids[1], onto: ids[1]) == nil)
