@@ -36,6 +36,10 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     @ObservationIgnored private var windowsPending = false
     /// Quitting: windows closing now stay in the session.
     @ObservationIgnored private var isQuitting = false
+    #if DEBUG
+        /// Layout self-checks: stands in for bringing a window forward, so a check never activates the app.
+        @ObservationIgnored var bringForwardHook: ((WindowState) -> Void)?
+    #endif
 
     @ObservationIgnored let registry: WebViewRegistry
     @ObservationIgnored private var models: [UUID: BrowserModel] = [:]
@@ -332,6 +336,9 @@ extension WorkspaceCoordinator: WindowPlacement {
 
     /// Brings the window to the front, key, with the app active.
     func bringForward(_ window: WindowState) {
+        #if DEBUG
+            if let bringForwardHook { return bringForwardHook(window) }
+        #endif
         window.nsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate()
     }

@@ -23,17 +23,36 @@ struct BrowserPane {
 
     // MARK: Tabs
 
-    /// Shows the tab in this window, building its web view when it has none; every other tab keeps its own.
+    /// Whether another window shows the tab, so selecting it here brings that window forward (D4).
+    func isShownElsewhere(_ tab: TabID) -> Bool {
+        coordinator.selections.window(showing: tab).map { $0 != window.id } == true
+    }
+
+    /// Shows the tab in this window, building its web view when it has none; a tab another window shows brings that
+    /// window forward instead, and this window keeps its own tab (D4).
     func select(_ id: TabID) {
-        if coordinator.select(id, in: window) == .selected { model.view(for: id) }
+        switch coordinator.select(id, in: window) {
+        case .selected: model.view(for: id)
+        case .shownIn(let other): coordinator.window(for: other).map(coordinator.bringForward)
+        case .unknown: break
+        }
     }
 
     func selectNextTab() { step(1) }
 
     func selectPreviousTab() { step(-1) }
 
+    /// Shows the next entry in the direction of `offset`, passing over tabs another window shows; nothing when every
+    /// other entry is one.
     private func step(_ offset: Int) {
-        if let target = model.sidebar.target(offset, from: selectedID) { activate(target) }
+        let sidebar = model.sidebar
+        var from = selectedID
+        var passed = Set<TabID>()
+        while let target = sidebar.target(offset, from: from) {
+            guard case .tab(let id) = target, isShownElsewhere(id) else { return activate(target) }
+            guard passed.insert(id).inserted else { return }
+            from = id
+        }
     }
 
     /// Shows the row's target; a shared pin opens in Default, which every window switches to.
@@ -67,9 +86,13 @@ struct BrowserPane {
         if let id = selectedID { close(id) }
     }
 
-    /// A History window entry: the page opens in a new tab shown here; a URL that is not a web page opens nothing.
+    /// A History window entry: when another window shows a tab on exactly this URL, that window comes forward (D4);
+    /// otherwise the page opens in a new tab shown here, as before. A URL that is not a web page opens nothing.
     func open(historyURL url: URL) {
         guard NewTabPolicy.allowsFromHistory(url) else { return }
+        if let shown = model.tabs.tabs.first(where: { $0.url == url && isShownElsewhere($0.id) }) {
+            return select(shown.id)
+        }
         open(BrowserTab(store: model.newTabStore(), url: url), load: true)
     }
 

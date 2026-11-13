@@ -40,6 +40,8 @@
             checkSharedPins(to: directory.appending(path: "layout-shared-pins.png"))
             checkMoveTabs()
             checkTwoWindows()
+            checkShownElsewhere(in: directory)
+            checkStepSkipsShownElsewhere()
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -608,6 +610,124 @@
                 coordinator.windows.count == 1 && coordinator.windows[0] === first
                     && coordinator.lastActiveBrowserWindow === first && pinTab.map { home?.tabs[$0.id] != nil } == true
                     && coordinator.snapshot.windows.count == 1)
+        }
+
+        /// Two windows on Default's sample library, checked in the background and printed ok or FAILED for each: from
+        /// the second window, a sidebar click, a bookmark open, a History entry and a pin open on the tab the first
+        /// window shows each ask to bring the first window forward (a hook stands in, so nothing activates), leave
+        /// both windows' tabs as they were and open no second tab; the second window marks that tab and the first
+        /// does not. Draws the second window's sidebar with a marked bookmark row, then a marked pin, in light and
+        /// dark. Nothing loads: tabs open unloaded and the History URL is on `.invalid`.
+        private static func checkShownElsewhere(in directory: URL) {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            let suite = "dev.lodge.render-layout"
+            let defaults = UserDefaults(suiteName: suite)!
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            defer { defaults.removePersistentDomain(forName: suite) }
+
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+            let first = coordinator.windows[0]
+            let model = coordinator.active
+            guard let bookmark = model.library.links(on: .bookmarks).first, let pin = model.library.links(on: .pins).first
+            else { return report("Sidebar click on another window's tab brings it forward", false) }
+            coordinator.pane(for: first).openLink(bookmark, load: false)
+            guard let shown = coordinator.selections.shown(in: first.id) else {
+                return report("Sidebar click on another window's tab brings it forward", false)
+            }
+            let page = URL(string: "https://lodge.invalid/shown")!
+            model.update(shown) { $0.url = page }
+            coordinator.newWindow()
+            let second = coordinator.windows[0]
+            second.locationPrompt = nil
+            var asked: [WindowState] = []
+            coordinator.bringForwardHook = { asked.append($0) }
+
+            /// Runs `action` from the second window: true when it asked for the first window alone and changed no
+            /// window's tab and no tab count.
+            func bringsFirstForward(_ action: (BrowserPane) -> Void) -> Bool {
+                let before = [first, second].map { coordinator.selections.shown(in: $0.id) }
+                let count = model.tabs.tabs.count
+                asked = []
+                action(coordinator.pane(for: second))
+                return asked.count == 1 && asked[0] === first && model.tabs.tabs.count == count
+                    && [first, second].map { coordinator.selections.shown(in: $0.id) } == before
+            }
+
+            let otherPane = coordinator.pane(for: second)
+            report(
+                "Only the other window marks the tab",
+                otherPane.isShownElsewhere(shown) && !coordinator.pane(for: first).isShownElsewhere(shown)
+                    && otherPane.selectedID.map(otherPane.isShownElsewhere) == false)
+            report("Sidebar click on another window's tab brings it forward", bringsFirstForward { $0.select(shown) })
+            report(
+                "Opening a bookmark another window shows brings it forward",
+                bringsFirstForward { $0.activate(.link(bookmark)) })
+            report(
+                "A History entry another window shows brings it forward",
+                bringsFirstForward { $0.open(historyURL: page) })
+            renderShownElsewhere(coordinator, second, defaults: defaults, in: directory, name: "shown-elsewhere")
+
+            coordinator.pane(for: first).openLink(pin, load: false)
+            report(
+                "Opening a pin another window shows brings it forward",
+                coordinator.selections.shown(in: first.id).flatMap { model.tabs[$0] }?.link == pin.id
+                    && bringsFirstForward { $0.activate(.link(pin)) })
+            renderShownElsewhere(coordinator, second, defaults: defaults, in: directory, name: "shown-elsewhere-pin")
+        }
+
+        private static func renderShownElsewhere(
+            _ coordinator: WorkspaceCoordinator, _ window: WindowState, defaults: UserDefaults, in directory: URL,
+            name: String
+        ) {
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                snapshot(
+                    root(coordinator, window).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                    appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-\(name)-\(appearance == .aqua ? "light" : "dark").png"))
+            }
+        }
+
+        /// Stepping through tabs in a second window passes over the tab the first window shows, printed ok or FAILED:
+        /// with three tabs it lands on the third and brings no window forward; with only the two shown tabs it stays
+        /// put. Pages are `about:blank` and never load.
+        private static func checkStepSkipsShownElsewhere() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            let first = coordinator.windows[0]
+            let model = coordinator.active
+            guard let shown = coordinator.selections.shown(in: first.id) else {
+                return report("Stepping passes over another window's tab", false)
+            }
+            model.update(shown) { $0.url = URL(string: "about:blank#one")! }
+            coordinator.newWindow()
+            let second = coordinator.windows[0]
+            second.locationPrompt = nil
+            guard let own = coordinator.selections.shown(in: second.id) else {
+                return report("Stepping passes over another window's tab", false)
+            }
+            var asked = 0
+            coordinator.bringForwardHook = { _ in asked += 1 }
+
+            let lone = coordinator.pane(for: second)
+            lone.selectNextTab()
+            lone.selectPreviousTab()
+            report(
+                "Stepping with only another window's tab stays put",
+                asked == 0 && coordinator.selections.shown(in: second.id) == own
+                    && coordinator.selections.shown(in: first.id) == shown)
+
+            let third = BrowserTab(url: URL(string: "about:blank#three")!, title: "Three")
+            _ = model.append(third, load: false)
+            // The direction whose next entry is the first window's tab, so the step has to pass over it.
+            let offset = model.sidebar.target(1, from: own) == .tab(shown) ? 1 : -1
+            let pane = coordinator.pane(for: second)
+            if offset == 1 { pane.selectNextTab() } else { pane.selectPreviousTab() }
+            report(
+                "Stepping passes over another window's tab",
+                model.sidebar.target(offset, from: own) == .tab(shown) && asked == 0
+                    && coordinator.selections.shown(in: second.id) == third.id
+                    && coordinator.selections.shown(in: first.id) == shown)
         }
 
         /// An off-screen window hosting `view`, never shown; it is not freed on closing, so closing it is safe.

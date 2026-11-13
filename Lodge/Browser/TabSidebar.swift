@@ -513,6 +513,12 @@ private struct ItemButton: View {
             ItemIcon(item: item, image: favicon, size: shape.iconSize, isOnTile: shape.isTile)
                 .frame(maxWidth: shape.width ?? .infinity)
                 .frame(width: shape.width, height: shape.height)
+                .overlay(alignment: .topTrailing) {
+                    if pane.isShownElsewhere(item) {
+                        ShownElsewhereMark(size: 8)
+                            .padding(4)
+                    }
+                }
                 .background(
                     .quaternary.opacity(shape.isTile && !isSelected ? 0.5 : 0), in: .rect(cornerRadius: shape.cornerRadius)
                 )
@@ -520,8 +526,9 @@ private struct ItemButton: View {
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .help(item.title)
+        .help(pane.isShownElsewhere(item) ? "\(item.title)\n\(ShownElsewhereMark.hint)" : item.title)
         .accessibilityLabel(item.title)
+        .accessibilityValue(pane.isShownElsewhere(item) ? ShownElsewhereMark.hint : "")
         .accessibilityActions {
             // The grid runs left to right, the rail top to bottom.
             Button(shape.isTile ? "Move Left" : "Move Up") { move(by: -1) }
@@ -580,7 +587,7 @@ private struct SidebarRow: View {
         SidebarRowLabel(pane: pane, item: item, isSelected: isSelected, isHovered: isHovered, favicon: favicon)
             .contentShape(.rect)
             .onTapGesture { pane.activate(item.target) }
-            .help(item.address)
+            .help(pane.toolTip(for: item))
             .itemAccessibility(item, isSelected: isSelected, pane: pane)
             .sidebarItem(item, pane: pane, isHovered: $isHovered)
     }
@@ -672,19 +679,27 @@ struct SidebarRowLabel: View {
                 .foregroundStyle(item.tab == nil ? .secondary : .primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let tab = item.tab {
-                Button {
-                    pane.close(tab.id)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
-                        .frame(width: Metrics.iconSize, height: Metrics.iconSize)
-                        .contentShape(.rect)
+                let showsClose = isHovered || isSelected
+                // The mark holds the close button's place until the pointer brings the button up over it.
+                ZStack {
+                    if pane.isShownElsewhere(tab.id) {
+                        ShownElsewhereMark()
+                            .opacity(showsClose ? 0 : 1)
+                    }
+                    Button {
+                        pane.close(tab.id)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .semibold))
+                            .frame(width: Metrics.iconSize, height: Metrics.iconSize)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .opacity(showsClose ? 1 : 0)
+                    .help(ShortcutCatalog.tooltip("Close tab", for: .closeTab))
+                    .accessibilityLabel("Close \(item.title)")
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
-                .opacity(isHovered || isSelected ? 1 : 0)
-                .help(ShortcutCatalog.tooltip("Close tab", for: .closeTab))
-                .accessibilityLabel("Close \(item.title)")
             }
         }
         .padding(.horizontal, Metrics.padding)
@@ -700,12 +715,40 @@ extension View {
         accessibilityElement(children: .combine)
             .accessibilityLabel(item.title)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityValue(pane.isShownElsewhere(item) ? ShownElsewhereMark.hint : "")
             .accessibilityAction { pane.activate(item.target) }
             .accessibilityActions {
                 if let tab = item.tab {
                     Button("Close Tab") { pane.close(tab.id) }
                 }
             }
+    }
+}
+
+/// Marks a row or tile whose tab another window shows, where a click brings that window forward (D4): a small
+/// window glyph in the quietest label colour, so it reads in light and dark without competing with the title.
+struct ShownElsewhereMark: View {
+    static let hint = "Shown in another window"
+
+    var size: CGFloat = 10
+
+    var body: some View {
+        Image(systemName: "macwindow")
+            .font(.system(size: size, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
+    }
+}
+
+extension BrowserPane {
+    /// Whether another window shows the item's open tab.
+    func isShownElsewhere(_ item: SidebarItem) -> Bool {
+        item.tab.map { isShownElsewhere($0.id) } == true
+    }
+
+    /// A bookmark or tab row's tooltip: its address, and that another window shows it when one does.
+    func toolTip(for item: SidebarItem) -> String {
+        isShownElsewhere(item) ? "\(item.address)\n\(ShownElsewhereMark.hint)" : item.address
     }
 }
 
