@@ -23,7 +23,13 @@ struct BrowserView: View {
         .navigationTitle(model.selected?.displayTitle ?? "Lodge")
         .environment(\.webViewRegistry, model.registry)
         .frame(minWidth: 800, minHeight: 500)
+        .focusedSceneValue(\.isBrowserWindow, true)
     }
+}
+
+extension FocusedValues {
+    /// Set by browser windows, so ⌘W closes a tab there and the window anywhere else.
+    @Entry var isBrowserWindow: Bool?
 }
 
 /// The page, as a floating card. With the sidebar collapsed it carries the address and navigation

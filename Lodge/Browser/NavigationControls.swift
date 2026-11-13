@@ -9,17 +9,17 @@ struct NavigationButtons: View {
         HStack(spacing: 12) {
             Button("Back", systemImage: "chevron.backward", action: model.goBack)
                 .disabled(model.selected?.canGoBack != true)
-                .help("Go back (⌘[)")
+                .help("Go back")
             Button("Forward", systemImage: "chevron.forward", action: model.goForward)
                 .disabled(model.selected?.canGoForward != true)
-                .help("Go forward (⌘])")
+                .help("Go forward")
             if model.selected?.isLoading == true {
                 Button("Stop", systemImage: "xmark", action: model.stopLoading)
-                    .help("Stop loading (⌘.)")
+                    .help("Stop loading")
             } else {
                 Button("Reload", systemImage: "arrow.clockwise", action: model.reload)
                     .disabled(model.selected?.url == nil)
-                    .help("Reload this page (⌘R)")
+                    .help(ShortcutCatalog.tooltip("Reload this page", for: .reload))
             }
         }
         .labelStyle(.iconOnly)

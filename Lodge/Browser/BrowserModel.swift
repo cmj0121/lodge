@@ -26,6 +26,8 @@ final class BrowserModel {
     private(set) var findMissed = false
     /// The sidebar's Downloads popover is open.
     var isDownloadsVisible = false
+    /// The keyboard shortcut help overlay is open.
+    var isShortcutHelpVisible = false
     /// Each tab's decoded favicon, kept apart from `tabs` so an icon arriving redraws only its icon.
     private(set) var favicons: [TabID: NSImage] = [:]
     /// Bumped to ask the window to focus the address bar or the find field.
@@ -285,6 +287,24 @@ final class BrowserModel {
         if let id = tabs.selectedID { addLink(.bookmarks, from: id) }
     }
 
+    /// The pin holding the selected tab's page, matched by URL so a bookmark's tab finds its pin too.
+    private var selectedPin: SavedLink? {
+        guard let url = selected?.url else { return nil }
+        return library.links(on: .pins).first { $0.url == url }
+    }
+
+    /// The selected tab's page is one of the pins.
+    var isSelectedTabPinned: Bool { selectedPin != nil }
+
+    /// Pins the selected tab's page, or unpins it; the page stays open, and a bookmark's tab keeps its bookmark.
+    func togglePinSelectedTab() {
+        if let pin = selectedPin {
+            removeLink(pin.id)
+        } else if let id = tabs.selectedID {
+            addLink(.pins, from: id)
+        }
+    }
+
     /// Drops the link's row, or a folder with every row in it; an open tab of a removed link carries on as a
     /// loose tab.
     func removeLink(_ id: UUID) {
@@ -408,7 +428,7 @@ final class BrowserModel {
     func focusAddressBar() { addressFocusRequest += 1 }
 
     /// Each sidebar mode anchors the Downloads popover on its own button, so it closes before the mode changes rather
-    /// than leave the flag set with its anchor gone; ⌥⌘L then opens it on the new button.
+    /// than leave the flag set with its anchor gone; ⌘J then opens it on the new button.
     func closeDownloadsForModeChange() { isDownloadsVisible = false }
 
     // MARK: Find

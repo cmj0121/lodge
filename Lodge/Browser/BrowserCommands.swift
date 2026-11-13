@@ -7,61 +7,59 @@ struct BrowserCommands: Commands {
     let model: BrowserModel
     let history: HistoryModel
     @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.isBrowserWindow) private var isBrowserWindow
     @AppStorage(SidebarMode.defaultsKey) private var sidebarMode: SidebarMode = .expanded
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("New Tab", action: model.newTab)
-                .keyboardShortcut("t")
-            Button("Open Location…", action: model.focusAddressBar)
-                .keyboardShortcut("l")
+            Button(ShortcutCatalog[.newTab].title, action: model.newTab)
+                .shortcut(.newTab)
+            Button(ShortcutCatalog[.openLocation].title, action: model.focusAddressBar)
+                .shortcut(.openLocation)
         }
         CommandGroup(replacing: .saveItem) {
-            Button("Close Tab", action: model.closeSelectedTab)
-                .keyboardShortcut("w")
-            Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
-                .keyboardShortcut("w", modifiers: [.command, .shift])
+            Button(isBrowserWindow == true ? ShortcutCatalog[.closeTab].title : "Close Window") {
+                if isBrowserWindow == true { model.closeSelectedTab() } else { NSApp.keyWindow?.performClose(nil) }
+            }
+                .shortcut(.closeTab)
+            if isBrowserWindow == true {
+                Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
+            }
         }
         CommandGroup(after: .textEditing) {
             Divider()
-            Button("Find…", action: model.showFind)
-                .keyboardShortcut("f")
+            Button(ShortcutCatalog[.find].title, action: model.showFind)
+                .shortcut(.find)
             Button("Find Next", action: model.findNext)
-                .keyboardShortcut("g")
             Button("Find Previous", action: model.findPrevious)
-                .keyboardShortcut("g", modifiers: [.command, .shift])
         }
         CommandGroup(replacing: .sidebar) {
             Button("Toggle Sidebar") {
                 model.closeDownloadsForModeChange()
                 withAnimation(.snappy(duration: 0.25)) { sidebarMode = sidebarMode.toggled }
             }
-                .keyboardShortcut("s", modifiers: [.command, .control])
         }
         CommandGroup(before: .toolbar) {
-            Button("Reload Page", action: model.reload)
-                .keyboardShortcut("r")
+            Button(ShortcutCatalog[.reload].title, action: model.reload)
+                .shortcut(.reload)
             Button("Stop", action: model.stopLoading)
-                .keyboardShortcut(".")
             Divider()
             Button(model.isDownloadsVisible ? "Hide Downloads" : "Show Downloads") { model.isDownloadsVisible.toggle() }
-                .keyboardShortcut("l", modifiers: [.command, .option])
+                .shortcut(.toggleDownloads)
             Divider()
         }
         CommandMenu("History") {
             Button("Back", action: model.goBack)
-                .keyboardShortcut("[")
             Button("Forward", action: model.goForward)
-                .keyboardShortcut("]")
             Divider()
             Button("Show All History") { openWindow(id: "history") }
-                .keyboardShortcut("y")
             Button("Clear All History…") { HistoryPrompts.clearAll(model: history) }
                 .disabled(!history.canClearAll)
         }
         CommandMenu("Bookmarks") {
-            Button("Bookmark This Tab", action: model.bookmarkSelectedTab)
-                .keyboardShortcut("d")
+            Button(ShortcutCatalog[.bookmarkTab].title, action: model.bookmarkSelectedTab)
+                .shortcut(.bookmarkTab, enabled: model.tabs.selectedID.map(model.canAddLink) == true)
+            Button(model.isSelectedTabPinned ? "Unpin Tab" : "Pin This Tab", action: model.togglePinSelectedTab)
                 .disabled(model.tabs.selectedID.map(model.canAddLink) != true)
             Button("New Folder…") { BookmarkPrompts.newFolder(in: nil, model: model) }
             Divider()
@@ -71,10 +69,11 @@ struct BrowserCommands: Commands {
         }
         CommandGroup(before: .windowList) {
             Button("Show Next Tab", action: model.selectNextTab)
-                .keyboardShortcut(.tab, modifiers: .control)
             Button("Show Previous Tab", action: model.selectPreviousTab)
-                .keyboardShortcut(.tab, modifiers: [.control, .shift])
             Divider()
+        }
+        CommandGroup(after: .help) {
+            Button("Keyboard Shortcuts") { model.isShortcutHelpVisible = true }
         }
     }
 }
