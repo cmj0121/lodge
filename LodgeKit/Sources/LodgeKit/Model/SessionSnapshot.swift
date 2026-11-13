@@ -81,11 +81,17 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         }
     }
 
+    /// The optional fields are left out when nil, so a file stays readable by a v4 build that predates them.
     public struct WindowSnapshot: Codable, Equatable, Sendable {
         public var activeWorkspace: UUID
+        /// Wins over `WorkspaceContent.selectedTab` at restore.
+        public var selectedTab: TabID?
+        public var frame: WindowFrame?
 
-        public init(activeWorkspace: UUID) {
+        public init(activeWorkspace: UUID, selectedTab: TabID? = nil, frame: WindowFrame? = nil) {
             self.activeWorkspace = activeWorkspace
+            self.selectedTab = selectedTab
+            self.frame = frame
         }
     }
 
@@ -99,7 +105,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     /// Bar order: Default first, then the custom workspaces, then Anonymous with its bookmarks only. Only Default
     /// has pins.
     public var workspaces: [WorkspaceSnapshot]
-    /// At least one; an unknown active workspace reads as Default.
+    /// At least one, all on the same workspace; an unknown active workspace reads as Default.
     public var windows: [WindowSnapshot]
     /// Disjoint from `workspaces`; never Default or Anonymous.
     public var pendingDeletions: [UUID]
@@ -108,8 +114,10 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     /// `anonymized()`); duplicate ids, stray `.anonymous` and pending ids dropped. Pins fold into Default: its own
     /// pins in order, then each custom workspace's in bar order unless that URL is already pinned (the first id is
     /// kept); custom workspaces' pins become [] and their tabs linked to one of them lose the link. Pending drops
-    /// Default and Anonymous; empty windows → [Default]; unknown active → Default (Anonymous is valid). Only
-    /// Anonymous bookmarks keep an icon, and only a `LinkIcon.isValid` one.
+    /// Default and Anonymous; empty windows → [Default]; unknown active → Default (Anonymous is valid), and every
+    /// window takes the first window's. A window keeps its `selectedTab` only when it is a tab of that workspace
+    /// and no earlier window kept it, and its `frame` only when finite and at least 1×1. Only Anonymous bookmarks
+    /// keep an icon, and only a `LinkIcon.isValid` one.
     public init(workspaces: [WorkspaceSnapshot], windows: [WindowSnapshot], pendingDeletions: [UUID]) {
         var seen: Set<UUID> = [Workspace.defaultID, Workspace.anonymousID]
         let pending = pendingDeletions.filter { seen.insert($0).inserted }
@@ -136,9 +144,17 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             WorkspaceSnapshot(workspace: $0, content: $1.checkingIcons(anonymous: $0.kind == .anonymous))
         }
         let windows = windows.isEmpty ? [WindowSnapshot(activeWorkspace: Workspace.defaultID)] : windows
+        let active = list.resolve(windows[0].activeWorkspace)
+        let tabs = Set(workspaces.first { $0.workspace.id == active }?.content.tabs.map(\.id) ?? [])
+        var taken: Set<TabID> = []
         version = Self.currentVersion
         self.workspaces = workspaces
-        self.windows = windows.map { WindowSnapshot(activeWorkspace: list.resolve($0.activeWorkspace)) }
+        self.windows = windows.map { window in
+            WindowSnapshot(
+                activeWorkspace: active,
+                selectedTab: window.selectedTab.flatMap { tabs.contains($0) && taken.insert($0).inserted ? $0 : nil },
+                frame: window.frame.flatMap { $0.isUsable ? $0 : nil })
+        }
         self.pendingDeletions = pending
     }
 
