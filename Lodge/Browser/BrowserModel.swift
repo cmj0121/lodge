@@ -24,6 +24,8 @@ final class BrowserModel {
     var findText = ""
     var isFindVisible = false
     private(set) var findMissed = false
+    /// The sidebar's Downloads popover is open.
+    var isDownloadsVisible = false
     /// Each tab's decoded favicon, kept apart from `tabs` so an icon arriving redraws only its icon.
     private(set) var favicons: [TabID: NSImage] = [:]
     /// Bumped to ask the window to focus the address bar or the find field.
@@ -47,6 +49,9 @@ final class BrowserModel {
             }
         }
     }
+
+    /// Runs the tabs' downloads; nil in layout renders, where a download does not run.
+    @ObservationIgnored var downloads: DownloadManager?
 
     /// Called with the new snapshot whenever the tabs or the library change in a way it stores.
     @ObservationIgnored var onSnapshotChange: ((SessionSnapshot) -> Void)?
@@ -185,6 +190,7 @@ final class BrowserModel {
         let controller = TabController(tab: id, webView: view, model: self)
         controllers[id] = controller
         if load, let url = tab.url {
+            controller.browserWillLoad()
             let navigation = view.load(URLRequest(url: url))
             if isRestoring { controller.restoreNavigation = navigation }
         }
@@ -378,6 +384,7 @@ final class BrowserModel {
             return
         }
         update(id) { $0.url = url }
+        controllers[id]?.browserWillLoad()
         view.load(URLRequest(url: url))
         view.window?.makeFirstResponder(view)
     }
@@ -389,6 +396,7 @@ final class BrowserModel {
     func reload() {
         guard let id = tabs.selectedID, let view = ensureView(for: id, load: false) else { return }
         if view.url == nil, let url = tabs[id]?.url {
+            controllers[id]?.browserWillLoad()
             view.load(URLRequest(url: url))
         } else {
             view.reload()
@@ -398,6 +406,10 @@ final class BrowserModel {
     func stopLoading() { selectedView?.stopLoading() }
 
     func focusAddressBar() { addressFocusRequest += 1 }
+
+    /// Each sidebar mode anchors the Downloads popover on its own button, so it closes before the mode changes rather
+    /// than leave the flag set with its anchor gone; ⌥⌘L then opens it on the new button.
+    func closeDownloadsForModeChange() { isDownloadsVisible = false }
 
     // MARK: Find
 
