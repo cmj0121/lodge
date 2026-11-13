@@ -14,11 +14,12 @@ struct TabSidebar: View {
     let model: BrowserModel
     let mode: SidebarMode
     let toggle: () -> Void
+    @Environment(WorkspaceCoordinator.self) private var coordinator
 
     var body: some View {
         switch mode {
-        case .expanded: ExpandedSidebar(model: model, toggle: toggle)
-        case .rail: RailSidebar(model: model, toggle: toggle)
+        case .expanded: ExpandedSidebar(model: model, coordinator: coordinator, toggle: toggle)
+        case .rail: RailSidebar(model: model, coordinator: coordinator, toggle: toggle)
         }
     }
 }
@@ -27,6 +28,7 @@ struct TabSidebar: View {
 /// tabs, and the workspace bar with Downloads.
 private struct ExpandedSidebar: View {
     let model: BrowserModel
+    let coordinator: WorkspaceCoordinator
     let toggle: () -> Void
 
     var body: some View {
@@ -52,9 +54,7 @@ private struct ExpandedSidebar: View {
                     }
                     Divider()
                     HStack {
-                        Text(defaultWorkspaceName)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                        WorkspaceHeader(workspace: coordinator.activeWorkspace)
                         Spacer(minLength: 0)
                         NewTabButton(model: model)
                     }
@@ -79,7 +79,7 @@ private struct ExpandedSidebar: View {
             .scrollIndicators(.never)
             Divider()
             HStack(spacing: 6) {
-                WorkspaceBar(axis: .horizontal)
+                WorkspaceBar(coordinator: coordinator, axis: .horizontal)
                 ShortcutHelpButton(model: model, isRail: false)
                 if let downloads = model.downloads {
                     DownloadsButton(model: model, manager: downloads, isRail: false)
@@ -114,6 +114,7 @@ extension SidebarNode {
 /// Icons only: expand, pins, the bookmarks menu, and the workspace bar with Downloads.
 private struct RailSidebar: View {
     let model: BrowserModel
+    let coordinator: WorkspaceCoordinator
     let toggle: () -> Void
 
     var body: some View {
@@ -135,7 +136,7 @@ private struct RailSidebar: View {
             }
             .scrollIndicators(.never)
             VStack(spacing: 12) {
-                WorkspaceBar(axis: .vertical)
+                WorkspaceBar(coordinator: coordinator, axis: .vertical)
                 ShortcutHelpButton(model: model, isRail: true)
                 if let downloads = model.downloads {
                     DownloadsButton(model: model, manager: downloads, isRail: true)
@@ -677,6 +678,28 @@ private struct ShortcutHelpButton: View {
             .font(isRail ? .system(size: SidebarMode.railSymbolSize) : nil)
             .help("Keyboard shortcuts")
             .accessibilityAddTraits(model.isShortcutHelpVisible ? .isSelected : [])
+    }
+}
+
+/// The shown workspace's symbol and name over its bookmarks and tabs (D6).
+private struct WorkspaceHeader: View {
+    let workspace: Workspace
+
+    var body: some View {
+        Label {
+            Text(workspace.name)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        } icon: {
+            Image(systemName: workspace.symbol)
+                .symbolVariant(.fill)
+        }
+        .labelStyle(.titleAndIcon)
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Workspace: \(workspace.name)")
+        .accessibilityAddTraits(.isHeader)
     }
 }
 

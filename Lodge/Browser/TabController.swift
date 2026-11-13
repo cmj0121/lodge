@@ -15,6 +15,8 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var history: HistoryEventFilter
     /// The load that restored the tab; its commit is not a visit.
     var restoreNavigation: WKNavigation?
+    /// The next main-frame commit is a restore from saved interaction state, so it is not a visit.
+    var expectsRestoreCommit = false
     /// Each recent navigation action's gesture and site, for the download its response may become.
     private var gestures = NavigationGestures()
     /// The next main-frame action is a load the browser started (`browserWillLoad()`).
@@ -66,7 +68,20 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             webView.observe(\.hasOnlySecureContent, options: .initial) { [weak self] view, _ in
                 MainActor.assumeIsolated { self?.updateSecurity(of: view) }
             },
+            holdState(webView, \.cameraCaptureState),
+            holdState(webView, \.microphoneCaptureState),
+            holdState(webView, \.fullscreenState),
         ]
+    }
+
+    /// Tells the model when a state that keeps a background tab's view alive changes.
+    private func holdState<Value>(_ webView: WKWebView, _ keyPath: KeyPath<WKWebView, Value>) -> NSKeyValueObservation {
+        webView.observe(keyPath) { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.model?.holdStateChanged(self.tab)
+            }
+        }
     }
 
     /// Reclassifies the page's security from the view's current URL and content.
@@ -187,8 +202,9 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        let isRestore = navigation != nil && navigation === restoreNavigation
+        let isRestore = (navigation != nil && navigation === restoreNavigation) || expectsRestoreCommit
         if isRestore { restoreNavigation = nil }
+        expectsRestoreCommit = false
         if let url = webView.url {
             dialogGate.commit(origin: Origin(url: url))
             sendHistory(history.committed(url, title: webView.title ?? "", store: store, isRestore: isRestore))

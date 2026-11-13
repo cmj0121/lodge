@@ -3,11 +3,16 @@ import LodgeKit
 import Observation
 import WebKit
 
-/// State and actions of the browser window: the saved links, the open tabs and their web views, find in page.
+/// State and actions of one workspace: its saved links, its open tabs and their web views; the window it shows in
+/// keeps find, the prompts and the overlays (`WindowState`).
 @MainActor
 @Observable
 final class BrowserModel {
-    /// Every open tab. A tab keeps its web view, built when it is first selected, until it closes.
+    let workspaceID: UUID
+    /// Every tab of the workspace runs on this store.
+    let store: StoreRef
+    /// Every open tab. A tab keeps its web view, built when it is first selected, until it closes or the workspace
+    /// is released (`releaseViews()`).
     private(set) var tabs = TabList() {
         didSet { didChangeSession() }
     }
@@ -23,33 +28,75 @@ final class BrowserModel {
     private(set) var security: [TabID: SiteSecurity] = [:]
     /// Each tab's page zoom; absent means `PageZoom.actual`. Gone with the tab.
     private(set) var zoom: [TabID: Double] = [:]
-    var findText = ""
-    var isFindVisible = false
-    private(set) var findMissed = false
-    /// The sidebar's Downloads popover is open.
-    var isDownloadsVisible = false
-    /// The keyboard shortcut help overlay is open.
-    var isShortcutHelpVisible = false
     /// Each tab's decoded favicon, kept apart from `tabs` so an icon arriving redraws only its icon.
     private(set) var favicons: [TabID: NSImage] = [:]
-    /// The floating location prompt, open for a new tab or for the tab it loads in; nil when closed.
-    private(set) var locationPrompt: LocationPrompt?
-    /// Bumped to ask the window to focus the find field.
-    private(set) var findFocusRequest = 0
-    /// The text the last search ran for, so the typing debounce does not search it again.
-    @ObservationIgnored private var lastSearchedText = ""
 
-    @ObservationIgnored let registry = WebViewRegistry()
+    /// The window showing the workspace, or that last showed it.
+    @ObservationIgnored var window: WindowState
+    var findText: String {
+        get { window.findText }
+        set { window.findText = newValue }
+    }
+    var isFindVisible: Bool {
+        get { window.isFindVisible }
+        set { window.isFindVisible = newValue }
+    }
+    private(set) var findMissed: Bool {
+        get { window.findMissed }
+        set { window.findMissed = newValue }
+    }
+    /// The sidebar's Downloads popover is open.
+    var isDownloadsVisible: Bool {
+        get { window.isDownloadsVisible }
+        set { window.isDownloadsVisible = newValue }
+    }
+    /// The keyboard shortcut help overlay is open.
+    var isShortcutHelpVisible: Bool {
+        get { window.isShortcutHelpVisible }
+        set { window.isShortcutHelpVisible = newValue }
+    }
+    /// The floating location prompt, open for a new tab or for the tab it loads in; nil when closed.
+    private(set) var locationPrompt: LocationPrompt? {
+        get { window.locationPrompt }
+        set { window.locationPrompt = newValue }
+    }
+    /// The workspace sheet, open to create a workspace or to rename one or change its icon; nil when closed.
+    private(set) var workspaceEditor: WorkspaceEditor? {
+        get { window.workspaceEditor }
+        set { window.workspaceEditor = newValue }
+    }
+    /// Bumped to ask the window to focus the find field.
+    private(set) var findFocusRequest: Int {
+        get { window.findFocusRequest }
+        set { window.findFocusRequest = newValue }
+    }
+    private var lastSearchedText: String {
+        get { window.lastSearchedText }
+        set { window.lastSearchedText = newValue }
+    }
+
+    /// Shared by every workspace's model.
+    @ObservationIgnored let registry: WebViewRegistry
     @ObservationIgnored private var controllers: [TabID: TabController] = [:]
-    /// Restored tabs whose web view is not built yet; the load that builds one is not a visit.
+    /// Restored or released tabs whose web view is not built yet; the load that builds one is not a visit.
     @ObservationIgnored private var restoredTabs: Set<TabID> = []
-    /// Where tabs on the default store record their visits; nil until the history store opens, and in layout
-    /// renders. The store opens after the restored tab may have committed, so the recorder arrives knowing every
-    /// default-store tab's page as already seen, and a restored page's load finishing records nothing.
+    /// Released tabs' `interactionState`, in memory only, put back when the view is rebuilt.
+    @ObservationIgnored private var savedStates: [TabID: Any] = [:]
+    /// Each popup tab's opener, so neither of a live pair is released while the other has a view.
+    @ObservationIgnored private var popupOpeners: [TabID: TabID] = [:]
+    /// Retries `releaseViews()` for tabs that were held; nil when no retry waits.
+    @ObservationIgnored private var releaseRetryTask: Task<Void, Never>?
+    @ObservationIgnored private var viewRelease = ViewRelease()
+    /// How long a held tab waits before its release is tried again.
+    static let releaseRetry: Duration = .seconds(30)
+    /// Where this workspace's tabs record their visits, into its own history store; nil until that store opens,
+    /// when the workspace keeps no history, and in layout renders. The store opens after the restored tab may have
+    /// committed, so the recorder arrives knowing every tab's page as already seen, and a restored page's load
+    /// finishing records nothing.
     @ObservationIgnored var historyRecorder: HistoryRecorder? {
         didSet {
             guard oldValue == nil, let historyRecorder else { return }
-            for tab in tabs.tabs where tab.store == .global {
+            for tab in tabs.tabs {
                 if let url = tab.url { historyRecorder.send(.seen(tab: tab.id, url: url)) }
             }
         }
@@ -58,17 +105,27 @@ final class BrowserModel {
     /// Runs the tabs' downloads; nil in layout renders, where a download does not run.
     @ObservationIgnored var downloads: DownloadManager?
 
-    /// Called with the new snapshot whenever the tabs or the library change in a way it stores.
-    @ObservationIgnored var onSnapshotChange: ((SessionSnapshot) -> Void)?
-    /// The snapshot last handed to `onSnapshotChange`, so changes it does not store (loading, history
+    /// Called with the new content whenever the tabs or the library change in a way it stores.
+    @ObservationIgnored var onContentChange: ((SessionSnapshot.WorkspaceContent) -> Void)?
+    /// The content last handed to `onContentChange`, so changes it does not store (loading, history
     /// buttons) do not call it.
-    @ObservationIgnored private var lastSnapshot: SessionSnapshot?
+    @ObservationIgnored private var lastContent: SessionSnapshot.WorkspaceContent?
 
-    /// Starts from `snapshot`, building only its selected tab's web view; the other tabs build theirs when
-    /// first selected. Without one, starts with `defaultLibrary`. Either way an empty window gets a blank tab.
-    init(restoring snapshot: SessionSnapshot? = nil, defaultLibrary: LinkLibrary = LinkLibrary()) {
-        if let snapshot {
-            let restored = snapshot.restored()
+    /// Starts from `content`, its tabs on `store`; without it, starts with `defaultLibrary`. Either way an empty
+    /// workspace gets a blank tab. Only while `window` shows the workspace does its selected tab get a web view; the
+    /// other tabs build theirs when first selected.
+    init(
+        workspace: UUID = Workspace.defaultID, store: StoreRef = .global,
+        restoring content: SessionSnapshot.WorkspaceContent? = nil,
+        registry: WebViewRegistry = WebViewRegistry(), window: WindowState = WindowState(),
+        defaultLibrary: LinkLibrary = LinkLibrary()
+    ) {
+        workspaceID = workspace
+        self.store = store
+        self.registry = registry
+        self.window = window
+        if let content {
+            let restored = content.restored(store: store)
             library = restored.library
             tabs = restored.tabs
             restoredTabs = Set(restored.tabs.tabs.map(\.id))
@@ -77,11 +134,10 @@ final class BrowserModel {
         }
         refreshSidebar()
         if tabs.tabs.isEmpty {
-            open(BrowserTab(), load: false)
-        } else if let selected = tabs.selectedID {
-            ensureView(for: selected)
+            changeTabs { $0.open(BrowserTab(store: store, isLive: false)) }
         }
-        lastSnapshot = self.snapshot
+        if isShown, let selected = tabs.selectedID { ensureView(for: selected) }
+        lastContent = self.content
     }
 
     var selected: BrowserTab? { tabs.selected }
@@ -89,15 +145,93 @@ final class BrowserModel {
     /// The selected page's security; `.none` with no tab selected.
     var selectedSecurity: SiteSecurity { tabs.selectedID.flatMap { security[$0] } ?? .none }
 
-    /// What the session store keeps of the window.
-    var snapshot: SessionSnapshot { SessionSnapshot(tabs: tabs, library: library) }
+    // MARK: Showing and releasing
+
+    /// The window shows this workspace.
+    var isShown: Bool { window.activeWorkspace == workspaceID }
+
+    /// The workspace is now on screen in `window`: a pending release retry stops, and the selected tab gets its web
+    /// view back, from its saved interaction state when it was released.
+    func didShow(in window: WindowState) {
+        self.window = window
+        releaseRetryTask?.cancel()
+        releaseRetryTask = nil
+        if let selected = tabs.selectedID { ensureView(for: selected) }
+    }
+
+    /// The workspace has left the screen: every tab's web view goes, its interaction state kept in memory, except a
+    /// held tab's (`isHeld`), retried every `releaseRetry` and whenever a hold state changes. Stops once the
+    /// workspace is shown again. Asked for while a pass runs, it makes that pass scan every tab again.
+    func releaseViews() async {
+        releaseRetryTask?.cancel()
+        releaseRetryTask = nil
+        guard !isShown, viewRelease.begin() else { return }
+        var isAnyHeld: Bool
+        repeat {
+            isAnyHeld = false
+            for id in tabs.tabs.map(\.id) {
+                let held = registry.webView(for: id) != nil ? await isHeld(id) : false
+                switch ViewRelease.step(isShown: isShown, hasView: registry.webView(for: id) != nil, isHeld: held) {
+                case .stop:
+                    viewRelease.stop()
+                    return
+                case .skip: continue
+                case .hold: isAnyHeld = true
+                case .release: release(id)
+                }
+            }
+        } while viewRelease.finishScan()
+        guard ViewRelease.needsRetry(isShown: isShown, isAnyHeld: isAnyHeld) else { return }
+        releaseRetryTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.releaseRetry)
+            guard !Task.isCancelled, let self else { return }
+            self.releaseRetryTask = nil
+            await self.releaseViews()
+        }
+    }
+
+    /// A tab's capture or fullscreen state changed: a held background workspace tries its release again now.
+    func holdStateChanged(_ id: TabID) {
+        guard !isShown, releaseRetryTask != nil else { return }
+        Task { await releaseViews() }
+    }
+
+    /// The tab plays media, captures camera or microphone, is in fullscreen, or is one of a popup and its opener that
+    /// both still have a view.
+    private func isHeld(_ id: TabID) async -> Bool {
+        guard let view = registry.webView(for: id) else { return false }
+        if view.cameraCaptureState != .none || view.microphoneCaptureState != .none { return true }
+        if view.fullscreenState != .notInFullscreen { return true }
+        if let opener = popupOpeners[id], registry.webView(for: opener) != nil { return true }
+        if popupOpeners.contains(where: { $0.value == id && registry.webView(for: $0.key) != nil }) { return true }
+        return await view.requestMediaPlaybackState() == .playing
+    }
+
+    /// Destroys the tab's web view; the tab keeps its URL and title, and its page's interaction state waits in
+    /// memory for the view to be rebuilt.
+    private func release(_ id: TabID) {
+        guard let tab = tabs[id], registry.webView(for: id) != nil else { return }
+        controllers[id]?.didDeselect()
+        controllers[id] = nil
+        let state = registry.release(id)
+        if tab.url != nil, let state { savedStates[id] = state }
+        restoredTabs.insert(id)
+        if loadProgress[id] != nil { loadProgress[id] = nil }
+        update(id) {
+            $0.isLive = false
+            $0.isLoading = false
+        }
+    }
+
+    /// What the session store keeps of the workspace.
+    var content: SessionSnapshot.WorkspaceContent { SessionSnapshot.WorkspaceContent(tabs: tabs, library: library) }
 
     private func didChangeSession() {
         refreshSidebar()
-        let snapshot = self.snapshot
-        guard snapshot != lastSnapshot else { return }
-        lastSnapshot = snapshot
-        onSnapshotChange?(snapshot)
+        let content = self.content
+        guard content != lastContent else { return }
+        lastContent = content
+        onContentChange?(content)
     }
 
     private func refreshSidebar() {
@@ -111,20 +245,20 @@ final class BrowserModel {
     /// Opens the location prompt for a new tab; the tab opens only when the prompt submits an address.
     func newTab() {
         hideShortcutHelp()
+        workspaceEditor = nil
         locationPrompt = .newTab
     }
 
-    /// Cmd-click on a link: the link opens in a new selected tab, on the opener's store.
+    /// Cmd-click on a link: the link opens in a new selected tab of this workspace, on the opener's store.
     func open(url: URL, from source: TabID) {
-        let store = tabs[source]?.store ?? .global
-        open(BrowserTab(store: store, url: url), load: true)
+        open(BrowserTab(store: tabs[source]?.store ?? store, url: url), load: true)
     }
 
-    /// A History window entry: the page opens in a new selected tab on the default store; a URL that is not a
-    /// web page opens nothing.
+    /// A History window entry: the page opens in a new selected tab of this workspace; a URL that is not a web page
+    /// opens nothing.
     func open(historyURL url: URL) {
         guard NewTabPolicy.allowsFromHistory(url) else { return }
-        open(BrowserTab(store: .global, url: url), load: true)
+        open(BrowserTab(store: store, url: url), load: true)
     }
 
     /// Selects the tab, building its web view when it has none; every other tab keeps its own.
@@ -155,7 +289,7 @@ final class BrowserModel {
         let next = tabs.selectedID == id ? sidebar.neighbour(ofClosing: id) : tabs.selectedID
         changeTabs { $0.close(id, selecting: next) }
         if tabs.tabs.isEmpty {
-            open(BrowserTab(), load: false)
+            open(BrowserTab(store: store), load: false)
         } else if let selected = tabs.selectedID {
             ensureView(for: selected)
         }
@@ -170,7 +304,9 @@ final class BrowserModel {
     /// hands over and opens selected; WebKit loads it.
     func openPopup(from source: TabID, configuration: WKWebViewConfiguration) -> WKWebView? {
         guard let opener = tabs[source] else { return nil }
-        return open(BrowserTab(store: opener.store), configuration: configuration, load: false)
+        let popup = BrowserTab(store: opener.store)
+        popupOpeners[popup.id] = source
+        return open(popup, configuration: configuration, load: false)
     }
 
     /// Appends `tab`, selects it and builds its web view, loading `tab.url` when `load` is true.
@@ -190,13 +326,18 @@ final class BrowserModel {
         guard let tab = tabs[id] else { return nil }
         if let view = registry.webView(for: id) { return view }
         let isRestoring = restoredTabs.remove(id) != nil
+        let saved = savedStates.removeValue(forKey: id)
         let view = registry.make(
             for: id, store: tab.store, configuration: configuration, zoom: zoom[id] ?? PageZoom.actual)
         update(id) { $0.isLive = true }
         // Built once the tab is listed, so the controller's initial KVO values reach it.
         let controller = TabController(tab: id, webView: view, model: self)
         controllers[id] = controller
-        if load, let url = tab.url {
+        if load, let saved {
+            controller.browserWillLoad()
+            controller.expectsRestoreCommit = true
+            view.interactionState = saved
+        } else if load, let url = tab.url {
             controller.browserWillLoad()
             let navigation = view.load(URLRequest(url: url))
             if isRestoring { controller.restoreNavigation = navigation }
@@ -226,6 +367,9 @@ final class BrowserModel {
         for id in dropped {
             controllers[id] = nil
             restoredTabs.remove(id)
+            savedStates[id] = nil
+            popupOpeners[id] = nil
+            popupOpeners = popupOpeners.filter { $0.value != id }
             historyRecorder?.send(.closed(tab: id))
             if loadProgress[id] != nil { loadProgress[id] = nil }
             if favicons[id] != nil { favicons[id] = nil }
@@ -271,9 +415,9 @@ final class BrowserModel {
         }
     }
 
-    /// A fresh tab on the link. Every link opens in the default profile.
+    /// A fresh tab on the link, in this workspace.
     private func tab(for link: SavedLink) -> BrowserTab {
-        BrowserTab(store: .global, url: link.url, title: link.title, link: link.id)
+        BrowserTab(store: store, url: link.url, title: link.title, link: link.id)
     }
 
     /// Whether the tab has a page to save as a link.
@@ -411,7 +555,7 @@ final class BrowserModel {
     func load(_ text: String) {
         guard let url = AddressInput.url(from: text) else { return }
         guard let id = tabs.selectedID else {
-            open(BrowserTab(url: url), load: true)
+            open(BrowserTab(store: store, url: url), load: true)
             return
         }
         load(url, in: id)
@@ -421,7 +565,7 @@ final class BrowserModel {
     /// Loads `url` in the tab; when the tab has no web view to load in, opens a loose tab on it instead.
     private func load(_ url: URL, in id: TabID) {
         guard let view = ensureView(for: id, load: false) else {
-            open(BrowserTab(url: url), load: true)
+            open(BrowserTab(store: store, url: url), load: true)
             return
         }
         update(id) { $0.url = url }
@@ -449,6 +593,7 @@ final class BrowserModel {
     /// Opens the location prompt on the selected tab's address, or for a new tab when none is selected.
     func focusAddressBar() {
         hideShortcutHelp()
+        workspaceEditor = nil
         locationPrompt = tabs.selectedID.map { .current($0) } ?? .newTab
     }
 
@@ -466,7 +611,7 @@ final class BrowserModel {
             // is left behind.
             load(url, in: blank.id)
         } else {
-            open(BrowserTab(url: url), load: true)
+            open(BrowserTab(store: store, url: url), load: true)
         }
         focusSelectedView()
     }
@@ -478,11 +623,39 @@ final class BrowserModel {
         focusSelectedView()
     }
 
-    /// Closes the shortcut overlay and the location prompt. Every catalog shortcut's action calls it first, so a key
-    /// pressed over either never acts out of sight behind it.
-    private func closeFloatingSurfaces() {
+    /// Closes the shortcut overlay, the location prompt and the workspace sheet. Every catalog shortcut's action calls
+    /// it first, so a key pressed over any of them never acts out of sight behind it.
+    func closeFloatingSurfaces() {
         hideShortcutHelp()
         cancelLocationPrompt()
+        closeWorkspaceEditor()
+    }
+
+    // MARK: Workspace sheet
+
+    /// Opens the workspace sheet in place of every other floating surface (find, the location prompt, the shortcut
+    /// overlay, the Downloads popover) and takes the keys from the page under it.
+    func showWorkspaceEditor(_ editor: WorkspaceEditor) {
+        locationPrompt = nil
+        isShortcutHelpVisible = false
+        if isFindVisible { isFindVisible = false }
+        clearFindMiss()
+        isDownloadsVisible = false
+        workspaceEditor = editor
+        if let window = selectedView?.window { window.makeFirstResponder(nil) }
+    }
+
+    /// Closes the sheet and hands the keys back to the page, as closing the location prompt does.
+    func closeWorkspaceEditor() {
+        guard workspaceEditor != nil else { return }
+        finishWorkspaceEditor()
+    }
+
+    /// The sheet is done: closed if still open, and the keys go to the page, also when Create already closed it by
+    /// switching to the new workspace.
+    func finishWorkspaceEditor() {
+        workspaceEditor = nil
+        focusSelectedView()
     }
 
     /// Makes the selected page first responder; a view not in a window yet (a tab just opened) takes focus when
@@ -547,6 +720,7 @@ final class BrowserModel {
     /// Opens the overlay and takes the keys from the page under it, so Esc and typing reach the overlay.
     func showShortcutHelp() {
         locationPrompt = nil
+        workspaceEditor = nil
         isShortcutHelpVisible = true
         if let window = selectedView?.window { window.makeFirstResponder(nil) }
     }

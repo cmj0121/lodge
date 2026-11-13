@@ -3,19 +3,15 @@ import LodgeKit
 import WebKit
 import os
 
-/// Owns the browser, the session it is saved to, the history it records, the History window's model and the
-/// downloads. All are built on first use, after `LodgeApp.init`, so a layout render (which exits there) never reads
-/// or writes the session, history or downloads files.
+/// Owns the workspaces' coordinator (with each workspace's history), the session it is saved to and the downloads.
+/// All are built on first use, after `LodgeApp.init`, so a layout render (which exits there) never reads or writes
+/// the session, history or downloads files.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private static let logger = Logger(subsystem: "dev.lodge", category: "history")
-
     private lazy var store = SessionStore()
-    /// The history file, nil until it has opened off the main actor, and for the run when it cannot open.
-    private(set) var historyStore: HistoryStore?
 
-    /// The History window's model; it gets the store when the file has opened.
-    private(set) lazy var history = HistoryModel(browser: browser)
+    /// The History window's model; it shows the active workspace's history once its file has opened.
+    var history: HistoryModel { coordinator.history }
 
     /// The downloads, kept in memory only when Application Support cannot be found.
     private(set) lazy var downloads: DownloadManager = {
@@ -27,12 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }()
 
-    private(set) lazy var browser: BrowserModel = {
-        let browser = BrowserModel(restoring: store.load())
-        browser.onSnapshotChange = { [store] in store.schedule($0) }
-        browser.downloads = downloads
-        return browser
-    }()
+    private(set) lazy var coordinator = WorkspaceCoordinator(
+        restoring: store.load(), session: store, appDirectory: try? SessionStore.appDirectory(), downloads: downloads)
 
     /// The ⌘+ alias of Zoom In (D9), which a menu item cannot carry beside its ⌘= key, and ⌘/ outside the page (D10).
     private var keyMonitor: Any?
@@ -47,13 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         downloads.cancelAllForQuit()
-        store.schedule(browser.snapshot)
-        store.flush()
-        do {
-            try historyStore?.close()
-        } catch {
-            Self.logger.error("Could not close history: \(error.localizedDescription, privacy: .public)")
-        }
+        store.writeNow(coordinator.snapshot)
+        coordinator.closeAllHistory()
     }
 
     /// In the browser window, runs Zoom In for ⌘+ when it can zoom in, and toggles the shortcut help for ⌘/ when
@@ -66,12 +53,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard isZoomInAlias || isShortcutHelp else { return event }
             let handled = MainActor.assumeIsolated {
                 guard let self, self.isBrowserWindowKey else { return false }
+                let browser = self.coordinator.active
                 if isZoomInAlias {
-                    guard self.browser.canZoomIn else { return false }
-                    self.browser.zoomIn()
+                    guard browser.canZoomIn else { return false }
+                    browser.zoomIn()
                 } else {
                     guard !Self.isInWebView(NSApp.keyWindow?.firstResponder) else { return false }
-                    self.browser.toggleShortcutHelp()
+                    browser.toggleShortcutHelp()
                 }
                 return true
             }
@@ -91,8 +79,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The key window shows the selected tab's web view, so it is the browser window.
     private var isBrowserWindowKey: Bool {
-        guard let key = NSApp.keyWindow, let id = browser.tabs.selectedID else { return false }
-        return browser.registry.webView(for: id)?.window === key
+        guard let key = NSApp.keyWindow, let id = coordinator.active.tabs.selectedID else { return false }
+        return coordinator.registry.webView(for: id)?.window === key
     }
 
     /// Loads downloads.json off the main actor, interrupting what was running at the last quit and deleting the
@@ -113,21 +101,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Opens the history file off the main actor (opening checks the whole file), then starts recording visits and
-    /// hands it to the History window.
+    /// Opens every workspace's history file off the main actor; deletions left pending by the last run must finish
+    /// first, so no file being deleted opens again.
     private func openHistory() {
         Task {
-            do {
-                let opened = try await Task.detached(priority: .userInitiated) {
-                    try HistoryStore.open(directory: SessionStore.appDirectory())
-                }.value
-                historyStore = opened
-                browser.historyRecorder = HistoryRecorder(store: opened)
-                history.attach(opened)
-            } catch {
-                Self.logger.error("History is unavailable: \(error.localizedDescription, privacy: .public)")
-                history.storeFailed()
-            }
+            await coordinator.retryPendingDeletions()
+            await coordinator.openHistoryStores()
         }
     }
 }

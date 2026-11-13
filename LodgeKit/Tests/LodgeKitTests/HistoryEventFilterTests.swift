@@ -56,17 +56,31 @@ import Testing
         #expect(
             filter.loadFinished(routed, title: "A", store: .global) == .urlChanged(tab: tab, url: routed, title: "A"))
         #expect(filter.loadFinished(nil, title: "", store: .global) == nil)
-        #expect(filter.loadFinished(routed, title: "A", store: .workspace(UUID())) == nil)
         #expect(filter.loadFinished(routed, title: "A", store: nil) == nil)
     }
 
-    @Test func workspaceAndClosedTabsSendNothing() {
+    @Test func everyStoreIsRecorded() {
         var filter = HistoryEventFilter(tab: tab)
         _ = filter.urlChanged(page, title: "", store: .global, isLoading: false)
-        for store in [StoreRef.workspace(UUID()), nil] {
-            #expect(filter.committed(page, title: "A", store: store, isRestore: false) == nil)
-            #expect(filter.urlChanged(page, title: "A", store: store, isLoading: false) == nil)
-            #expect(filter.titleChanged("A", url: page, store: store) == nil)
+        for store in [StoreRef.workspace(UUID()), .ephemeral(UUID())] {
+            #expect(
+                filter.committed(page, title: "A", store: store, isRestore: false)
+                    == .committed(tab: tab, url: page, title: "A"))
+            #expect(filter.committed(page, title: "A", store: store, isRestore: true) == .seen(tab: tab, url: page))
+            #expect(
+                filter.urlChanged(page, title: "A", store: store, isLoading: false)
+                    == .urlChanged(tab: tab, url: page, title: "A"))
+            #expect(filter.titleChanged("A", url: page, store: store) == .title(tab: tab, url: page, title: "A"))
+            #expect(
+                filter.loadFinished(page, title: "A", store: store) == .urlChanged(tab: tab, url: page, title: "A"))
         }
+    }
+
+    @Test func closedTabsSendNothing() {
+        var filter = HistoryEventFilter(tab: tab)
+        _ = filter.urlChanged(page, title: "", store: .global, isLoading: false)
+        #expect(filter.committed(page, title: "A", store: nil, isRestore: false) == nil)
+        #expect(filter.urlChanged(page, title: "A", store: nil, isLoading: false) == nil)
+        #expect(filter.titleChanged("A", url: page, store: nil) == nil)
     }
 }

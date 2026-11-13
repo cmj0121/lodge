@@ -3,7 +3,8 @@ import LodgeKit
 import Observation
 import os
 
-/// State and actions of the History window: the visits loaded page by page, grouped by day, and the search.
+/// State and actions of the History window: the shown workspace's visits loaded page by page, grouped by day, and
+/// the search.
 /// While the window is closed nothing loads: changes only mark the list dirty, and it refreshes when shown again.
 @MainActor
 @Observable
@@ -14,6 +15,8 @@ final class HistoryModel {
         case ready
         /// The history file could not open, so nothing is recorded this run.
         case unavailable
+        /// The workspace keeps no history.
+        case notKept
     }
 
     static let pageSize = 200
@@ -49,7 +52,8 @@ final class HistoryModel {
         }
     }
 
-    @ObservationIgnored private let browser: BrowserModel
+    /// Opens a visit's page in a new tab of the key window's workspace.
+    @ObservationIgnored private let openURL: @MainActor (URL) -> Void
     @ObservationIgnored private var store: (any HistorySource)?
     @ObservationIgnored private var pages = HistoryPages() {
         didSet { if !isSearching { regroup() } }
@@ -68,10 +72,15 @@ final class HistoryModel {
     /// Each search replaces the earlier ones; a new query or a clear voids them all.
     @ObservationIgnored private var searches = LatestOnly()
     @ObservationIgnored private var searchTask: Task<Void, Never>?
+    /// Each shown store replaces the earlier ones, so what a refresh of the one before finds is not shown.
+    @ObservationIgnored private var shownStores = LatestOnly()
     @ObservationIgnored private var changesTask: Task<Void, Never>?
+    /// Following of earlier stores, cancelled but maybe not yet ended.
+    @ObservationIgnored private var stoppedChanges: [UInt64: Task<Void, Never>] = [:]
+    @ObservationIgnored private var stoppedCount: UInt64 = 0
 
-    init(browser: BrowserModel) {
-        self.browser = browser
+    init(open: @escaping @MainActor (URL) -> Void) {
+        openURL = open
     }
 
     private var trimmedQuery: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -85,11 +94,38 @@ final class HistoryModel {
 
     // MARK: Store
 
-    /// The store has opened: follows its changes for as long as the app runs, loading them while the window shows.
-    func attach(_ store: any HistorySource) {
-        guard self.store == nil else { return }
+    /// Shows another workspace's history (nil while its store opens, or when it has none): stops following the
+    /// previous store, voids its loads and searches still running and empties the list, then follows `store`'s
+    /// changes, loading them while the window shows. The query stays and runs again on the new store.
+    func show(_ store: (any HistorySource)?, state: State) {
+        if let changesTask {
+            changesTask.cancel()
+            stoppedCount &+= 1
+            let key = stoppedCount
+            stoppedChanges[key] = changesTask
+            Task {
+                await changesTask.value
+                stoppedChanges[key] = nil
+            }
+        }
+        changesTask = nil
+        searchTask?.cancel()
+        shownStores.invalidate()
+        refreshes.invalidate()
+        pageLoads.invalidate()
+        searches.invalidate()
         self.store = store
-        state = .ready
+        self.state = state
+        isDirty = true
+        if hasFirstPage { hasFirstPage = false }
+        if loadFailed { loadFailed = false }
+        if searchFailed { searchFailed = false }
+        if pageLoadFailed { pageLoadFailed = false }
+        if clearLeftData { clearLeftData = false }
+        isSearchPending = isSearching && store != nil
+        matches = []
+        pages.refresh(firstPage: [], limit: Self.pageSize)
+        guard let store else { return }
         changesTask = Task { [weak self] in
             for await _ in store.changes() {
                 guard let self else { return }
@@ -98,8 +134,9 @@ final class HistoryModel {
         }
     }
 
-    func storeFailed() {
-        state = .unavailable
+    /// Waits until no store shown before stops being followed, so its file can close.
+    func stoppedFollowing() async {
+        for task in stoppedChanges.values { await task.value }
     }
 
     // MARK: Window
@@ -124,6 +161,7 @@ final class HistoryModel {
     private func refresh() async {
         guard let store else { return }
         isDirty = false
+        let shown = shownStores.ticket
         let ticket = refreshes.begin()
         do {
             let first = try await store.page(after: nil, limit: Self.pageSize)
@@ -137,7 +175,7 @@ final class HistoryModel {
             isDirty = true
             if refreshes.accepts(ticket), !loadFailed { loadFailed = true }
         }
-        if isSearching { await search(trimmedQuery, in: store) }
+        if isSearching, shownStores.accepts(shown) { await search(trimmedQuery, in: store) }
     }
 
     /// "Try Again" after a failed read: reloads the first page, which runs the search again too.
@@ -224,9 +262,10 @@ final class HistoryModel {
         days.lazy.flatMap(\.visits).first { $0.id == id }
     }
 
-    /// Opens the visit's page in a new Default tab; the view has already brought the browser window up.
+    /// Opens the visit's page in a new tab of the key window's workspace; the view has already brought the browser
+    /// window up.
     func open(_ visit: HistoryVisit) {
-        browser.open(historyURL: visit.url)
+        openURL(visit.url)
     }
 
     func copyLink(_ visit: HistoryVisit) {
@@ -236,8 +275,8 @@ final class HistoryModel {
         pasteboard.setString(visit.url.absoluteString, forType: .string)
     }
 
-    /// Empties the list at once, voiding every load and search still running, then the store; the store's change
-    /// refreshes the list again. Works with the window closed.
+    /// Empties the shown workspace's list at once, voiding every load and search still running, then the store; the
+    /// store's change refreshes the list again. Works with the window closed.
     func clearAll() {
         guard let store else { return }
         searchTask?.cancel()

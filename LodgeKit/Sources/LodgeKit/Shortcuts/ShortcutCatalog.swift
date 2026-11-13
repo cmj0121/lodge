@@ -1,11 +1,30 @@
 public enum ShortcutID: String, CaseIterable, Sendable {
     case newTab, closeTab, openLocation, reload, find, bookmarkTab, toggleDownloads, zoomIn, zoomOut, actualSize,
-        shortcutHelp
+        shortcutHelp, workspace1, workspace2, workspace3, workspace4, workspace5, workspace6, workspace7, workspace8,
+        workspace9
+}
+
+extension ShortcutID {
+    /// ⌘1 is Default, ⌘2–⌘9 the next eight workspaces in order.
+    public static let workspaceSlots: [ShortcutID] = [
+        .workspace1, .workspace2, .workspace3, .workspace4, .workspace5, .workspace6, .workspace7, .workspace8,
+        .workspace9,
+    ]
+
+    /// 1…9 for a workspace slot, nil for every other shortcut.
+    public var workspaceSlot: Int? {
+        Self.workspaceSlots.firstIndex(of: self).map { $0 + 1 }
+    }
+
+    public static func workspace(slot: Int) -> ShortcutID? {
+        workspaceSlots.indices.contains(slot - 1) ? workspaceSlots[slot - 1] : nil
+    }
 }
 
 /// Menu groups, in the order the overlay shows them.
 public enum ShortcutMenu: String, CaseIterable, Sendable {
-    case file = "File", edit = "Edit", view = "View", bookmarks = "Bookmarks", help = "Help"
+    case file = "File", edit = "Edit", view = "View", bookmarks = "Bookmarks", workspaces = "Workspaces",
+        help = "Help"
 }
 
 public struct KeyCombo: Hashable, Sendable {
@@ -43,10 +62,12 @@ public struct Shortcut: Identifiable, Hashable, Sendable {
     public let yieldsToPage: Bool
     /// Shown beside the key in the overlay, e.g. "outside the page".
     public let note: String?
+    /// False keeps the shortcut out of the overlay's `grouped`; its menu item still binds the key.
+    public let isListed: Bool
 
     init(
         _ id: ShortcutID, _ title: String, _ menu: ShortcutMenu, _ combo: KeyCombo, aliases: [KeyCombo] = [],
-        yieldsToPage: Bool = false, note: String? = nil
+        yieldsToPage: Bool = false, note: String? = nil, isListed: Bool = true
     ) {
         self.id = id
         self.title = title
@@ -55,6 +76,7 @@ public struct Shortcut: Identifiable, Hashable, Sendable {
         self.aliases = aliases
         self.yieldsToPage = yieldsToPage
         self.note = note
+        self.isListed = isListed
     }
 }
 
@@ -72,6 +94,12 @@ public enum ShortcutCatalog {
         Shortcut(.actualSize, "Actual Size", .view, KeyCombo("0")),
         Shortcut(.shortcutHelp, "Keyboard Shortcuts", .help, KeyCombo("/"), yieldsToPage: true, note: "outside the page"),
     ]
+        + ShortcutID.workspaceSlots.enumerated().map { index, id in
+            let slot = index + 1
+            return Shortcut(
+                id, "Workspace \(slot)", .workspaces, KeyCombo(Character("\(slot)")),
+                note: slot == 1 ? "⌘2–⌘9 next" : nil, isListed: slot == 1)
+        }
 
     public static subscript(id: ShortcutID) -> Shortcut {
         all.first { $0.id == id }!
@@ -79,7 +107,7 @@ public enum ShortcutCatalog {
 
     public static var grouped: [(menu: ShortcutMenu, shortcuts: [Shortcut])] {
         ShortcutMenu.allCases.compactMap { menu in
-            let shortcuts = all.filter { $0.menu == menu }
+            let shortcuts = all.filter { $0.menu == menu && $0.isListed }
             return shortcuts.isEmpty ? nil : (menu, shortcuts)
         }
     }

@@ -30,6 +30,9 @@
                     .expanded, find: false, prompt: .newTab, appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-location-new-\(name).png"))
             }
+            renderWorkspace(to: directory.appending(path: "layout-workspace.png"))
+            renderWorkspaceUI(in: directory)
+            checkDeletion(to: directory.appending(path: "layout-delete.png"))
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -46,7 +49,9 @@
             defaults.set(mode.rawValue, forKey: SidebarMode.defaultsKey)
             defer { defaults.removePersistentDomain(forName: suite) }
 
-            let model = BrowserModel(defaultLibrary: .sample)
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+            let model = coordinator.active
             // Opens the sample's folder, so the render shows a nested bookmark.
             for case .folder(let folder) in model.library.bookmarks.children { model.setFolderExpanded(folder.id, true) }
             if let bookmark = model.library.links(on: .bookmarks).first { model.openLink(bookmark, load: false) }
@@ -66,8 +71,90 @@
             case nil: break
             }
             snapshot(
-                BrowserView(model: model).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
                 appearance: appearance, to: url)
+        }
+
+        /// The workspace bar over Default and two custom workspaces, the second shown, in both sidebar modes and both
+        /// appearances; then the New Workspace, Change Icon and Rename sheets over it.
+        private static func renderWorkspaceUI(in directory: URL) {
+            let suite = "dev.lodge.render-layout"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                let name = appearance == .aqua ? "light" : "dark"
+                let coordinator = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+                _ = try? coordinator.create(name: "Personal", symbol: "house")
+                guard let work = try? coordinator.create(name: "Work", symbol: "briefcase") else { return }
+                for mode in SidebarMode.allCases {
+                    defaults.set(mode.rawValue, forKey: SidebarMode.defaultsKey)
+                    snapshot(
+                        BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                        size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
+                        to: directory.appending(path: "layout-workspaces-\(mode.rawValue)-\(name).png"))
+                }
+                defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+                coordinator.window.workspaceEditor = .create
+                snapshot(
+                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-workspace-sheet-\(name).png"))
+                coordinator.window.workspaceEditor = .changeIcon(work.id)
+                snapshot(
+                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-workspace-icon-\(name).png"))
+                coordinator.window.workspaceEditor = .rename(work.id)
+                snapshot(
+                    BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults),
+                    size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-workspace-rename-\(name).png"))
+            }
+        }
+
+        /// A second workspace, created and switched to over Default's sample library: its own empty sidebar shows,
+        /// and Default gives up its web views.
+        private static func renderWorkspace(to url: URL) {
+            let suite = "dev.lodge.render-layout"
+            let defaults = UserDefaults(suiteName: suite)!
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            defer { defaults.removePersistentDomain(forName: suite) }
+
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+            guard (try? coordinator.create(name: "Work", symbol: WorkspaceSymbols.all[1])) != nil else { return }
+            snapshot(
+                BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                to: url)
+            if coordinator.registry.hasViews(on: .global) { print("Default kept its web views after the switch") }
+        }
+
+        /// Creates a throwaway workspace with no session or Application Support, shows it, deletes it and prints
+        /// whether every step ran: back on Default, nothing pending, no model or web view left on its store.
+        /// When the data store cannot be removed, its WebKit store (a fresh UUID each run) stays in the container.
+        private static func checkDeletion(to url: URL) {
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            // Its own pool, so the web view this run loop never drains is freed before the data store is removed.
+            let made: Workspace? = autoreleasepool {
+                guard let doomed = try? coordinator.create(name: "Doomed", symbol: WorkspaceSymbols.all[1])
+                else { return nil }
+                snapshot(BrowserRoot(coordinator: coordinator), size: NSSize(width: 800, height: 500), to: url)
+                return doomed
+            }
+            guard let doomed = made else { return }
+            var result: Bool?
+            Task { result = await coordinator.delete(doomed.id) }
+            while result == nil { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) }
+            let clean =
+                result == true && coordinator.activeWorkspace.id == Workspace.defaultID
+                && coordinator.pendingDeletions.isEmpty && coordinator.model(for: doomed.id) == nil
+                && !coordinator.registry.hasViews(on: doomed.store)
+            if clean {
+                print("Workspace deletion: ok")
+            } else {
+                print("Workspace deletion: FAILED, WebKit store \(doomed.id.uuidString) may be left")
+            }
         }
 
         /// Which location prompt a render opens: ⌘T's empty one or ⌘L's on the selected page.
@@ -92,10 +179,10 @@
                     _ = try? await store.record(URL(string: address)!, title: title, at: date)
                 }
             }
-            let model = HistoryModel(browser: BrowserModel(defaultLibrary: .sample))
+            let model = HistoryModel { _ in }
             Task {
                 await done.value
-                model.attach(store)
+                model.show(store, state: .ready)
             }
             RunLoop.main.run(until: Date().addingTimeInterval(1))
             snapshot(HistoryView(model: model), size: NSSize(width: 640, height: 600), title: "History", to: url)

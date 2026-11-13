@@ -33,11 +33,13 @@ public struct DownloadItem: Identifiable, Codable, Equatable, Sendable {
     public var totalBytes: Int64?
     public let startedAt: Date
     public var endedAt: Date?
+    /// The store of the tab it came from; nil in a list saved before workspaces, when only Default downloaded.
+    public var store: StoreRef?
 
     public init(
         id: UUID = UUID(), sourceURL: URL?, method: String = "GET", fileName: String, directory: URL? = nil,
         fileURL: URL? = nil, bookmark: Data? = nil, state: State = .waitingForLocation, receivedBytes: Int64 = 0,
-        totalBytes: Int64? = nil, startedAt: Date, endedAt: Date? = nil
+        totalBytes: Int64? = nil, startedAt: Date, endedAt: Date? = nil, store: StoreRef? = nil
     ) {
         self.id = id
         self.sourceURL = sourceURL
@@ -51,6 +53,17 @@ public struct DownloadItem: Identifiable, Codable, Equatable, Sendable {
         self.totalBytes = totalBytes
         self.startedAt = startedAt
         self.endedAt = endedAt
+        self.store = store
+    }
+
+    /// The store a Retry sends the request on: its own, Default's for a row saved before workspaces; nil for a
+    /// private (ephemeral) store, whose sign-ins are gone.
+    public var retryStore: StoreRef? {
+        switch store {
+        case nil: .global
+        case .ephemeral: nil
+        case let store?: store
+        }
     }
 
     /// The request was a GET over http(s), so it can be sent again (D8).
