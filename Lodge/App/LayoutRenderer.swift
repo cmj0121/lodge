@@ -30,6 +30,7 @@
                     .expanded, find: false, prompt: .newTab, appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-location-new-\(name).png"))
             }
+            renderWorkspace(to: directory.appending(path: "layout-workspace.png"))
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -70,6 +71,23 @@
                 appearance: appearance, to: url)
         }
 
+        /// A second workspace, created and switched to over Default's sample library: its own empty sidebar shows,
+        /// and Default gives up its web views.
+        private static func renderWorkspace(to url: URL) {
+            let suite = "dev.lodge.render-layout"
+            let defaults = UserDefaults(suiteName: suite)!
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            defer { defaults.removePersistentDomain(forName: suite) }
+
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+            guard (try? coordinator.create(name: "Work", symbol: WorkspaceSymbols.all[1])) != nil else { return }
+            snapshot(
+                BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                to: url)
+            if coordinator.registry.hasViews(on: .global) { print("Default kept its web views after the switch") }
+        }
+
         /// Which location prompt a render opens: ⌘T's empty one or ⌘L's on the selected page.
         enum PromptRender { case newTab, current }
 
@@ -92,7 +110,7 @@
                     _ = try? await store.record(URL(string: address)!, title: title, at: date)
                 }
             }
-            let model = HistoryModel(browser: BrowserModel(defaultLibrary: .sample))
+            let model = HistoryModel { _ in }
             Task {
                 await done.value
                 model.attach(store)

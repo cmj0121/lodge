@@ -4,11 +4,14 @@ import SwiftUI
 
 /// Menu bar items and their keyboard shortcuts.
 struct BrowserCommands: Commands {
-    let model: BrowserModel
+    let coordinator: WorkspaceCoordinator
     let history: HistoryModel
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.isBrowserWindow) private var isBrowserWindow
     @AppStorage(SidebarMode.defaultsKey) private var sidebarMode: SidebarMode = .expanded
+
+    /// The shown workspace's model, which every item acts on.
+    private var model: BrowserModel { coordinator.active }
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {

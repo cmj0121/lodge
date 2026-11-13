@@ -3,8 +3,7 @@ import LodgeKit
 import WebKit
 import os
 
-/// Owns the browser, the session it is saved to, the history it records, the History window's model and the
-/// downloads. All are built on first use, after `LodgeApp.init`, so a layout render (which exits there) never reads
+/// Owns the workspaces' coordinator, the session it is saved to, the history Default records and the downloads. All are built on first use, after `LodgeApp.init`, so a layout render (which exits there) never reads
 /// or writes the session, history or downloads files.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -15,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var historyStore: HistoryStore?
 
     /// The History window's model; it gets the store when the file has opened.
-    private(set) lazy var history = HistoryModel(browser: browser)
+    var history: HistoryModel { coordinator.history }
 
     /// The downloads, kept in memory only when Application Support cannot be found.
     private(set) lazy var downloads: DownloadManager = {
@@ -27,12 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }()
 
-    private(set) lazy var browser: BrowserModel = {
-        let browser = BrowserModel(restoring: store.load())
-        browser.onSnapshotChange = { [store] in store.schedule($0) }
-        browser.downloads = downloads
-        return browser
-    }()
+    private(set) lazy var coordinator = WorkspaceCoordinator(
+        restoring: store.load(), session: store, appDirectory: try? SessionStore.appDirectory(), downloads: downloads)
 
     /// The ⌘+ alias of Zoom In (D9), which a menu item cannot carry beside its ⌘= key, and ⌘/ outside the page (D10).
     private var keyMonitor: Any?
@@ -47,8 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         downloads.cancelAllForQuit()
-        store.schedule(browser.snapshot)
-        store.flush()
+        store.writeNow(coordinator.snapshot)
         do {
             try historyStore?.close()
         } catch {
@@ -66,12 +60,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard isZoomInAlias || isShortcutHelp else { return event }
             let handled = MainActor.assumeIsolated {
                 guard let self, self.isBrowserWindowKey else { return false }
+                let browser = self.coordinator.active
                 if isZoomInAlias {
-                    guard self.browser.canZoomIn else { return false }
-                    self.browser.zoomIn()
+                    guard browser.canZoomIn else { return false }
+                    browser.zoomIn()
                 } else {
                     guard !Self.isInWebView(NSApp.keyWindow?.firstResponder) else { return false }
-                    self.browser.toggleShortcutHelp()
+                    browser.toggleShortcutHelp()
                 }
                 return true
             }
@@ -91,8 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The key window shows the selected tab's web view, so it is the browser window.
     private var isBrowserWindowKey: Bool {
-        guard let key = NSApp.keyWindow, let id = browser.tabs.selectedID else { return false }
-        return browser.registry.webView(for: id)?.window === key
+        guard let key = NSApp.keyWindow, let id = coordinator.active.tabs.selectedID else { return false }
+        return coordinator.registry.webView(for: id)?.window === key
     }
 
     /// Loads downloads.json off the main actor, interrupting what was running at the last quit and deleting the
@@ -113,8 +108,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Opens the history file off the main actor (opening checks the whole file), then starts recording visits and
-    /// hands it to the History window.
+    /// Opens the history file off the main actor (opening checks the whole file), then starts recording Default's
+    /// visits and hands it to the History window.
     private func openHistory() {
         Task {
             do {
@@ -122,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     try HistoryStore.open(directory: SessionStore.appDirectory())
                 }.value
                 historyStore = opened
-                browser.historyRecorder = HistoryRecorder(store: opened)
+                coordinator.defaultHistoryRecorder = HistoryRecorder(store: opened)
                 history.attach(opened)
             } catch {
                 Self.logger.error("History is unavailable: \(error.localizedDescription, privacy: .public)")

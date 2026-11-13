@@ -13,11 +13,11 @@ struct LodgeApp: App {
 
     var body: some Scene {
         Window("Lodge", id: "browser") {
-            BrowserView(model: appDelegate.browser)
+            BrowserRoot(coordinator: appDelegate.coordinator)
         }
         .windowStyle(.hiddenTitleBar)
         .windowBackgroundDragBehavior(.enabled)
-        .commands { BrowserCommands(model: appDelegate.browser, history: appDelegate.history) }
+        .commands { BrowserCommands(coordinator: appDelegate.coordinator, history: appDelegate.history) }
 
         Window("History", id: "history") {
             HistoryView(model: appDelegate.history)
@@ -27,5 +27,16 @@ struct LodgeApp: App {
         Settings {
             SettingsView()
         }
+    }
+}
+
+/// The browser window, showing the workspace its window has active; a switch builds it afresh for that workspace.
+struct BrowserRoot: View {
+    let coordinator: WorkspaceCoordinator
+
+    var body: some View {
+        let model = coordinator.active
+        BrowserView(model: model)
+            .id(model.workspaceID)
     }
 }

@@ -21,6 +21,8 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     private struct Active {
         let id: UUID
         let download: WKDownload
+        /// The store of the tab it came from (a Retry's: its row's), so a workspace's downloads can be found.
+        let store: StoreRef
         /// The row a Retry replaces once this download has its destination; until then that row stands for it.
         var replacing: UUID?
         var observations: [NSKeyValueObservation] = []
@@ -61,12 +63,9 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     @ObservationIgnored private let file: DownloadsFile?
     @ObservationIgnored private let writes = DispatchQueue(label: "dev.lodge.downloads.write", qos: .utility)
     @ObservationIgnored private let defaults: UserDefaults
-    /// Runs Retry's requests on the default store (D8).
-    @ObservationIgnored private lazy var retryView: WKWebView = {
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .default()
-        return WKWebView(frame: .zero, configuration: config)
-    }()
+    /// The data store a Retry sends its request on, nil once that store's workspace is gone. Without a coordinator
+    /// (layout renders) only Default's.
+    @ObservationIgnored var dataStore: @MainActor (StoreRef) -> WKWebsiteDataStore? = { $0 == .global ? .default() : nil }
 
     /// `directory` holds downloads.json; nil keeps the list in memory only.
     init(directory: URL?, defaults: UserDefaults = .standard) {
@@ -130,10 +129,10 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
 
     // MARK: Starting
 
-    /// Takes over a download a tab's navigation became, when `DownloadGate` lets `site` start it. Only Default tabs
-    /// download for now (D10).
+    /// Takes over a download a tab's navigation became, when `DownloadGate` lets `site` start it. Every workspace's
+    /// downloads join the one list; a private (ephemeral) store's do not run.
     func start(_ download: WKDownload, store: StoreRef, site: Origin?, userInitiated: Bool, isMainFrame: Bool) {
-        guard store == .global else {
+        if case .ephemeral = store {
             download.cancel(nil)
             let alert = NSAlert()
             alert.messageText = "Downloads aren't available in this workspace yet."
@@ -144,14 +143,16 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             site: site, userInitiated: userInitiated, isMainFrame: isMainFrame, activeCount: active.count)
         switch decision {
         case .allow:
-            track(download, replacing: nil)
+            track(download, store: store, replacing: nil)
         case .ask:
             guard let site else {
                 download.cancel(nil)
                 return
             }
             let window = download.webView?.window
-            track(download, replacing: nil, permission: Task { await askPermission(for: site, in: window) })
+            track(
+                download, store: store, replacing: nil,
+                permission: Task { await askPermission(for: site, in: window) })
         case .refuse(let refusal):
             download.cancel(nil)
             let from = site?.description ?? "a page without a site"
@@ -160,10 +161,12 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         }
     }
 
-    private func track(_ download: WKDownload, replacing: UUID?, permission: Task<Bool, Never>? = nil) {
+    private func track(
+        _ download: WKDownload, store: StoreRef, replacing: UUID?, permission: Task<Bool, Never>? = nil
+    ) {
         download.delegate = self
         active[ObjectIdentifier(download)] = Active(
-            id: UUID(), download: download, replacing: replacing, permission: permission)
+            id: UUID(), download: download, store: store, replacing: replacing, permission: permission)
     }
 
     private func alertTooMany(in window: NSWindow?) {
@@ -212,7 +215,7 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             DownloadItem(
                 id: entry.id, sourceURL: request?.url ?? response.url, method: request?.httpMethod ?? "GET",
                 fileName: name, totalBytes: response.expectedContentLength >= 0 ? response.expectedContentLength : nil,
-                startedAt: Date()))
+                startedAt: Date(), store: entry.store))
         persist()
 
         let finalURL: URL
@@ -471,16 +474,27 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         end(entry.download, as: .cancelled)
     }
 
-    /// Downloads an ended GET http(s) item again on the default store, once at a time per row; the row is replaced
-    /// by the new one when it gets its destination. A finished item retries only once its file is missing.
+    /// Downloads an ended GET http(s) item again on the store it came from (D8), once at a time per row; the row is
+    /// replaced by the new one when it gets its destination. A finished item retries only once its file is missing.
+    /// A row whose workspace is gone, or that came from a private store, is not retried.
     func retry(_ id: UUID) {
         guard let item = list[id], item.canRetry(isMissing: missing.contains(id)), let url = item.sourceURL,
             !retrying.contains(id)
         else { return }
+        guard let store = item.retryStore, let dataStore = dataStore(store) else {
+            let alert = NSAlert()
+            alert.messageText = "This download's workspace no longer exists, so it can't be retried."
+            present(alert, in: NSApp.keyWindow)
+            return
+        }
         retrying.insert(id)
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = dataStore
+        // A download outlives the view that started it.
+        let view = WKWebView(frame: .zero, configuration: config)
         Task {
-            let download = await retryView.startDownload(using: URLRequest(url: url))
-            track(download, replacing: id)
+            let download = await view.startDownload(using: URLRequest(url: url))
+            track(download, store: store, replacing: id)
         }
     }
 

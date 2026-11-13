@@ -49,7 +49,8 @@ final class HistoryModel {
         }
     }
 
-    @ObservationIgnored private let browser: BrowserModel
+    /// Opens a visit's page in a new tab of the browser window.
+    @ObservationIgnored private let openURL: @MainActor (URL) -> Void
     @ObservationIgnored private var store: (any HistorySource)?
     @ObservationIgnored private var pages = HistoryPages() {
         didSet { if !isSearching { regroup() } }
@@ -70,8 +71,8 @@ final class HistoryModel {
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var changesTask: Task<Void, Never>?
 
-    init(browser: BrowserModel) {
-        self.browser = browser
+    init(open: @escaping @MainActor (URL) -> Void) {
+        openURL = open
     }
 
     private var trimmedQuery: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -226,7 +227,7 @@ final class HistoryModel {
 
     /// Opens the visit's page in a new Default tab; the view has already brought the browser window up.
     func open(_ visit: HistoryVisit) {
-        browser.open(historyURL: visit.url)
+        openURL(visit.url)
     }
 
     func copyLink(_ visit: HistoryVisit) {

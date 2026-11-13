@@ -156,18 +156,4 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public static func decode(_ data: Data) throws -> SessionSnapshot {
         try JSONDecoder().decode(SessionSnapshot.self, from: data)
     }
-
-    // MARK: v2-shaped compatibility, until the app keeps one model per workspace
-
-    /// Default only, holding `tabs` and `library`; one window on Default.
-    public init(tabs: TabList, library: LinkLibrary) {
-        self.init(
-            workspaces: [WorkspaceSnapshot(workspace: .default, content: WorkspaceContent(tabs: tabs, library: library))],
-            windows: [WindowSnapshot(activeWorkspace: Workspace.defaultID)], pendingDeletions: [])
-    }
-
-    /// Default's content, on `.global`.
-    public func restored() -> (tabs: TabList, library: LinkLibrary) {
-        (content(of: Workspace.defaultID) ?? .empty).restored(store: .global)
-    }
 }
