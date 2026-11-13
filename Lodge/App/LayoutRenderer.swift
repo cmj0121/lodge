@@ -35,6 +35,7 @@
             renderWorkspaceUI(in: directory)
             checkDeletion(to: directory.appending(path: "layout-delete.png"))
             checkAnonymous()
+            checkSharedPins(to: directory.appending(path: "layout-shared-pins.png"))
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -231,6 +232,58 @@
                 "Anonymous session leaves no URLs",
                 !session.isEmpty && !session.contains(secret) && session.contains("kept-bookmark.example")
                     && saved.map { !$0.contains(secret) } == true && model.tabs.tabs.contains { $0.url?.host() == secret })
+        }
+
+        /// Draws a custom workspace showing Default's sample pins, then checks in the background, printing ok or FAILED
+        /// for each: pinning its tab adds to Default's pins, leaves the tab's link nil and the window where it was;
+        /// opening a pin from there switches to Default and opens it; unpinning there removes Default's pin. The pin is
+        /// `about:blank`, so no request goes out.
+        private static func checkSharedPins(to url: URL) {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            let suite = "dev.lodge.render-layout"
+            let defaults = UserDefaults(suiteName: suite)!
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            defer { defaults.removePersistentDomain(forName: suite) }
+
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+            guard let work = try? coordinator.create(name: "Work", symbol: "briefcase") else {
+                return report("Custom workspace shows Default's pins", false)
+            }
+            let model = coordinator.active
+            snapshot(
+                BrowserRoot(coordinator: coordinator).defaultAppStorage(defaults), size: NSSize(width: 1100, height: 700),
+                to: url)
+            report(
+                "Custom workspace shows Default's pins",
+                model.sidebar.pins.map(\.title) == LinkLibrary.sample.links(on: .pins).map(\.title)
+                    && model.sidebar.pins.allSatisfy { $0.tab == nil } && model.library.links(on: .pins).isEmpty)
+
+            let page = URL(string: "about:blank#pinned")!
+            guard let tab = model.selected else { return report("Pinning in a custom workspace adds to Default", false) }
+            model.update(tab.id) { $0.url = page }
+            model.togglePinSelectedTab()
+            let defaultPins = coordinator.pins
+            report(
+                "Pinning in a custom workspace adds to Default",
+                defaultPins.count == LinkLibrary.sample.links(on: .pins).count + 1 && defaultPins.last?.url == page
+                    && model.selected?.link == nil && model.library.links(on: .pins).isEmpty
+                    && coordinator.activeWorkspace.id == work.id && model.isSelectedTabPinned
+                    && model.sidebar.pins.count == defaultPins.count)
+
+            guard let pin = defaultPins.last else { return report("Opening a pin switches to Default", false) }
+            model.activate(.link(pin))
+            let home = coordinator.active
+            report(
+                "Opening a pin switches to Default",
+                coordinator.activeWorkspace.id == Workspace.defaultID && home.selected?.link == pin.id
+                    && model.tabs.tab(forLink: pin.id) == nil)
+
+            model.unpin(pin.id)
+            report(
+                "Unpinning in a custom workspace removes Default's pin",
+                !coordinator.pins.contains { $0.id == pin.id } && home.selected?.link == nil
+                    && !model.sidebar.pins.contains { $0.id == .link(pin.id) })
         }
 
         /// Which location prompt a render opens: ⌘T's empty one or ⌘L's on the selected page.

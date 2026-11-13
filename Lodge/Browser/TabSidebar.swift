@@ -291,9 +291,13 @@ private struct ItemMenu: View {
         switch item {
         case .link(let link, let shelf, let tab):
             if shelf == .pins && tab == nil {
-                Button("Open") { model.openLink(link) }
+                Button("Open") { model.activate(.link(link)) }
             }
-            Button(shelf == .pins ? "Unpin" : "Remove from Bookmarks") { model.removeLink(link.id) }
+            if shelf == .pins {
+                Button("Unpin") { model.unpin(link.id) }
+            } else {
+                Button("Remove from Bookmarks") { model.removeLink(link.id) }
+            }
         case .tab(let tab):
             Button("Pin Tab") { model.addLink(.pins, from: tab.id) }
                 .disabled(!model.canAddLink(from: tab.id))
@@ -323,7 +327,7 @@ extension View {
 }
 
 /// What an item's icon shows, decided once for the sidebar and the rail's bookmarks menu: the
-/// open tab's status, else the first letter of a link that is not open.
+/// open tab's status, else a link's kept icon (a shared pin's, an Anonymous bookmark's) or its first letter.
 private enum IconContent {
     case crashed
     case loading
@@ -333,7 +337,7 @@ private enum IconContent {
 
     init(item: SidebarItem, favicon: NSImage?) {
         guard let tab = item.tab else {
-            self = .letter(item.title.first.map { String($0).uppercased() } ?? "")
+            self = favicon.map { .favicon($0) } ?? .letter(item.title.first.map { String($0).uppercased() } ?? "")
             return
         }
         if tab.hasCrashed {
@@ -348,7 +352,8 @@ private enum IconContent {
     }
 }
 
-/// The item's icon: the open tab's status, else a dimmed letter tile for a link that is not open.
+/// The item's icon: the open tab's status; a link that is not open shows, dimmed, its kept icon (a shared pin's
+/// from Default, or an Anonymous bookmark's stored one), else the letter tile.
 private struct ItemIcon: View {
     let item: SidebarItem
     let image: NSImage?

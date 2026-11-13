@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import LodgeKit
 import Observation
@@ -91,8 +92,17 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
             defaultLibrary: workspace.id == Workspace.defaultID ? defaultLibrary : LinkLibrary())
         model.downloads = downloads
         if let store = historyStores[workspace.id] { model.historyRecorder = HistoryRecorder(store: store) }
-        model.onContentChange = { [weak self] _ in self?.didChange() }
         models[workspace.id] = model
+        if workspace.id == Workspace.defaultID {
+            model.onContentChange = { [weak self] _ in
+                self?.didChange()
+                self?.pinsDidChange()
+            }
+        } else {
+            model.onContentChange = { [weak self] _ in self?.didChange() }
+            model.sharedPins = self
+            model.sharedPinsDidChange()
+        }
         return model
     }
 
@@ -161,6 +171,61 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         guard workspaces.move(from: source, to: destination) else { return false }
         didChange()
         return true
+    }
+}
+
+// MARK: Shared pins
+
+/// Default's pins, shown and changed from every other workspace.
+@MainActor
+protocol SharedPins: AnyObject {
+    /// Default's pins, its model built (without web views) when needed.
+    var pins: [SavedLink] { get }
+    /// The favicon of the pin's open tab in Default.
+    func pinFavicon(_ pin: UUID) -> NSImage?
+    /// Pins a copy of the tab's page in Default, deduped by URL; the tab and the window stay as they are.
+    func pin(from tab: BrowserTab)
+    /// Pins a copy of the bookmark in Default (a new link, no icon); the bookmark stays.
+    func pin(from link: SavedLink)
+    /// Removes the pin from Default; Default's tab of it becomes loose.
+    func unpin(_ id: UUID)
+    func movePin(_ id: UUID, to index: Int)
+    /// Switches the window to Default and opens the pin there, or selects its open tab.
+    func openPin(_ link: SavedLink, from window: WindowState)
+}
+
+extension WorkspaceCoordinator: SharedPins {
+    private var defaultModel: BrowserModel { model(of: workspaces.default) }
+
+    var pins: [SavedLink] { defaultModel.library.links(on: .pins) }
+
+    func pinFavicon(_ pin: UUID) -> NSImage? {
+        let model = defaultModel
+        return model.tabs.tab(forLink: pin).flatMap { model.favicons[$0.id] }
+    }
+
+    func pin(from tab: BrowserTab) {
+        guard let url = tab.url else { return }
+        defaultModel.addPin(url, title: tab.displayTitle)
+    }
+
+    func pin(from link: SavedLink) {
+        defaultModel.addPin(link.url, title: link.title)
+    }
+
+    func unpin(_ id: UUID) { defaultModel.unpin(id) }
+
+    func movePin(_ id: UUID, to index: Int) { defaultModel.movePin(id, to: index) }
+
+    func openPin(_ link: SavedLink, from window: WindowState) {
+        guard window === self.window else { return }
+        switchTo(Workspace.defaultID)
+        defaultModel.openLink(link)
+    }
+
+    /// Default's content changed: every built model of another workspace shows its pins again.
+    fileprivate func pinsDidChange() {
+        for (id, model) in models where id != Workspace.defaultID { model.sharedPinsDidChange() }
     }
 }
 

@@ -109,6 +109,10 @@ final class BrowserModel {
     /// Runs the tabs' downloads; nil in layout renders, where a download does not run.
     @ObservationIgnored var downloads: DownloadManager?
 
+    /// Default's pins, which every other workspace shows and changes in place of pins of its own; nil for Default and
+    /// previews.
+    @ObservationIgnored weak var sharedPins: (any SharedPins)?
+
     /// Called with the new content whenever the tabs or the library change in a way it stores.
     @ObservationIgnored var onContentChange: ((SessionSnapshot.WorkspaceContent) -> Void)?
     /// The content last handed to `onContentChange`, so changes it does not store (loading, history
@@ -251,9 +255,15 @@ final class BrowserModel {
 
     private func refreshSidebar() {
         let sections = SidebarSections(
-            pins: library.links(on: .pins), bookmarks: library.bookmarks, tabs: tabs)
+            pins: pins, bookmarks: library.bookmarks, tabs: tabs, pinsAreShared: sharedPins != nil)
         if sections != sidebar { sidebar = sections }
     }
+
+    /// The pins the sidebar shows: Default's when shared, else the library's own.
+    private var pins: [SavedLink] { sharedPins?.pins ?? library.links(on: .pins) }
+
+    /// Default's pins changed, or were just shared with this workspace: the sidebar shows them.
+    func sharedPinsDidChange() { refreshSidebar() }
 
     // MARK: Tabs
 
@@ -290,11 +300,16 @@ final class BrowserModel {
         if let target = sidebar.target(offset, from: tabs.selectedID) { activate(target) }
     }
 
-    /// Selects the row's target.
+    /// Selects the row's target; a shared pin opens in Default, which the window switches to.
     func activate(_ target: SidebarSections.Target) {
         switch target {
         case .tab(let id): select(id)
-        case .link(let link): openLink(link)
+        case .link(let link):
+            if let sharedPins, sharedPins.pins.contains(where: { $0.id == link.id }) {
+                sharedPins.openPin(link, from: window)
+            } else {
+                openLink(link)
+            }
         }
     }
 
@@ -421,10 +436,13 @@ final class BrowserModel {
         }
     }
 
-    /// The row's icon: its open tab's favicon, else the icon an Anonymous bookmark stored.
+    /// The row's icon: its open tab's favicon, else a shared pin's from Default, else the icon an Anonymous bookmark
+    /// stored.
     func favicon(for item: SidebarItem) -> NSImage? {
         if let tab = item.tab, let image = favicons[tab.id] { return image }
-        guard case .link(let link, _, _) = item, let data = link.icon else { return nil }
+        guard case .link(let link, let shelf, _) = item else { return nil }
+        if shelf == .pins, let sharedPins { return sharedPins.pinFavicon(link.id) }
+        guard let data = link.icon else { return nil }
         if let cached = storedIcons[link.id], cached.data == data { return cached.image }
         guard let image = NSImage(data: data) else { return nil }
         storedIcons[link.id] = (data, image)
@@ -473,9 +491,13 @@ final class BrowserModel {
     }
 
     /// Saves the tab's page on `shelf`. A loose tab becomes that link's tab, so its row moves to the
-    /// shelf and outlives closing it.
+    /// shelf and outlives closing it. A pin while pins are shared is a copy in Default, and the tab stays as it is.
     func addLink(_ shelf: LinkShelf, from id: TabID) {
         guard let page = savablePage(of: id) else { return }
+        if shelf == .pins, let sharedPins {
+            sharedPins.pin(from: page.tab)
+            return
+        }
         let link = library.add(page.url, title: page.tab.displayTitle, to: shelf)
         if isAnonymous, shelf == .bookmarks, let image = favicons[id] { storeIcon(image, in: link.id) }
         if page.tab.link == nil { update(id) { $0.link = link.id } }
@@ -489,7 +511,7 @@ final class BrowserModel {
     /// The pin holding the selected tab's page, matched by URL so a bookmark's tab finds its pin too.
     private var selectedPin: SavedLink? {
         guard let url = selected?.url else { return nil }
-        return library.links(on: .pins).first { $0.url == url }
+        return pins.first { $0.url == url }
     }
 
     /// The selected tab's page is one of the pins.
@@ -499,10 +521,26 @@ final class BrowserModel {
     func togglePinSelectedTab() {
         closeFloatingSurfaces()
         if let pin = selectedPin {
-            removeLink(pin.id)
+            unpin(pin.id)
         } else if let id = tabs.selectedID {
             addLink(.pins, from: id)
         }
+    }
+
+    /// Pins `url` on this workspace's own pins (Default's), or returns the pin already there for it.
+    @discardableResult
+    func addPin(_ url: URL, title: String) -> SavedLink {
+        library.add(url, title: title, to: .pins)
+    }
+
+    /// Removes the pin, from Default when pins are shared; its open tab carries on as a loose tab.
+    func unpin(_ id: UUID) {
+        if let sharedPins { sharedPins.unpin(id) } else { removeLink(id) }
+    }
+
+    /// Pins a copy of the bookmark, in Default when pins are shared; the bookmark stays.
+    func pin(bookmark link: SavedLink) {
+        if let sharedPins { sharedPins.pin(from: link) } else { addPin(link.url, title: link.title) }
     }
 
     /// Drops the link's row, or a folder with every row in it; an open tab of a removed link carries on as a
@@ -559,9 +597,9 @@ final class BrowserModel {
         return library.moveBookmark(id, into: folder, at: index)
     }
 
-    /// Moves the pin so it ends at `index` among the pins.
+    /// Moves the pin so it ends at `index` among the pins, Default's when shared.
     func movePin(_ id: UUID, to index: Int) {
-        library.move(id, to: index)
+        if let sharedPins { sharedPins.movePin(id, to: index) } else { library.move(id, to: index) }
     }
 
     // MARK: Import and export

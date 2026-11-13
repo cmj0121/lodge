@@ -315,6 +315,7 @@ struct BookmarkOutline: NSViewRepresentable {
                 menu.addItem(
                     ClosureMenuItem("Rename…") { [model] in BookmarkPrompts.rename(link.id, title: link.title, model: model) })
                 menu.addItem(.separator())
+                menu.addItem(ClosureMenuItem("Pin") { [model] in model.pin(bookmark: link) })
                 menu.addItem(ClosureMenuItem("Remove from Bookmarks") { [model] in model.removeLink(link.id) })
                 if let tab {
                     menu.addItem(.separator())
