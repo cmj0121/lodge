@@ -35,6 +35,7 @@ struct AddressBar: View {
     let pane: BrowserPane
     @State private var text = ""
     @FocusState private var isFocused: Bool
+    @Environment(\.workspaceTint) private var tint
 
     private var tab: BrowserTab? { pane.selected }
 
@@ -61,7 +62,7 @@ struct AddressBar: View {
         .background(.quaternary.opacity(isFocused ? 0.4 : 0.7), in: .rect(cornerRadius: 7))
         .overlay {
             RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(Color.accentColor.opacity(isFocused ? 0.8 : 0), lineWidth: 1.5)
+                .strokeBorder((tint?.color ?? .accentColor).opacity(isFocused ? 0.8 : 0), lineWidth: 1.5)
         }
         .overlay(alignment: .bottomLeading) {
             if let tab, tab.isLoading {

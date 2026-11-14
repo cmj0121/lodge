@@ -6,6 +6,7 @@ import SwiftUI
 struct BrowserView: View {
     let pane: BrowserPane
     @AppStorage(SidebarMode.defaultsKey) private var sidebarMode: SidebarMode = .expanded
+    @Environment(WorkspaceCoordinator.self) private var coordinator
 
     var body: some View {
         HStack(spacing: 0) {
@@ -19,7 +20,11 @@ struct BrowserView: View {
                 // The card reaches up beside the window buttons; the column keeps the title bar inset.
                 .ignoresSafeArea(.container, edges: .top)
         }
-        .background(Color(nsColor: .underPageBackgroundColor))
+        .background {
+            WorkspaceWash()
+                .background(Color(nsColor: .underPageBackgroundColor))
+                .ignoresSafeArea()
+        }
         .overlay {
             if pane.window.isShortcutHelpVisible {
                 ShortcutHelpOverlay(close: pane.hideShortcutHelp)
@@ -39,6 +44,7 @@ struct BrowserView: View {
         .animation(.snappy(duration: 0.2), value: pane.window.locationPrompt)
         .navigationTitle(pane.windowTitle)
         .environment(\.webViewRegistry, pane.model.registry)
+        .workspaceTint(coordinator.workspaces[pane.model.workspaceID]?.color)
         .frame(minWidth: 800, minHeight: 500)
         .focusedSceneValue(\.isBrowserWindow, true)
     }
@@ -114,6 +120,9 @@ private struct NewTabPlaceholder: View {
         ContentUnavailableView(
             "New Tab", systemImage: "square.on.square.dashed",
             description: Text("Type an address or a search in the address bar."))
+        // Covers the empty web view, which keeps the system's look while the window may be dark.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .textBackgroundColor))
     }
 }
 

@@ -458,8 +458,28 @@ struct LetterIcon: View {
 
 /// The highlight under a row or tile: filled for the selected tab, faint on hover.
 func rowBackground(isSelected: Bool, isHovered: Bool, cornerRadius: CGFloat) -> some View {
-    RoundedRectangle(cornerRadius: cornerRadius)
-        .fill(Color.primary.opacity(isSelected ? 0.12 : isHovered ? 0.05 : 0))
+    RowBackground(isSelected: isSelected, isHovered: isHovered, cornerRadius: cornerRadius)
+}
+
+/// The fill stays primary-based so selected and hovered read apart on any tint; a coloured workspace adds a
+/// hairline in its colour round the selected one.
+private struct RowBackground: View {
+    let isSelected: Bool
+    let isHovered: Bool
+    let cornerRadius: CGFloat
+    @Environment(\.workspaceTint) private var tint
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius)
+        shape
+            .fill(Color.primary.opacity(isSelected ? 0.12 : isHovered ? 0.05 : 0))
+            .overlay {
+                if isSelected, let tint {
+                    shape.strokeBorder(tint.color.opacity(tint.strokeOpacity(in: scheme)), lineWidth: 1)
+                }
+            }
+    }
 }
 
 /// Pins as favicon tiles, four to a row.
