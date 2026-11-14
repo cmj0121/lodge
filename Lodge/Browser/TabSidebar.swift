@@ -43,7 +43,7 @@ private struct ExpandedSidebar: View {
             .frame(height: 32)
             // Clears the window buttons, which sit over this row.
             .padding(.leading, 78 - 12)
-            AddressBar(pane: pane)
+            AddressBar(pane: pane, isCompact: true)
                 .padding(.top, 6)
                 .padding(.bottom, 10)
             ScrollView {

@@ -33,6 +33,8 @@ struct NavigationButtons: View {
 /// progress line along its bottom edge.
 struct AddressBar: View {
     let pane: BrowserPane
+    /// Narrow homes (the expanded sidebar) keep the Anonymous badge to its icon so the address has room.
+    var isCompact = false
     @State private var text = ""
     @FocusState private var isFocused: Bool
     @Environment(\.workspaceTint) private var tint
@@ -41,6 +43,9 @@ struct AddressBar: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            if pane.model.isAnonymous {
+                AnonymousBadge(isCompact: isCompact)
+            }
             TextField("Search or enter address", text: $text)
                 .textFieldStyle(.plain)
                 .focused($isFocused)
@@ -55,7 +60,7 @@ struct AddressBar: View {
                 .accessibilityLabel("Address")
             SiteSecurityButton(pane: pane)
         }
-        .padding(.leading, 10)
+        .padding(.leading, pane.model.isAnonymous ? 5 : 10)
         .padding(.trailing, 4)
         .frame(height: 28)
         .frame(maxWidth: .infinity)
@@ -77,6 +82,35 @@ struct AddressBar: View {
     }
 
     private var displayedAddress: String { tab?.url?.absoluteString ?? "" }
+}
+
+/// Marks the address field of an Anonymous window, so it is never mistaken for an ordinary one.
+private struct AnonymousBadge: View {
+    let isCompact: Bool
+
+    var body: some View {
+        Group {
+            if isCompact {
+                label.labelStyle(.iconOnly)
+            } else {
+                label.labelStyle(.titleAndIcon)
+            }
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(.white)
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.horizontal, isCompact ? 5 : 7)
+        .frame(height: 18)
+        .background(WorkspaceColor.graphite.color, in: .capsule)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Workspace.anonymousName)
+        .help(Workspace.anonymousName)
+    }
+
+    private var label: Label<Text, Image> {
+        Label(Workspace.anonymousName, systemImage: Workspace.anonymousSymbol)
+    }
 }
 
 /// The live page's security at the address bar's end; a click shows its origin and what the icon means.
