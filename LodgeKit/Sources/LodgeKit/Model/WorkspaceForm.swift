@@ -34,7 +34,7 @@ public enum WorkspaceForm {
 }
 
 extension WorkspaceSymbols {
-    /// The spoken name of a grid symbol; the symbol's own name for one not in the grid.
+    /// The spoken name of a grid symbol or of Anonymous's fixed symbol; the symbol's own name for any other.
     public static func label(for symbol: String) -> String {
         labels[symbol] ?? symbol
     }
@@ -80,6 +80,7 @@ extension WorkspaceSymbols {
         "lightbulb": "Light bulb",
         "lock": "Lock",
         "moon": "Moon",
+        "sunglasses": "Sunglasses",
     ]
 }
 
