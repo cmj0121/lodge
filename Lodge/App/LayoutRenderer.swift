@@ -5,7 +5,8 @@
     import WebKit
 
     /// Debug aid: `Lodge -renderLayout YES` draws the window's layout (both sidebar modes, find
-    /// open, and the shortcut overlay and the location prompt in light and dark), the History window from an in-memory history, and the Downloads popover and button
+    /// open, and the shortcut overlay and the location prompt in light and dark), workspace colours and
+    /// Anonymous's dark window, the History window from an in-memory history, and the Downloads popover and button
     /// from sample items, to PNG files off screen, then exits. It never shows a window or takes focus,
     /// so it can run while someone uses the machine. The only download is a `data:` URL saved to a temporary folder.
     @MainActor
@@ -34,6 +35,9 @@
             renderWorkspace(to: directory.appending(path: "layout-workspace.png"))
             renderWorkspaceUI(in: directory)
             renderAnonymous(in: directory)
+            renderTheme(in: directory)
+            checkAppearance()
+            checkTheme()
             checkDeletion(to: directory.appending(path: "layout-delete.png"))
             checkAnonymous()
             checkPrivateDownloadRow()
@@ -815,6 +819,210 @@
             settle()
         }
 
+        /// Workspace colours and Anonymous's look: an Anonymous window drawn in a light system appearance (it stays
+        /// dark), a strip of Default's sidebar in each palette swatch in light and in dark, the Change Icon sheet with
+        /// a colour chosen in both appearances, and the Anonymous address badge, compact in the sidebar and full in
+        /// the rail mode's page header. The address is set but never loaded.
+        private static func renderTheme(in directory: URL) {
+            let suite = "dev.lodge.render-layout"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let size = NSSize(width: 1100, height: 700)
+
+            let anonymous = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+            anonymous.switchTo(Workspace.anonymousID)
+            let pane = firstPane(anonymous)
+            if let tab = pane.selected {
+                pane.model.update(tab.id) { $0.url = URL(string: "https://www.example.com/private/page")! }
+            }
+            for mode in SidebarMode.allCases {
+                defaults.set(mode.rawValue, forKey: SidebarMode.defaultsKey)
+                snapshot(
+                    root(anonymous).defaultAppStorage(defaults), size: size,
+                    to: directory.appending(path: "layout-anonymous-badge-\(mode.rawValue).png"))
+            }
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            // The app's own appearance stands in for a light system, whatever this Mac is set to.
+            do {
+                let system = NSApp.appearance
+                NSApp.appearance = NSAppearance(named: .aqua)
+                defer { NSApp.appearance = system }
+                snapshot(
+                    root(anonymous).defaultAppStorage(defaults), size: size, appearance: NSAppearance(named: .aqua),
+                    to: directory.appending(path: "layout-anonymous-light-system.png"))
+            }
+
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                let name = appearance == .aqua ? "light" : "dark"
+                let sidebarSize = NSSize(width: 900, height: 560)
+                let sidebars: [CGImage] = WorkspaceColor.palette.compactMap { swatch in
+                    let coordinator = WorkspaceCoordinator(
+                        restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+                    try? coordinator.setColor(Workspace.defaultID, swatch)
+                    guard
+                        let window = image(
+                            root(coordinator).defaultAppStorage(defaults), size: sidebarSize,
+                            appearance: NSAppearance(named: appearance))?.cgImage
+                    else { return nil }
+                    let scale = CGFloat(window.width) / sidebarSize.width
+                    return window.cropping(
+                        to: CGRect(x: 0, y: 0, width: SidebarMode.expanded.width * scale, height: CGFloat(window.height)))
+                }
+                let gap = 6
+                guard sidebars.count == WorkspaceColor.palette.count, let first = sidebars.first,
+                    let context = CGContext(
+                        data: nil, width: (first.width + gap) * sidebars.count - gap, height: first.height,
+                        bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                else { continue }
+                for (index, sidebar) in sidebars.enumerated() {
+                    context.draw(
+                        sidebar,
+                        in: CGRect(x: index * (first.width + gap), y: 0, width: sidebar.width, height: sidebar.height))
+                }
+                if let strip = context.makeImage() {
+                    try? NSBitmapImageRep(cgImage: strip).representation(using: .png, properties: [:])?
+                        .write(to: directory.appending(path: "layout-swatches-\(name).png"))
+                }
+
+                let coordinator = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+                guard let work = try? coordinator.create(name: "Work", symbol: "briefcase", color: .purple)
+                else { continue }
+                coordinator.windows[0].workspaceEditor = .changeIcon(work.id)
+                snapshot(
+                    root(coordinator).defaultAppStorage(defaults), size: size,
+                    appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-workspace-sheet-color-\(name).png"))
+                // Yellow, the palest swatch, for the selected icon's dark foreground.
+                try? coordinator.setColor(work.id, .yellow)
+                coordinator.windows[0].workspaceEditor = nil
+                coordinator.windows[0].workspaceEditor = .changeIcon(work.id)
+                snapshot(
+                    root(coordinator).defaultAppStorage(defaults), size: size,
+                    appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-workspace-sheet-yellow-\(name).png"))
+                guard appearance == .aqua else { continue }
+                coordinator.switchTo(Workspace.anonymousID)
+                coordinator.windows[0].workspaceEditor = .changeIcon(Workspace.anonymousID)
+                snapshot(
+                    root(coordinator).defaultAppStorage(defaults), size: size,
+                    appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-workspace-sheet-anonymous.png"))
+            }
+        }
+
+        /// Anonymous's dark windows through the real path, printed ok or FAILED for each: the windows carry no
+        /// appearance of the renderer's, so what they show is what WindowRegistrar and WindowAppearance set. The app's
+        /// appearance is set light for the run, so the web view's system look differs from the dark window. Pages are
+        /// `about:blank`, so no request goes out.
+        private static func checkAppearance() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(until done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(3)
+                while !done(), Date.now < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) }
+                return done()
+            }
+            func isDark(_ window: NSWindow) -> Bool { window.appearance?.name == .darkAqua }
+            let system = NSApp.appearance
+            NSApp.appearance = NSAppearance(named: .aqua)
+            defer { NSApp.appearance = system }
+            let size = NSSize(width: 900, height: 600)
+
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            let first = coordinator.windows[0]
+            let second = coordinator.newWindow()
+            second.locationPrompt = nil
+            var hosts = [first, second].map { host(root(coordinator, $0), size: size) }
+            defer { for window in hosts { window.close() } }
+            let registered = settle { zip([first, second], hosts).allSatisfy { $0.nsWindow === $1 } }
+            let lightOnDefault = hosts.allSatisfy { $0.appearance == nil }
+            coordinator.switchTo(Workspace.anonymousID)
+            report(
+                "Anonymous browser windows are dark",
+                registered && lightOnDefault && settle { hosts.allSatisfy(isDark) })
+
+            let third = coordinator.newWindow()
+            third.locationPrompt = nil
+            let late = host(root(coordinator, third), size: size)
+            hosts.append(late)
+            report(
+                "A window registered in Anonymous is dark",
+                settle { third.nsWindow === late && isDark(late) })
+
+            // The app's History and Settings scenes carry no WindowRegistrar, so they are hosted as they are; what can
+            // go wrong is a switch reaching past the browser windows (all of NSApp's windows, or the app's own
+            // appearance). So they are open across a switch out of Anonymous and back, and must stay untouched and
+            // light while the browser windows turn dark again.
+            let suite = "dev.lodge.render-layout"
+            let defaults = UserDefaults(suiteName: suite)!
+            let others = [
+                host(HistoryView(model: coordinator.history), size: NSSize(width: 640, height: 600)),
+                host(
+                    SettingsView(model: DownloadSettingsModel(defaults: defaults)), size: NSSize(width: 480, height: 300)),
+            ]
+            defer {
+                for window in others { window.close() }
+                defaults.removePersistentDomain(forName: suite)
+            }
+            coordinator.switchTo(Workspace.defaultID)
+            let leftAnonymous = settle { hosts.allSatisfy { $0.appearance == nil } }
+            coordinator.switchTo(Workspace.anonymousID)
+            let darkAgain = settle { hosts.allSatisfy(isDark) }
+            report(
+                "History and Settings keep the system look in Anonymous",
+                leftAnonymous && darkAgain
+                    && others.allSatisfy { $0.appearance == nil && $0.effectiveAppearance.name == .aqua })
+
+            let model = coordinator.active
+            let shown = coordinator.selections.shown(in: first.id)
+            if let shown { model.update(shown) { $0.url = URL(string: "about:blank#anonymous")! } }
+            let webView = { shown.flatMap { coordinator.registry.webView(for: $0) } }
+            let inWindow = settle { webView()?.window === hosts[0] }
+            report(
+                "A web view in a dark window keeps the system look",
+                inWindow && hosts[0].effectiveAppearance.name == .darkAqua
+                    && webView()?.effectiveAppearance.name == NSApp.effectiveAppearance.name
+                    && NSApp.effectiveAppearance.name == .aqua)
+
+            coordinator.switchTo(Workspace.defaultID)
+            report("Leaving Anonymous gives the windows back", settle { hosts.allSatisfy { $0.appearance == nil } })
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+        }
+
+        /// Workspace colours, printed ok or FAILED for each: Default's and a custom workspace's colours survive the
+        /// saved session; Anonymous keeps graphite and its sheet offers no colour row.
+        private static func checkTheme() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            guard let work = try? coordinator.create(name: "Work", symbol: "briefcase", color: .teal),
+                (try? coordinator.setColor(Workspace.defaultID, .orange)) != nil
+            else { return report("A workspace colour survives the saved session", false) }
+            let saved = (try? coordinator.snapshot.encoded()).flatMap { try? SessionSnapshot.decode($0) }
+            let restored = saved.map {
+                WorkspaceCoordinator(restoring: $0, session: nil, appDirectory: nil, downloads: nil)
+            }
+            report(
+                "A workspace colour survives the saved session",
+                restored?.workspaces[work.id]?.color == .teal
+                    && restored?.workspaces[Workspace.defaultID]?.color == .orange
+                    && restored?.workspaces[Workspace.anonymousID]?.color == .graphite)
+
+            // SwiftUI builds no accessibility tree off screen, so this asks the sheet's own predicate, against a
+            // custom workspace's sheet that does offer the row; the list also refuses to colour Anonymous.
+            var refused: WorkspaceList.EditError?
+            do { try coordinator.setColor(Workspace.anonymousID, .red) } catch { refused = error }
+            let anonymous = coordinator.workspaces[Workspace.anonymousID]
+            report(
+                "Anonymous's sheet has no colour row",
+                !WorkspaceSheet.offersIconAndColor(.changeIcon(Workspace.anonymousID), target: anonymous)
+                    && !WorkspaceSheet.offersIconAndColor(.create, target: anonymous)
+                    && WorkspaceSheet.offersIconAndColor(.changeIcon(work.id), target: coordinator.workspaces[work.id])
+                    && WorkspaceSheet.offersIconAndColor(.create, target: nil)
+                    && refused == .anonymousIsFixed && anonymous?.color == .graphite)
+        }
+
         /// The Settings window, its download choices read from a defaults suite of its own, removed afterwards.
         private static func renderSettings(to url: URL) {
             let suiteName = "dev.lodge.selfcheck.\(UUID().uuidString)"
@@ -941,10 +1149,19 @@
                 to: directory.appending(path: "layout-downloads-button.png"))
         }
 
-        /// Draws `view` in an off-screen window; with no `title`, the title bar is hidden as the browser's is.
+        /// Draws `view` in an off-screen window to a PNG file; with no `title`, the title bar is hidden as the
+        /// browser's is.
         private static func snapshot(
             _ view: some View, size: NSSize, title: String? = nil, appearance: NSAppearance? = nil, to url: URL
         ) {
+            let rep = image(view, size: size, title: title, appearance: appearance)
+            try? rep?.representation(using: .png, properties: [:])?.write(to: url)
+        }
+
+        /// Draws `view` in an off-screen window, as `snapshot` does, and returns the picture.
+        private static func image(
+            _ view: some View, size: NSSize, title: String? = nil, appearance: NSAppearance? = nil
+        ) -> NSBitmapImageRep? {
             let window = NSWindow(
                 contentRect: NSRect(origin: .zero, size: size),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -964,9 +1181,9 @@
 
             guard let content = window.contentView?.superview ?? window.contentView,
                 let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds)
-            else { return }
+            else { return nil }
             content.cacheDisplay(in: content.bounds, to: rep)
-            try? rep.representation(using: .png, properties: [:])?.write(to: url)
+            return rep
         }
     }
 #endif

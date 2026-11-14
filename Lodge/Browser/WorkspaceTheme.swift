@@ -48,6 +48,15 @@ extension WorkspaceColor {
         }
     }
 
+    /// The symbol drawn on a fill of the swatch, such as the selected icon in the workspace sheet: dark on the pale
+    /// swatches, where white would not read.
+    var selectedForeground: Color {
+        switch self {
+        case .yellow, .orange, .teal, .green: .black.opacity(0.85)
+        default: .white
+        }
+    }
+
     /// The hairline round the selected row or tile.
     func strokeOpacity(in scheme: ColorScheme) -> Double {
         switch (self, scheme) {

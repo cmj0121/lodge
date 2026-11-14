@@ -28,6 +28,13 @@ struct WorkspaceSheet: View {
         }
         .background(EscapeKeyCatcher(action: close))
     }
+
+    /// Whether the sheet offers the icon grid and colour row: New Workspace and Change Icon do, Rename does not, and
+    /// nothing is offered for Anonymous, which keeps its icon and colour.
+    static func offersIconAndColor(_ editor: WorkspaceEditor, target: Workspace?) -> Bool {
+        if target?.kind == .anonymous { return false }
+        if case .rename = editor { return false } else { return true }
+    }
 }
 
 struct WorkspaceSheetCard: View {
@@ -61,10 +68,7 @@ struct WorkspaceSheetCard: View {
         if case .changeIcon = editor { return false } else { return true }
     }
 
-    private var asksSymbol: Bool {
-        if isFixed { return false }
-        if case .rename = editor { return false } else { return true }
-    }
+    private var asksSymbol: Bool { WorkspaceSheet.offersIconAndColor(editor, target: target) }
 
     private var validation: Result<String, WorkspaceList.EditError> {
         coordinator.workspaces.validate(name: name, renaming: target?.id)
@@ -291,7 +295,7 @@ extension WorkspaceForm.Move {
     }
 }
 
-/// The ring round a focused grid or row: the chosen colour, else the system accent.
+/// The ring round a focused grid or row, and the selected icon's fill: the chosen colour, else the system accent.
 private func focusRing(_ tint: WorkspaceColor?) -> Color {
     tint?.color ?? .accentColor
 }
@@ -417,17 +421,19 @@ private struct SymbolCell: View {
     let isSelected: Bool
     let choose: () -> Void
     @State private var isHovered = false
+    @Environment(\.workspaceTint) private var tint
 
     var body: some View {
         Button(action: choose) {
             Image(systemName: symbol)
                 .symbolVariant(isSelected ? .fill : .none)
                 .font(.system(size: 16))
-                .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                .foregroundStyle(
+                    isSelected ? AnyShapeStyle(tint?.selectedForeground ?? .white) : AnyShapeStyle(.secondary))
                 .frame(width: 38, height: 34)
                 .background {
                     if isSelected {
-                        RoundedRectangle(cornerRadius: 8).fill(Color.accentColor)
+                        RoundedRectangle(cornerRadius: 8).fill(focusRing(tint))
                     } else {
                         rowBackground(isSelected: false, isHovered: isHovered, cornerRadius: 8)
                     }
