@@ -15,15 +15,21 @@ struct BrowserView: View {
                 withAnimation(.snappy(duration: 0.25)) { sidebarMode = sidebarMode.toggled }
             }
             .frame(width: sidebarMode.width)
-            PageCard(pane: pane, showsAddress: sidebarMode == .rail)
+            PageCard(pane: pane, showsAddress: sidebarMode == .rail, isEdged: isAnonymous)
                 .padding([.top, .trailing, .bottom], 8)
                 // The card reaches up beside the window buttons; the column keeps the title bar inset.
                 .ignoresSafeArea(.container, edges: .top)
         }
         .background {
-            WorkspaceWash()
-                .background(Color(nsColor: .underPageBackgroundColor))
-                .ignoresSafeArea()
+            Group {
+                if isAnonymous {
+                    Color(nsColor: AnonymousTheme.ground)
+                } else {
+                    WorkspaceWash()
+                        .background(Color(nsColor: .underPageBackgroundColor))
+                }
+            }
+            .ignoresSafeArea()
         }
         .overlay {
             if pane.window.isShortcutHelpVisible {
@@ -49,6 +55,8 @@ struct BrowserView: View {
         .focusedSceneValue(\.isBrowserWindow, true)
     }
 
+    private var isAnonymous: Bool { coordinator.workspaces[pane.model.workspaceID]?.kind == .anonymous }
+
     private func address(of prompt: LocationPrompt) -> URL? {
         guard case .current(let id) = prompt else { return nil }
         return pane.model.tabs[id]?.url
@@ -65,6 +73,7 @@ extension FocusedValues {
 private struct PageCard: View {
     let pane: BrowserPane
     let showsAddress: Bool
+    let isEdged: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -90,6 +99,12 @@ private struct PageCard: View {
                 .animation(.snappy(duration: 0.2), value: pane.window.isFindVisible)
         }
         .floatingSurface(cornerRadius: 10)
+        .overlay {
+            if isEdged {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(AnonymousTheme.edge, lineWidth: AnonymousTheme.edgeWidth)
+            }
+        }
     }
 }
 

@@ -12,7 +12,7 @@ public struct Workspace: Identifiable, Codable, Hashable, Sendable {
     public static let `default` = Workspace(id: defaultID, name: defaultName, symbol: defaultSymbol, kind: .default)
     public static let anonymousID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     public static let anonymousName = "Anonymous"
-    public static let anonymousSymbol = "sunglasses"
+    public static let anonymousSymbol = "person.fill.questionmark"
     public static let anonymous = Workspace(
         id: anonymousID, name: anonymousName, symbol: anonymousSymbol, kind: .anonymous, color: .graphite)
 

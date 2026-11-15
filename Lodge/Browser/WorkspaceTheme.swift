@@ -92,3 +92,11 @@ struct WorkspaceWash: View {
         }
     }
 }
+
+/// Anonymous's own look, set apart from plain dark mode: a deep charcoal ground under the sidebar, the workspace bar
+/// and round the page card, and a graphite edge that lifts the card off it. The page inside keeps the system look.
+enum AnonymousTheme {
+    static let ground = NSColor(srgbRed: 0.047, green: 0.051, blue: 0.063, alpha: 1)
+    static let edge = Color(nsColor: NSColor(srgbRed: 0.36, green: 0.36, blue: 0.39, alpha: 1))
+    static let edgeWidth: CGFloat = 1
+}

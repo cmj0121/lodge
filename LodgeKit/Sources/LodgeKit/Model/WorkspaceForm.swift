@@ -80,7 +80,7 @@ extension WorkspaceSymbols {
         "lightbulb": "Light bulb",
         "lock": "Lock",
         "moon": "Moon",
-        "sunglasses": "Sunglasses",
+        "person.fill.questionmark": "Unknown person",
     ]
 }
 

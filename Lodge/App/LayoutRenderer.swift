@@ -820,9 +820,10 @@
         }
 
         /// Workspace colours and Anonymous's look: an Anonymous window drawn in a light system appearance (it stays
-        /// dark), a strip of Default's sidebar in each palette swatch in light and in dark, the Change Icon sheet with
-        /// a colour chosen in both appearances, and the Anonymous address badge, compact in the sidebar and full in
-        /// the rail mode's page header. The address is set but never loaded.
+        /// dark) and in a dark one (checked against a plain dark window's ground), a strip of Default's sidebar in each
+        /// palette swatch in light and in dark, the Change Icon sheet with a colour chosen in both appearances, and the
+        /// Anonymous address badge, compact in the sidebar and full in the rail mode's page header. The address is set
+        /// but never loaded.
         private static func renderTheme(in directory: URL) {
             let suite = "dev.lodge.render-layout"
             let defaults = UserDefaults(suiteName: suite)!
@@ -851,6 +852,22 @@
                 snapshot(
                     root(anonymous).defaultAppStorage(defaults), size: size, appearance: NSAppearance(named: .aqua),
                     to: directory.appending(path: "layout-anonymous-light-system.png"))
+            }
+            // And a dark system, where Anonymous must still stand apart from a plain dark window.
+            do {
+                let system = NSApp.appearance
+                NSApp.appearance = NSAppearance(named: .darkAqua)
+                defer { NSApp.appearance = system }
+                let dark = NSAppearance(named: .darkAqua)
+                let shown = image(root(anonymous).defaultAppStorage(defaults), size: size, appearance: dark)
+                try? shown?.representation(using: .png, properties: [:])?
+                    .write(to: directory.appending(path: "layout-anonymous-dark-system.png"))
+                let plain = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+                let plainShown = image(root(plain).defaultAppStorage(defaults), size: size, appearance: dark)
+                print(
+                    "Anonymous ground stands apart from plain dark: "
+                        + (groundsDiffer(shown, plainShown, size: size) ? "ok" : "FAILED"))
             }
 
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
@@ -910,6 +927,27 @@
                     root(coordinator).defaultAppStorage(defaults), size: size,
                     appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-workspace-sheet-anonymous.png"))
+            }
+        }
+
+        /// Whether the window ground beside the page card (the strip right of it, and the one below) is clearly
+        /// darker in `anonymous` than in `plain`.
+        private static func groundsDiffer(_ anonymous: NSBitmapImageRep?, _ plain: NSBitmapImageRep?, size: NSSize)
+            -> Bool
+        {
+            guard let anonymous, let plain else { return false }
+            func brightness(_ rep: NSBitmapImageRep, at point: NSPoint) -> CGFloat? {
+                let scale = CGFloat(rep.pixelsWide) / size.width
+                guard let color = rep.colorAt(x: Int(point.x * scale), y: Int(point.y * scale))?.usingColorSpace(.sRGB)
+                else { return nil }
+                return (color.redComponent + color.greenComponent + color.blueComponent) / 3
+            }
+            let points = [NSPoint(x: size.width - 3, y: size.height / 2), NSPoint(x: size.width / 2, y: size.height - 3)]
+            return points.allSatisfy { point in
+                guard let dark = brightness(anonymous, at: point), let base = brightness(plain, at: point) else {
+                    return false
+                }
+                return base - dark >= 0.05
             }
         }
 
