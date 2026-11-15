@@ -12,9 +12,9 @@ public struct Workspace: Identifiable, Codable, Hashable, Sendable {
     public static let `default` = Workspace(id: defaultID, name: defaultName, symbol: defaultSymbol, kind: .default)
     public static let anonymousID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     public static let anonymousName = "Anonymous"
-    public static let anonymousSymbol = "theatermasks"
+    public static let anonymousSymbol = "person.fill.questionmark"
     public static let anonymous = Workspace(
-        id: anonymousID, name: anonymousName, symbol: anonymousSymbol, kind: .anonymous)
+        id: anonymousID, name: anonymousName, symbol: anonymousSymbol, kind: .anonymous, color: .graphite)
 
     public let id: UUID
     /// Trimmed, non-empty and unique (case-insensitive) within a `WorkspaceList`.
@@ -22,6 +22,8 @@ public struct Workspace: Identifiable, Codable, Hashable, Sendable {
     /// An SF Symbol name.
     public var symbol: String
     public let kind: WorkspaceKind
+    /// Nil for none; `.graphite` only on Anonymous.
+    public var color: WorkspaceColor?
 
     /// `.global` for Default, `.workspace(id)` for a custom one; nil for Anonymous, whose tabs each get their own.
     public var store: StoreRef? {
@@ -35,11 +37,37 @@ public struct Workspace: Identifiable, Codable, Hashable, Sendable {
     /// Default or Anonymous: never renamed, moved or removed.
     public var isFixed: Bool { kind != .custom }
 
-    public init(id: UUID = UUID(), name: String, symbol: String, kind: WorkspaceKind = .custom) {
+    public init(
+        id: UUID = UUID(), name: String, symbol: String, kind: WorkspaceKind = .custom, color: WorkspaceColor? = nil
+    ) {
         self.id = id
         self.name = name
         self.symbol = symbol
         self.kind = kind
+        self.color = color
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, symbol, kind, color
+    }
+
+    /// An unknown or malformed `color` reads as none rather than failing the session file.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        symbol = try container.decode(String.self, forKey: .symbol)
+        kind = try container.decode(WorkspaceKind.self, forKey: .kind)
+        color = (try? container.decodeIfPresent(String.self, forKey: .color)).flatMap(WorkspaceColor.init(rawValue:))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(symbol, forKey: .symbol)
+        try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(color, forKey: .color)
     }
 }
 
@@ -59,17 +87,23 @@ public struct WorkspaceList: Equatable, Sendable {
         workspaces = [.default, .anonymous]
     }
 
-    /// Keeps one Default first (the listed one's name and symbol, else `Workspace.default`), the custom workspaces in
-    /// order without duplicate ids, and exactly one `Workspace.anonymous` last; any other `.default` or `.anonymous`
-    /// workspace and any custom one using a fixed id are dropped.
+    /// Keeps one Default first (the listed one's name, symbol and color, else `Workspace.default`), the custom
+    /// workspaces in order without duplicate ids, and exactly one `Workspace.anonymous` last; any other `.default` or
+    /// `.anonymous` workspace and any custom one using a fixed id are dropped. Graphite on Default or a custom
+    /// workspace reads as no color.
     public init(workspaces: [Workspace]) {
         let listed = workspaces.first { $0.id == Workspace.defaultID }
         let defaultWorkspace =
-            listed.map { Workspace(id: $0.id, name: $0.name, symbol: $0.symbol, kind: .default) } ?? .default
+            listed.map { Workspace(id: $0.id, name: $0.name, symbol: $0.symbol, kind: .default, color: $0.color) }
+            ?? .default
         var seen: Set<UUID> = [Workspace.defaultID, Workspace.anonymousID]
+        let customs = workspaces.filter { $0.kind == .custom && seen.insert($0.id).inserted }
         self.workspaces =
-            [defaultWorkspace] + workspaces.filter { $0.kind == .custom && seen.insert($0.id).inserted }
-            + [.anonymous]
+            ([defaultWorkspace] + customs).map { workspace in
+                var workspace = workspace
+                workspace.color = Self.offered(workspace.color)
+                return workspace
+            } + [.anonymous]
     }
 
     public subscript(id: UUID) -> Workspace? {
@@ -101,9 +135,11 @@ public struct WorkspaceList: Equatable, Sendable {
 
     /// Adds a custom workspace at the end of the customs, just before Anonymous.
     @discardableResult
-    public mutating func create(name: String, symbol: String) throws(EditError) -> Workspace {
+    public mutating func create(name: String, symbol: String, color: WorkspaceColor? = nil) throws(EditError)
+        -> Workspace
+    {
         let name = try validate(name: name).get()
-        let workspace = Workspace(name: name, symbol: try Self.validate(symbol: symbol))
+        let workspace = Workspace(name: name, symbol: try Self.validate(symbol: symbol), color: Self.offered(color))
         workspaces.insert(workspace, at: workspaces.count - 1)
         return workspace
     }
@@ -119,6 +155,13 @@ public struct WorkspaceList: Equatable, Sendable {
         let index = try index(of: id)
         guard id != Workspace.anonymousID else { throw .anonymousIsFixed }
         workspaces[index].symbol = try Self.validate(symbol: symbol)
+    }
+
+    /// Default included; Anonymous refused. Graphite, Anonymous's own, sets no color.
+    public mutating func setColor(_ id: UUID, _ color: WorkspaceColor?) throws(EditError) {
+        let index = try index(of: id)
+        guard id != Workspace.anonymousID else { throw .anonymousIsFixed }
+        workspaces[index].color = Self.offered(color)
     }
 
     /// Moves the custom workspace at `source` to end at `destination`, clamped among the customs. False when
@@ -146,6 +189,10 @@ public struct WorkspaceList: Equatable, Sendable {
         guard name.count <= Self.nameLimit else { return .failure(.nameTooLong) }
         let taken = workspaces.contains { $0.id != id && $0.name.caseInsensitiveCompare(name) == .orderedSame }
         return taken ? .failure(.duplicateName) : .success(name)
+    }
+
+    private static func offered(_ color: WorkspaceColor?) -> WorkspaceColor? {
+        color == .graphite ? nil : color
     }
 
     private static func validate(symbol: String) throws(EditError) -> String {

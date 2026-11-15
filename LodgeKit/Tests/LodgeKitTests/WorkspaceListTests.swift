@@ -29,7 +29,11 @@ import Testing
     @Test func anonymousIsFixedWithNoStore() {
         #expect(Workspace.anonymous.id == UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
         #expect(Workspace.anonymous.name == "Anonymous")
-        #expect(Workspace.anonymous.symbol == "theatermasks")
+        #expect(Workspace.anonymous.symbol == "person.fill.questionmark")
+        #expect(Workspace.anonymousSymbol == "person.fill.questionmark")
+        #expect(WorkspaceSymbols.label(for: Workspace.anonymousSymbol) == "Unknown person")
+        #expect(Workspace.anonymous.color == .graphite)
+        #expect(Workspace.default.color == nil)
         #expect(Workspace.anonymous.kind == .anonymous)
         #expect(Workspace.anonymous.store == nil)
         #expect(Workspace.anonymous.isFixed)
@@ -210,5 +214,48 @@ import Testing
         #expect(list.slot(of: anonymous.id) == nil)
         #expect(list.slot(of: UUID()) == nil)
         #expect(WorkspaceList().workspace(forSlot: 2) == nil)
+    }
+
+    @Test func createTakesAPaletteColorAndTurnsGraphiteIntoNone() throws {
+        var list = WorkspaceList()
+        let plain = try list.create(name: "Plain", symbol: "star")
+        let teal = try list.create(name: "Teal", symbol: "star", color: .teal)
+        let grey = try list.create(name: "Grey", symbol: "star", color: .graphite)
+        #expect(plain.color == nil)
+        #expect(teal.color == .teal)
+        #expect(grey.color == nil)
+        #expect(list.workspaces.map(\.color) == [nil, nil, .teal, nil, .graphite])
+    }
+
+    @Test func setColorChangesDefaultAndCustomButNotAnonymous() throws {
+        var (list, created) = try list("Work")
+        try list.setColor(created[0].id, .purple)
+        try list.setColor(Workspace.defaultID, .yellow)
+        #expect(list[created[0].id]?.color == .purple)
+        #expect(list.default.color == .yellow)
+        try list.setColor(created[0].id, nil)
+        #expect(list[created[0].id]?.color == nil)
+        try list.setColor(Workspace.defaultID, .graphite)
+        #expect(list.default.color == nil)
+        #expect(throws: EditError.anonymousIsFixed) { try list.setColor(Workspace.anonymousID, .red) }
+        #expect(throws: EditError.anonymousIsFixed) { try list.setColor(Workspace.anonymousID, nil) }
+        let id = UUID()
+        #expect(throws: EditError.unknown(id)) { try list.setColor(id, .red) }
+        #expect(list.anonymous == .anonymous)
+    }
+
+    @Test func initKeepsListedColorsDropsGraphiteAndFixesAnonymous() {
+        var restyled = Workspace.default
+        restyled.color = .blue
+        let work = Workspace(name: "Work", symbol: "briefcase", color: .green)
+        let grey = Workspace(name: "Grey", symbol: "star", color: .graphite)
+        var greyDefault = Workspace.default
+        greyDefault.color = .graphite
+        var pinkAnonymous = Workspace.anonymous
+        pinkAnonymous.color = .pink
+        let list = WorkspaceList(workspaces: [restyled, work, grey, pinkAnonymous])
+        #expect(list.workspaces.map(\.color) == [.blue, .green, nil, .graphite])
+        #expect(list.anonymous == .anonymous)
+        #expect(WorkspaceList(workspaces: [greyDefault]).default.color == nil)
     }
 }

@@ -258,8 +258,10 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
 
     /// Adds an empty workspace just before Anonymous and switches to it.
     @discardableResult
-    func create(name: String, symbol: String) throws(WorkspaceList.EditError) -> Workspace {
-        let workspace = try workspaces.create(name: name, symbol: symbol)
+    func create(name: String, symbol: String, color: WorkspaceColor? = nil) throws(WorkspaceList.EditError)
+        -> Workspace
+    {
+        let workspace = try workspaces.create(name: name, symbol: symbol, color: color)
         Task { await openHistoryStore(for: workspace.id) }
         switchTo(workspace.id)
         return workspace
@@ -272,6 +274,12 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
 
     func setSymbol(_ id: UUID, _ symbol: String) throws(WorkspaceList.EditError) {
         try workspaces.setSymbol(id, symbol)
+        didChange()
+    }
+
+    /// Nil clears it; every window shows the change at once, as they read the list.
+    func setColor(_ id: UUID, _ color: WorkspaceColor?) throws(WorkspaceList.EditError) {
+        try workspaces.setColor(id, color)
         didChange()
     }
 

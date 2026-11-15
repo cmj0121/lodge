@@ -1,8 +1,8 @@
 import LodgeKit
 import SwiftUI
 
-/// What the workspace sheet is open for (D8): a new workspace asks for a name and an icon, a rename for the name
-/// alone, a change of icon for the icon alone.
+/// What the workspace sheet is open for (D8): a new workspace asks for a name, an icon and a colour, a rename for
+/// the name alone, a change of icon for the icon and colour.
 enum WorkspaceEditor: Equatable {
     case create
     case rename(UUID)
@@ -28,6 +28,13 @@ struct WorkspaceSheet: View {
         }
         .background(EscapeKeyCatcher(action: close))
     }
+
+    /// Whether the sheet offers the icon grid and colour row: New Workspace and Change Icon do, Rename does not, and
+    /// nothing is offered for Anonymous, which keeps its icon and colour.
+    static func offersIconAndColor(_ editor: WorkspaceEditor, target: Workspace?) -> Bool {
+        if target?.kind == .anonymous { return false }
+        if case .rename = editor { return false } else { return true }
+    }
 }
 
 struct WorkspaceSheetCard: View {
@@ -39,6 +46,7 @@ struct WorkspaceSheetCard: View {
     let close: () -> Void
     @State private var name = ""
     @State private var symbol = WorkspaceSymbols.defaultForNew
+    @State private var color: WorkspaceColor?
     /// Set once the name has been typed in, so a new sheet does not open on an error.
     @State private var isNameEdited = false
     /// What the coordinator refused on commit; cleared by the next edit.
@@ -52,7 +60,7 @@ struct WorkspaceSheetCard: View {
         }
     }
 
-    /// Anonymous keeps its name and icon; a sheet opened for it anyway says so and offers nothing to change.
+    /// Anonymous keeps its name, icon and colour; a sheet opened for it anyway says so and offers nothing to change.
     private var isFixed: Bool { target?.kind == .anonymous }
 
     private var asksName: Bool {
@@ -60,10 +68,7 @@ struct WorkspaceSheetCard: View {
         if case .changeIcon = editor { return false } else { return true }
     }
 
-    private var asksSymbol: Bool {
-        if isFixed { return false }
-        if case .rename = editor { return false } else { return true }
-    }
+    private var asksSymbol: Bool { WorkspaceSheet.offersIconAndColor(editor, target: target) }
 
     private var validation: Result<String, WorkspaceList.EditError> {
         coordinator.workspaces.validate(name: name, renaming: target?.id)
@@ -118,6 +123,7 @@ struct WorkspaceSheetCard: View {
                 if asksName { nameField }
                 if asksSymbol {
                     SymbolGrid(selection: $symbol, focusesOnAppear: !asksName)
+                    ColorRow(selection: $color)
                 }
             }
             .padding(18)
@@ -135,25 +141,20 @@ struct WorkspaceSheetCard: View {
             .padding(.vertical, 12)
         }
         .floatingSurface(cornerRadius: 14, fill: .regularMaterial)
+        .workspaceTint(asksSymbol ? color : target?.color)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title)
         .accessibilityAddTraits(.isModal)
         .onAppear(perform: start)
         .onChange(of: editor) { start() }
         .onChange(of: symbol) { refused = nil }
+        .onChange(of: color) { refused = nil }
     }
 
     /// The workspace as the bar will show it, next to what the sheet does.
     private var header: some View {
         HStack(spacing: 14) {
-            Image(systemName: asksSymbol ? symbol : target?.symbol ?? symbol)
-                .symbolVariant(.fill)
-                .font(.system(size: 22, weight: .medium))
-                .foregroundStyle(.primary)
-                .frame(width: 48, height: 48)
-                .background(rowBackground(isSelected: true, isHovered: false, cornerRadius: 12))
-                .contentTransition(.symbolEffect(.replace))
-                .accessibilityHidden(true)
+            PreviewIcon(symbol: asksSymbol ? symbol : target?.symbol ?? symbol)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.headline)
@@ -206,6 +207,7 @@ struct WorkspaceSheetCard: View {
     private func start() {
         name = target?.name ?? ""
         symbol = target?.symbol ?? WorkspaceSymbols.defaultForNew
+        color = target?.color
         refused = nil
         isNameEdited = false
         isNameFocused = asksName
@@ -216,11 +218,12 @@ struct WorkspaceSheetCard: View {
         do {
             switch editor {
             case .create:
-                try coordinator.create(name: name, symbol: symbol)
+                try coordinator.create(name: name, symbol: symbol, color: color)
             case .rename(let id):
                 try coordinator.rename(id, to: name)
             case .changeIcon(let id):
                 try coordinator.setSymbol(id, symbol)
+                try coordinator.setColor(id, color)
             }
             close()
         } catch {
@@ -236,6 +239,7 @@ private struct SymbolGrid: View {
     /// Change Icon has no name field, so the grid takes the keys as it opens.
     let focusesOnAppear: Bool
     @FocusState private var isFocused: Bool
+    @Environment(\.workspaceTint) private var tint
 
     private static let cell: CGFloat = 38
     private static let spacing: CGFloat = 6
@@ -259,7 +263,7 @@ private struct SymbolGrid: View {
             .focusEffectDisabled()
             .overlay {
                 RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.accentColor.opacity(isFocused ? 0.7 : 0), lineWidth: 2)
+                    .strokeBorder(focusRing(tint).opacity(isFocused ? 0.7 : 0), lineWidth: 2)
             }
             .onMoveCommand(perform: move)
             .onAppear { if focusesOnAppear { isFocused = true } }
@@ -271,17 +275,144 @@ private struct SymbolGrid: View {
 
     private func move(_ direction: MoveCommandDirection) {
         let all = WorkspaceSymbols.all
-        let step: WorkspaceForm.Move =
-            switch direction {
-            case .left: .left
-            case .right: .right
-            case .up: .up
-            case .down: .down
-            @unknown default: .right
-            }
         let index = all.firstIndex(of: selection) ?? 0
         selection = all[
-            WorkspaceForm.symbolIndex(from: index, moving: step, columns: WorkspaceSheetCard.columns, count: all.count)]
+            WorkspaceForm.symbolIndex(
+                from: index, moving: WorkspaceForm.Move(direction), columns: WorkspaceSheetCard.columns,
+                count: all.count)]
+    }
+}
+
+extension WorkspaceForm.Move {
+    fileprivate init(_ direction: MoveCommandDirection) {
+        switch direction {
+        case .left: self = .left
+        case .right: self = .right
+        case .up: self = .up
+        case .down: self = .down
+        @unknown default: self = .right
+        }
+    }
+}
+
+/// The ring round a focused grid or row, and the selected icon's fill: the chosen colour, else the system accent.
+private func focusRing(_ tint: WorkspaceColor?) -> Color {
+    tint?.color ?? .accentColor
+}
+
+/// The icon tile as the bar will show it: the selected-row fill with the colour's hairline, washed and drawn in the
+/// chosen colour.
+private struct PreviewIcon: View {
+    let symbol: String
+    @Environment(\.workspaceTint) private var tint
+
+    var body: some View {
+        Image(systemName: symbol)
+            .symbolVariant(.fill)
+            .font(.system(size: 22, weight: .medium))
+            .foregroundStyle(tint.map { AnyShapeStyle($0.color) } ?? AnyShapeStyle(.primary))
+            .frame(width: 48, height: 48)
+            .background(WorkspaceWash().clipShape(RoundedRectangle(cornerRadius: 12)))
+            .background(rowBackground(isSelected: true, isHovered: false, cornerRadius: 12))
+            .contentTransition(.symbolEffect(.replace))
+            .animation(.snappy(duration: 0.2), value: tint)
+            .accessibilityHidden(true)
+    }
+}
+
+/// None and the eight swatches on one row, as wide as the icon grid. Click one, or focus the row and walk it with
+/// the arrow keys; VoiceOver reads each by name and marks the chosen one.
+private struct ColorRow: View {
+    @Binding var selection: WorkspaceColor?
+    @FocusState private var isFocused: Bool
+
+    /// None first.
+    private static let choices: [WorkspaceColor?] = [nil] + WorkspaceColor.palette.map(Optional.some)
+    private static let cell: CGFloat = 34
+    private static let spacing: CGFloat = 5
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Color")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            HStack(spacing: Self.spacing) {
+                ForEach(Self.choices, id: \.self) { choice in
+                    ColorCell(color: choice, isSelected: choice == selection) { selection = choice }
+                        .frame(width: Self.cell, height: Self.cell)
+                }
+            }
+            .padding(4)
+            .focusable()
+            .focused($isFocused)
+            .focusEffectDisabled()
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(focusRing(selection).opacity(isFocused ? 0.7 : 0), lineWidth: 2)
+            }
+            .onMoveCommand(perform: move)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Color")
+            .accessibilityValue(ColorCell.label(for: selection))
+        }
+    }
+
+    private func move(_ direction: MoveCommandDirection) {
+        let all = Self.choices
+        let index = all.firstIndex(of: selection) ?? 0
+        selection = all[
+            WorkspaceForm.symbolIndex(
+                from: index, moving: WorkspaceForm.Move(direction), columns: all.count, count: all.count)]
+    }
+}
+
+private struct ColorCell: View {
+    let color: WorkspaceColor?
+    let isSelected: Bool
+    let choose: () -> Void
+    @State private var isHovered = false
+
+    static func label(for color: WorkspaceColor?) -> String { color?.label ?? "None" }
+
+    var body: some View {
+        Button(action: choose) {
+            ZStack {
+                rowBackground(isSelected: false, isHovered: isHovered && !isSelected, cornerRadius: 8)
+                if isSelected {
+                    Circle()
+                        .strokeBorder((color?.color ?? .secondary).opacity(0.85), lineWidth: 2)
+                        .frame(width: 28, height: 28)
+                }
+                swatch
+                    .frame(width: 20, height: 20)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .onHover { isHovered = $0 }
+        .help(Self.label(for: color))
+        .accessibilityLabel(Self.label(for: color))
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    @ViewBuilder private var swatch: some View {
+        if let color {
+            Circle()
+                .fill(color.color)
+                .overlay { Circle().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5) }
+        } else {
+            Circle()
+                .strokeBorder(Color.secondary, lineWidth: 1.5)
+                .overlay {
+                    Rectangle()
+                        .fill(Color.secondary)
+                        .frame(width: 1.5)
+                        .rotationEffect(.degrees(45))
+                }
+                .clipShape(Circle())
+        }
     }
 }
 
@@ -290,17 +421,19 @@ private struct SymbolCell: View {
     let isSelected: Bool
     let choose: () -> Void
     @State private var isHovered = false
+    @Environment(\.workspaceTint) private var tint
 
     var body: some View {
         Button(action: choose) {
             Image(systemName: symbol)
                 .symbolVariant(isSelected ? .fill : .none)
                 .font(.system(size: 16))
-                .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                .foregroundStyle(
+                    isSelected ? AnyShapeStyle(tint?.selectedForeground ?? .white) : AnyShapeStyle(.secondary))
                 .frame(width: 38, height: 34)
                 .background {
                     if isSelected {
-                        RoundedRectangle(cornerRadius: 8).fill(Color.accentColor)
+                        RoundedRectangle(cornerRadius: 8).fill(focusRing(tint))
                     } else {
                         rowBackground(isSelected: false, isHovered: isHovered, cornerRadius: 8)
                     }

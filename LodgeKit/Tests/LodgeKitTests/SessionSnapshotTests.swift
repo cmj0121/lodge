@@ -706,6 +706,50 @@ import Testing
         #expect(decoded.workspaces.map(\.workspace) == [.default, work, .anonymous])
         #expect(decoded.windows == [window(Workspace.defaultID)])
     }
+
+    @Test func colorsRoundTripAndAnonymousStaysGraphite() throws {
+        var restyled = Workspace.default
+        restyled.color = .orange
+        let teal = Workspace(name: "Teal", symbol: "star", color: .teal)
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(restyled), entry(teal), entry(work)], windows: [], pendingDeletions: [])
+        let decoded = try roundTrip(snapshot)
+        #expect(decoded == snapshot)
+        #expect(decoded.workspaces.map(\.workspace.color) == [.orange, .teal, nil, .graphite])
+        #expect(decoded.version == 4)
+    }
+
+    /// The colourful snapshot's JSON with every `color` value rewritten by `edit`.
+    private func colorFile(_ edit: (String) -> String) throws -> Data {
+        let teal = Workspace(name: "Teal", symbol: "star", color: .teal)
+        let snapshot = SessionSnapshot(workspaces: [entry(teal)], windows: [], pendingDeletions: [])
+        let json = try #require(String(data: snapshot.encoded(), encoding: .utf8))
+        #expect(json.contains(#""color" : "teal""#))
+        return Data(edit(json).utf8)
+    }
+
+    @Test func aFileWithoutColorsDecodesWithNone() throws {
+        let data = try colorFile { $0.replacing(/\s*"color" : "[a-z]+",/, with: "") }
+        #expect(!String(decoding: data, as: UTF8.self).contains("color"))
+        let decoded = try SessionSnapshot.decode(data)
+        #expect(decoded.workspaces.map(\.workspace.name) == ["Default", "Teal", "Anonymous"])
+        #expect(decoded.workspaces.map(\.workspace.color) == [nil, nil, .graphite])
+    }
+
+    @Test(arguments: [#""magenta""#, "7", "null", #""""#, #""Teal""#])
+    func anUnknownColorDecodesAsNone(value: String) throws {
+        let data = try colorFile { $0.replacing(#""teal""#, with: value) }
+        let decoded = try SessionSnapshot.decode(data)
+        #expect(decoded.workspaces.map(\.workspace.name) == ["Default", "Teal", "Anonymous"])
+        #expect(decoded.workspaces.map(\.workspace.color) == [nil, nil, .graphite])
+    }
+
+    @Test func noColorWritesNoKey() throws {
+        let data = try JSONEncoder().encode(Workspace(name: "Work", symbol: "briefcase"))
+        #expect(!String(decoding: data, as: UTF8.self).contains("color"))
+        #expect(String(decoding: try JSONEncoder().encode(Workspace.anonymous), as: UTF8.self)
+            .contains(#""color":"graphite""#))
+    }
 }
 
 /// The v4 shape before windows carried a selected tab and frame.

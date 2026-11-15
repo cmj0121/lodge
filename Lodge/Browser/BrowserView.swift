@@ -6,6 +6,7 @@ import SwiftUI
 struct BrowserView: View {
     let pane: BrowserPane
     @AppStorage(SidebarMode.defaultsKey) private var sidebarMode: SidebarMode = .expanded
+    @Environment(WorkspaceCoordinator.self) private var coordinator
 
     var body: some View {
         HStack(spacing: 0) {
@@ -14,12 +15,22 @@ struct BrowserView: View {
                 withAnimation(.snappy(duration: 0.25)) { sidebarMode = sidebarMode.toggled }
             }
             .frame(width: sidebarMode.width)
-            PageCard(pane: pane, showsAddress: sidebarMode == .rail)
+            PageCard(pane: pane, showsAddress: sidebarMode == .rail, isEdged: isAnonymous)
                 .padding([.top, .trailing, .bottom], 8)
                 // The card reaches up beside the window buttons; the column keeps the title bar inset.
                 .ignoresSafeArea(.container, edges: .top)
         }
-        .background(Color(nsColor: .underPageBackgroundColor))
+        .background {
+            Group {
+                if isAnonymous {
+                    Color(nsColor: AnonymousTheme.ground)
+                } else {
+                    WorkspaceWash()
+                        .background(Color(nsColor: .underPageBackgroundColor))
+                }
+            }
+            .ignoresSafeArea()
+        }
         .overlay {
             if pane.window.isShortcutHelpVisible {
                 ShortcutHelpOverlay(close: pane.hideShortcutHelp)
@@ -39,9 +50,12 @@ struct BrowserView: View {
         .animation(.snappy(duration: 0.2), value: pane.window.locationPrompt)
         .navigationTitle(pane.windowTitle)
         .environment(\.webViewRegistry, pane.model.registry)
+        .workspaceTint(coordinator.workspaces[pane.model.workspaceID]?.color)
         .frame(minWidth: 800, minHeight: 500)
         .focusedSceneValue(\.isBrowserWindow, true)
     }
+
+    private var isAnonymous: Bool { coordinator.workspaces[pane.model.workspaceID]?.kind == .anonymous }
 
     private func address(of prompt: LocationPrompt) -> URL? {
         guard case .current(let id) = prompt else { return nil }
@@ -59,6 +73,7 @@ extension FocusedValues {
 private struct PageCard: View {
     let pane: BrowserPane
     let showsAddress: Bool
+    let isEdged: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -84,6 +99,12 @@ private struct PageCard: View {
                 .animation(.snappy(duration: 0.2), value: pane.window.isFindVisible)
         }
         .floatingSurface(cornerRadius: 10)
+        .overlay {
+            if isEdged {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(AnonymousTheme.edge, lineWidth: AnonymousTheme.edgeWidth)
+            }
+        }
     }
 }
 
@@ -114,6 +135,9 @@ private struct NewTabPlaceholder: View {
         ContentUnavailableView(
             "New Tab", systemImage: "square.on.square.dashed",
             description: Text("Type an address or a search in the address bar."))
+        // Covers the empty web view, which keeps the system's look while the window may be dark.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .textBackgroundColor))
     }
 }
 
