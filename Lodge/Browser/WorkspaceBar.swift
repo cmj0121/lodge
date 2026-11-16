@@ -24,7 +24,9 @@ struct WorkspaceBar: View {
             Button("New Workspace", systemImage: "plus") { pane.showWorkspaceEditor(.create) }
                 .iconButtonStyle()
                 .help("New workspace")
-            SettingsButton()
+            Button("Settings", systemImage: LodgePage.settings.symbol) { coordinator.open(.settings) }
+                .iconButtonStyle()
+                .help("Settings (⌘,)")
         }
         .font(isRail ? .system(size: SidebarMode.railSymbolSize) : nil)
         .padding(.horizontal, isRail ? 0 : 4)
@@ -182,14 +184,6 @@ private struct WorkspaceDragItem: Codable, Transferable {
 
     static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(contentType: .lodgeWorkspace)
-    }
-}
-
-private struct SettingsButton: View {
-    var body: some View {
-        SettingsLink { Label("Settings", systemImage: "gearshape") }
-            .iconButtonStyle()
-            .help("Settings (⌘,)")
     }
 }
 

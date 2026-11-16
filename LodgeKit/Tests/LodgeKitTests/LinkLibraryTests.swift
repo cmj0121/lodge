@@ -102,6 +102,15 @@ import Testing
         #expect(object.allSatisfy { Set($0.keys) == ["id", "url", "title"] })
     }
 
+    @Test func aLodgePageLinkRoundTripsThroughJSON() throws {
+        var library = LinkLibrary()
+        library.add(LodgePage.settings.url, title: "Settings", to: .pins)
+        library.add(LodgePage.history.url, title: "History", to: .bookmarks)
+        let pins = try JSONDecoder().decode([SavedLink].self, from: JSONEncoder().encode(library.links(on: .pins)))
+        #expect(pins.map(\.url) == [LodgePage.settings.url])
+        #expect(library.links(on: .bookmarks).map(\.url) == [LodgePage.history.url])
+    }
+
     @Test func libraryRebuildsFromDecodedShelves() throws {
         let sample = LinkLibrary.sample
         let pins = try JSONEncoder().encode(sample.links(on: .pins))

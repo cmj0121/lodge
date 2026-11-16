@@ -6,7 +6,7 @@
 
     /// Debug aid: `Lodge -renderLayout YES` draws the window's layout (both sidebar modes, find
     /// open, and the shortcut overlay and the location prompt in light and dark), workspace colours and
-    /// Anonymous's dark window, the History window from an in-memory history, and the Downloads popover and button
+    /// Anonymous's dark window, the Settings tab, the History tab from an in-memory history, and the Downloads popover and button
     /// from sample items, to PNG files off screen, then exits. It never shows a window or takes focus,
     /// so it can run while someone uses the machine. The only download is a `data:` URL saved to a temporary folder.
     @MainActor
@@ -47,8 +47,9 @@
             checkShownElsewhere(in: directory)
             checkStepSkipsShownElsewhere()
             checkExternalLinks()
-            renderSettings(to: directory.appending(path: "layout-settings.png"))
-            renderHistory(to: directory.appending(path: "layout-history.png"))
+            checkLodgePages()
+            renderSettings(in: directory)
+            renderHistory(in: directory)
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
             exit(0)
@@ -130,8 +131,8 @@
         }
 
         /// Anonymous shown after Default and two custom workspaces: its bar tile and header in both sidebar modes and
-        /// both appearances, a Rename sheet opened for it anyway, and the History window while it is shown. Prints
-        /// ok or FAILED for: History says Not Kept on Anonymous and leaves that state on Default.
+        /// both appearances, and a Rename sheet opened for it anyway. Anonymous's History tab is drawn by
+        /// `renderHistory`.
         private static func renderAnonymous(in directory: URL) {
             let suite = "dev.lodge.render-layout"
             let defaults = UserDefaults(suiteName: suite)!
@@ -158,13 +159,6 @@
                     size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-anonymous-sheet.png"))
                 coordinator.windows[0].workspaceEditor = nil
-                let notKept = coordinator.history.state == .notKept
-                snapshot(
-                    HistoryView(model: coordinator.history), size: NSSize(width: 640, height: 600), title: "History",
-                    to: directory.appending(path: "layout-history-not-kept.png"))
-                coordinator.switchTo(Workspace.defaultID)
-                let left = coordinator.history.state != .notKept
-                print("History is Not Kept on Anonymous: \(notKept && left ? "ok" : "FAILED")")
             }
         }
 
@@ -819,6 +813,140 @@
             settle()
         }
 
+        /// Lodge pages (D1, C5), printed ok or FAILED for each: a link click, a cmd-click, `window.open`, a redirect
+        /// and an iframe to `lodge://settings` from a web page are refused and open no tab; typed, prompt, pin,
+        /// bookmark and received opens of a page land on its one tab; a Lodge tab never gets a web view, and none
+        /// slips under a web tab's view; loading a web address in a Lodge tab drops its link. Pages are inline HTML
+        /// and `about:blank`, so no request goes out; bringing forward is a hook, so nothing activates.
+        private static func checkLodgePages() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            coordinator.bringForwardHook = { _ in }
+            let window = coordinator.windows[0]
+            window.locationPrompt = nil
+            let hostWindow = host(root(coordinator, window), size: NSSize(width: 900, height: 600))
+            defer { hostWindow.close() }
+            let pane = coordinator.pane(for: window)
+            let model = pane.model
+            func pages(_ page: LodgePage, in model: BrowserModel) -> [BrowserTab] {
+                model.tabs.tabs.filter { $0.lodgePage == page }
+            }
+
+            let blank = pane.selectedID
+            pane.load("lodge://settings")
+            guard let settings = model.tab(showing: .settings) else { return report("A typed Lodge address opens", false) }
+            report(
+                "A typed Lodge address opens its page in place of the blank tab",
+                model.tabs.tabs.map(\.id) == [settings.id] && pane.selectedID == settings.id && blank != settings.id
+                    && settings.url == LodgePage.settings.url)
+
+            window.locationPrompt = .newTab
+            pane.submitLocation("about:blank")
+            guard let web = pane.selected, web.id != settings.id, let view = model.view(for: web.id, load: false) else {
+                return report("A web page cannot reach a Lodge page", false)
+            }
+            let vectors = [
+                ("A link click to lodge:// is refused", "<a id=a href='lodge://settings'>x</a>", "document.getElementById('a').click()"),
+                (
+                    "A cmd-click to lodge:// is refused", "<a id=a href='lodge://settings'>x</a>",
+                    "document.getElementById('a').dispatchEvent(new MouseEvent('click', {metaKey: true, bubbles: true, cancelable: true}))"
+                ),
+                ("window.open of lodge:// is refused", "<p>x</p>", "window.open('lodge://settings')"),
+                ("A redirect to lodge:// is refused", "<p>x</p>", "location.replace('lodge://settings')"),
+                ("An iframe of lodge:// is refused", "<p>x</p>", "document.body.appendChild(Object.assign(document.createElement('iframe'), {src: 'lodge://settings'}))"),
+            ]
+            for (index, (name, html, script)) in vectors.enumerated() {
+                let marker = "vector-\(index)"
+                view.loadHTMLString("<!doctype html><title>\(marker)</title><body>\(html)</body>", baseURL: nil)
+                let deadline = Date.now.addingTimeInterval(5)
+                while view.title != marker || view.isLoading, Date.now < deadline { settle(0.05) }
+                let count = model.tabs.tabs.count
+                let refusals = TabController.lodgeRefusals
+                view.evaluateJavaScript(script)
+                settle(0.5)
+                report(
+                    name,
+                    TabController.lodgeRefusals > refusals && model.tabs.tabs.count == count
+                        && pages(.settings, in: model).map(\.id) == [settings.id]
+                        && !LodgePage.isLodge(model.tabs[web.id]?.url) && model.registry.webView(for: web.id) === view)
+            }
+
+            let webURL = model.tabs[web.id]?.url
+            pane.load("LODGE://SETTINGS")
+            let typedAgain = pane.selectedID == settings.id && model.tabs[web.id]?.url == webURL
+                && model.registry.webView(for: web.id) === view
+            pane.select(web.id)
+            window.locationPrompt = .current(web.id)
+            pane.submitLocation("lodge://settings/")
+            let prompted = pane.selectedID == settings.id && model.tabs[web.id]?.url == webURL
+            let pin = model.addPin(LodgePage.settings.url, title: "Settings")
+            pane.select(web.id)
+            pane.openLink(pin, load: false)
+            let pinned = pane.selectedID == settings.id
+            model.update(web.id) { $0.url = LodgePage.history.url }
+            let guarded = model.tabs[web.id]?.url == webURL
+            report(
+                "Typed, prompt and pin opens of a page select its one tab",
+                typedAgain && prompted && pinned && pages(.settings, in: model).count == 1)
+            report("A web tab's address never turns into a Lodge page", guarded && model.tab(showing: .history) == nil)
+
+            pane.open(.history)
+            guard let marked = model.tab(showing: .history) else { return report("Bookmark opens select one tab", false) }
+            model.addLink(.bookmarks, from: marked.id)
+            guard let bookmark = model.library.links(on: .bookmarks).first(where: { $0.url == LodgePage.history.url })
+            else { return report("Bookmark opens select one tab", false) }
+            model.close(marked.id)
+            pane.openLink(bookmark, load: false)
+            pane.openLink(bookmark, load: false)
+            pane.load("lodge://history")
+            coordinator.open(.history)
+            guard let history = model.tab(showing: .history) else { return report("Bookmark opens select one tab", false) }
+            report(
+                "Bookmark and menu opens of a page select its one tab",
+                pages(.history, in: model).count == 1 && history.link == bookmark.id && pane.selectedID == history.id)
+
+            let made: Workspace? = try? coordinator.create(name: "Work", symbol: "briefcase")
+            coordinator.switchTo(Workspace.defaultID)
+            guard let work = made, let workModel = coordinator.model(for: work.id) else {
+                return report("Received pages dedupe to one tab", false)
+            }
+            let first = coordinator.open(tab: settings.id, in: work.id)
+            let second = coordinator.open(tab: settings.id, in: work.id)
+            report(
+                "Received pages dedupe to one tab",
+                first && second && pages(.settings, in: workModel).count == 1
+                    && model.receive(url: LodgePage.settings.url, title: "") == settings.id
+                    && pages(.settings, in: model).count == 1)
+
+            let lodgeTabs = (model.tabs.tabs + workModel.tabs.tabs).filter { LodgePage.isLodge($0.url) }
+            for owner in [model, workModel] {
+                for tab in owner.tabs.tabs where LodgePage.isLodge(tab.url) { owner.view(for: tab.id) }
+            }
+            pane.select(settings.id)
+            settle()
+            report(
+                "A Lodge tab never gets a web view",
+                lodgeTabs.count == 3
+                    && lodgeTabs.allSatisfy { coordinator.registry.webView(for: $0.id) == nil && !$0.isLive }
+                    && model.tabs[settings.id]?.isLive == false)
+
+            pane.select(history.id)
+            window.locationPrompt = .current(history.id)
+            pane.submitLocation("about:blank#left")
+            settle()
+            let left = model.tabs[history.id]
+            report(
+                "Loading a web address in a Lodge tab drops its link",
+                left?.link == nil && left?.lodgePage == nil && left?.canGoBack == false
+                    && model.registry.webView(for: history.id) != nil && pane.selectedID == history.id)
+            pane.openLink(bookmark, load: false)
+            report(
+                "Its bookmark still opens the Lodge page",
+                model.tab(showing: .history).map { $0.id != history.id && $0.link == bookmark.id } == true)
+            settle()
+        }
+
         /// Workspace colours and Anonymous's look: an Anonymous window drawn in a light system appearance (it stays
         /// dark) and in a dark one (checked against a plain dark window's ground), a strip of Default's sidebar in each
         /// palette swatch in light and in dark, the Change Icon sheet with a colour chosen in both appearances, and the
@@ -989,29 +1117,11 @@
                 "A window registered in Anonymous is dark",
                 settle { third.nsWindow === late && isDark(late) })
 
-            // The app's History and Settings scenes carry no WindowRegistrar, so they are hosted as they are; what can
-            // go wrong is a switch reaching past the browser windows (all of NSApp's windows, or the app's own
-            // appearance). So they are open across a switch out of Anonymous and back, and must stay untouched and
-            // light while the browser windows turn dark again.
-            let suite = "dev.lodge.render-layout"
-            let defaults = UserDefaults(suiteName: suite)!
-            let others = [
-                host(HistoryView(model: coordinator.history), size: NSSize(width: 640, height: 600)),
-                host(
-                    SettingsView(model: DownloadSettingsModel(defaults: defaults)), size: NSSize(width: 480, height: 300)),
-            ]
-            defer {
-                for window in others { window.close() }
-                defaults.removePersistentDomain(forName: suite)
-            }
             coordinator.switchTo(Workspace.defaultID)
             let leftAnonymous = settle { hosts.allSatisfy { $0.appearance == nil } }
             coordinator.switchTo(Workspace.anonymousID)
             let darkAgain = settle { hosts.allSatisfy(isDark) }
-            report(
-                "History and Settings keep the system look in Anonymous",
-                leftAnonymous && darkAgain
-                    && others.allSatisfy { $0.appearance == nil && $0.effectiveAppearance.name == .aqua })
+            report("Browser windows turn light leaving Anonymous and dark again", leftAnonymous && darkAgain)
 
             let model = coordinator.active
             let shown = coordinator.selections.shown(in: first.id)
@@ -1061,15 +1171,62 @@
                     && refused == .anonymousIsFixed && anonymous?.color == .graphite)
         }
 
-        /// The Settings window, its download choices read from a defaults suite of its own, removed afterwards.
-        private static func renderSettings(to url: URL) {
+        /// The Settings tab in light, in dark and in Anonymous (in a light system), its download choices read from a
+        /// defaults suite of its own, removed afterwards. Printed ok or FAILED: the page card follows the window's
+        /// look, light in light and dark in dark and in Anonymous; ⌘, and the gear's `open(.settings)` select the
+        /// one Settings tab, in place of the blank tab.
+        private static func renderSettings(in directory: URL) {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
             let suiteName = "dev.lodge.selfcheck.\(UUID().uuidString)"
             guard let defaults = UserDefaults(suiteName: suiteName) else { return }
             defer { defaults.removePersistentDomain(forName: suiteName) }
-            snapshot(
-                SettingsView(model: DownloadSettingsModel(defaults: defaults)).frame(height: 300),
-                size: NSSize(width: 480, height: 300),
-                title: "Settings", to: url)
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            let settings = DownloadSettingsModel(defaults: defaults)
+            let size = NSSize(width: 1100, height: 700)
+            /// The page's ground in the middle of the card, below the form.
+            let probe = NSPoint(x: (SidebarMode.expanded.width + size.width) / 2, y: size.height - 30)
+            func brightness(_ rep: NSBitmapImageRep?) -> CGFloat? {
+                guard let rep else { return nil }
+                let scale = CGFloat(rep.pixelsWide) / size.width
+                guard let color = rep.colorAt(x: Int(probe.x * scale), y: Int(probe.y * scale))?.usingColorSpace(.sRGB)
+                else { return nil }
+                return (color.redComponent + color.greenComponent + color.blueComponent) / 3
+            }
+
+            var grounds: [String: CGFloat] = [:]
+            var opened = true
+            for (name, anonymous, appearance) in [
+                ("light", false, NSAppearance.Name.aqua), ("dark", false, .darkAqua), ("anonymous", true, .aqua),
+            ] {
+                let coordinator = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+                coordinator.bringForwardHook = { _ in }
+                if anonymous { coordinator.switchTo(Workspace.anonymousID) }
+                let window = coordinator.windows[0]
+                window.locationPrompt = nil
+                let pane = firstPane(coordinator)
+                let blank = pane.selectedID
+                coordinator.open(.settings)
+                coordinator.open(.settings)
+                let tab = pane.model.tab(showing: .settings)
+                opened = opened && tab != nil && pane.selectedID == tab?.id && pane.model.tabs.tabs.count == 1
+                    && blank != tab?.id
+                // Anonymous's look comes from WindowRegistrar on a real window; this stands in for it.
+                let look = NSAppearance(named: anonymous ? .darkAqua : appearance)
+                let system = NSApp.appearance
+                NSApp.appearance = NSAppearance(named: appearance)
+                defer { NSApp.appearance = system }
+                let shown = image(
+                    root(coordinator).defaultAppStorage(defaults).environment(\.downloadSettings, settings), size: size,
+                    appearance: look)
+                try? shown?.representation(using: .png, properties: [:])?
+                    .write(to: directory.appending(path: "layout-settings-\(name).png"))
+                grounds[name] = brightness(shown)
+            }
+            report("⌘, and the gear open the one Settings tab in place of the blank tab", opened)
+            report(
+                "The Settings page follows the window's look, Anonymous included",
+                (grounds["light"] ?? 0) > 0.8 && (grounds["dark"] ?? 1) < 0.3 && (grounds["anonymous"] ?? 1) < 0.3)
         }
 
         /// An off-screen window hosting `view`, never shown; it is not freed on closing, so closing it is safe.
@@ -1101,9 +1258,19 @@
         /// Which location prompt a render opens: ⌘T's empty one or ⌘L's on the selected page.
         enum PromptRender { case newTab, current }
 
-        /// The History window over sample visits from today back three days, in a store that lives only in memory.
-        private static func renderHistory(to url: URL) {
-            guard let store = try? HistoryStore.inMemory() else { return }
+        /// The History tab over sample visits from today back three days, in a store that lives only in memory: in
+        /// light, in dark, searching, and Anonymous's not-kept page. Printed ok or FAILED: Show All History's
+        /// `open(.history)` gives each workspace one History tab; the search filters the list; Anonymous's tab says
+        /// history is not kept; the page follows the window's look; and the model knows whether a History page shows
+        /// whatever order pages appear and disappear in, a switch between workspaces that each show one included.
+        private static func renderHistory(in directory: URL) {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(3)
+                while !done(), Date.now < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) }
+                return done()
+            }
+            guard let store = try? HistoryStore.inMemory() else { return report("History opens in memory", false) }
             let sites = [
                 ("https://developer.apple.com/documentation/swiftui", "SwiftUI | Apple Developer Documentation"),
                 ("https://www.swift.org/blog/", "Blog | Swift.org"),
@@ -1113,20 +1280,152 @@
                 ("https://example.com/untitled", ""),
             ]
             // Oldest first, as a clock would record them; the store coalesces a revisit only against the newest.
-            let done = Task {
+            Task {
                 for index in (0..<24).reversed() {
                     let (address, title) = sites[index % sites.count]
                     let date = Date.now.addingTimeInterval(-Double(index) * 4 * 3600)
                     _ = try? await store.record(URL(string: address)!, title: title, at: date)
                 }
             }
-            let model = HistoryModel { _ in }
-            Task {
-                await done.value
-                model.show(store, state: .ready)
-            }
             RunLoop.main.run(until: Date().addingTimeInterval(1))
-            snapshot(HistoryView(model: model), size: NSSize(width: 640, height: 600), title: "History", to: url)
+            func visits(_ model: HistoryModel) -> [HistoryVisit] { model.days.flatMap(\.visits) }
+
+            // The model alone, its pages coming and going in every order a window or a switch can produce.
+            let model = HistoryModel { _ in }
+            model.show(store, state: .ready)
+            let (a, b, c, d) = (UUID(), UUID(), UUID(), UUID())
+            model.pageAppeared(a)
+            model.pageAppeared(b)
+            model.pageAppeared(b)
+            model.pageDisappeared(a)
+            var counted = model.isVisible
+            model.pageDisappeared(a)
+            counted = counted && model.isVisible
+            model.pageDisappeared(b)
+            counted = counted && !model.isVisible
+            model.pageDisappeared(c)
+            counted = counted && !model.isVisible
+            model.pageAppeared(c)
+            counted = counted && model.isVisible && settle { !visits(model).isEmpty }
+            // A switch: the new workspace's page appears before the old one's goes, then the other way round.
+            model.pageAppeared(d)
+            model.pageDisappeared(c)
+            counted = counted && model.isVisible && !visits(model).isEmpty
+            model.pageDisappeared(d)
+            counted = counted && !model.isVisible && model.days.isEmpty
+            model.pageAppeared(a)
+            counted = counted && model.isVisible && settle { !visits(model).isEmpty }
+            model.pageDisappeared(a)
+            report("History knows a page shows whatever order pages appear and disappear in", counted)
+
+            let suiteName = "dev.lodge.selfcheck.\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            let size = NSSize(width: 1100, height: 700)
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+            coordinator.bringForwardHook = { _ in }
+            let history = coordinator.history
+            let window = coordinator.windows[0]
+            window.locationPrompt = nil
+            let pane = firstPane(coordinator)
+            func historyTabs(_ model: BrowserModel) -> Int { model.tabs.tabs.filter { $0.lodgePage == .history }.count }
+            /// Default's history is the sample store; the other workspaces have none in a renderer with no folder.
+            func enter(_ id: UUID) {
+                coordinator.switchTo(id)
+                if id == Workspace.defaultID { history.show(store, state: .ready) }
+            }
+
+            let blank = pane.selectedID
+            coordinator.open(.history)
+            coordinator.open(.history)
+            let defaultTab = pane.model.tab(showing: .history)
+            var single = defaultTab != nil && pane.selectedID == defaultTab?.id && historyTabs(pane.model) == 1
+                && pane.model.tabs.tabs.count == 1 && blank != defaultTab?.id
+            guard let work = try? coordinator.create(name: "Work", symbol: "briefcase"),
+                let personal = try? coordinator.create(name: "Personal", symbol: "house")
+            else { return report("Workspaces for History", false) }
+            enter(work.id)
+            coordinator.open(.history)
+            coordinator.open(.history)
+            let workModel = firstPane(coordinator).model
+            single = single && historyTabs(workModel) == 1 && firstPane(coordinator).selected?.lodgePage == .history
+            enter(Workspace.defaultID)
+            single = single && historyTabs(pane.model) == 1 && historyTabs(workModel) == 1
+                && pane.selected?.lodgePage == .history
+            report("Show All History opens one History tab per workspace", single)
+
+            // A real window: its History page counts while shown, across switches that rebuild the window's content.
+            let hosted = host(root(coordinator).defaultAppStorage(defaults), size: size)
+            defer { hosted.close() }
+            var visible = settle { history.isVisible }
+            enter(work.id)
+            visible = visible && settle { history.isVisible }
+            enter(personal.id)
+            visible = visible && settle { !history.isVisible }
+            enter(Workspace.defaultID)
+            visible = visible && settle { history.isVisible && !visits(history).isEmpty }
+
+            history.query = "swift"
+            let all = 24
+            let searched = settle { !history.isSearchPending && !visits(history).isEmpty }
+            let found = visits(history)
+            report(
+                "Searching History shows only the matching visits",
+                searched && found.count < all
+                    && found.allSatisfy {
+                        $0.title.localizedCaseInsensitiveContains("swift")
+                            || $0.url.absoluteString.localizedCaseInsensitiveContains("swift")
+                    })
+            // Emptied, not closed: closing would close the coordinator's window too.
+            hosted.contentView = nil
+            visible = visible && settle { !history.isVisible }
+            report("A History tab counts as shown exactly while a window shows it, across workspace switches", visible)
+
+            /// The page's ground: the median over a grid on the card, where text is the minority.
+            func ground(_ rep: NSBitmapImageRep?) -> CGFloat? {
+                guard let rep else { return nil }
+                let scale = CGFloat(rep.pixelsWide) / size.width
+                var values: [CGFloat] = []
+                for x in stride(from: SidebarMode.expanded.width + 40, to: size.width - 40, by: 23) {
+                    for y in stride(from: 80, to: size.height - 40, by: 17) {
+                        guard let color = rep.colorAt(x: Int(x * scale), y: Int(y * scale))?.usingColorSpace(.sRGB)
+                        else { continue }
+                        values.append((color.redComponent + color.greenComponent + color.blueComponent) / 3)
+                    }
+                }
+                return values.isEmpty ? nil : values.sorted()[values.count / 2]
+            }
+            func render(_ name: String, look: NSAppearance.Name) -> CGFloat? {
+                let shown = image(root(coordinator).defaultAppStorage(defaults), size: size, appearance: NSAppearance(named: look))
+                try? shown?.representation(using: .png, properties: [:])?
+                    .write(to: directory.appending(path: "layout-history-\(name).png"))
+                return ground(shown)
+            }
+            let system = NSApp.appearance
+            defer { NSApp.appearance = system }
+            NSApp.appearance = NSAppearance(named: .aqua)
+            let search = render("search", look: .aqua)
+            history.query = ""
+            let light = render("light", look: .aqua)
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+            let dark = render("dark", look: .darkAqua)
+            NSApp.appearance = NSAppearance(named: .aqua)
+
+            enter(Workspace.anonymousID)
+            coordinator.open(.history)
+            let anonymousTab = firstPane(coordinator).selected?.lodgePage == .history
+            let notKept = history.state == .notKept
+            // Anonymous's look comes from WindowRegistrar on a real window; this stands in for it.
+            let anonymous = render("not-kept", look: .darkAqua)
+            enter(Workspace.defaultID)
+            report(
+                "Anonymous's History tab says history is not kept",
+                anonymousTab && notKept && history.state == .ready)
+            report(
+                "The History page follows the window's look, Anonymous included",
+                (light ?? 0) > 0.8 && (search ?? 0) > 0.8 && (dark ?? 1) < 0.3 && (anonymous ?? 1) < 0.3)
         }
 
         /// One sample item per D5 state, newest first; the second finished one stands for a moved file.

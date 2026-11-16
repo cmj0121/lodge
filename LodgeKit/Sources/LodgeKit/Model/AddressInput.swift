@@ -8,10 +8,12 @@ public enum AddressInput {
 
     /// A URL with a known scheme as is, a host-like text with `https://` (`http://` for localhost and
     /// IP addresses), anything else as a DuckDuckGo search.
+    /// A `lodge:` address gives its page's canonical URL, or nil when it names none; it is never a search.
     /// Blank text gives nil.
     public static func url(from text: String) -> URL? {
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { return nil }
+        if input.lowercased().hasPrefix(LodgePage.scheme + ":") { return URL(string: input).flatMap(LodgePage.init)?.url }
         if let url = URL(string: input), let scheme = url.scheme?.lowercased(), schemes.contains(scheme) {
             return url
         }

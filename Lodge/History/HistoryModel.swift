@@ -3,9 +3,9 @@ import LodgeKit
 import Observation
 import os
 
-/// State and actions of the History window: the shown workspace's visits loaded page by page, grouped by day, and
-/// the search.
-/// While the window is closed nothing loads: changes only mark the list dirty, and it refreshes when shown again.
+/// State and actions of the History pages: the shown workspace's visits loaded page by page, grouped by day, and
+/// the search. One model serves every History tab of every window.
+/// While no History page shows nothing loads: changes only mark the list dirty, and it refreshes when one shows again.
 @MainActor
 @Observable
 final class HistoryModel {
@@ -27,9 +27,9 @@ final class HistoryModel {
     private static let logger = Logger(subsystem: "dev.lodge", category: "history")
 
     private(set) var state = State.loading
-    /// Whether the first page has been shown; until then the window shows a spinner.
+    /// Whether the first page has been shown; until then the page shows a spinner.
     private(set) var hasFirstPage = false
-    /// Whether the last refresh could not read the store; the window says so and offers to try again.
+    /// Whether the last refresh could not read the store; the page says so and offers to try again.
     private(set) var loadFailed = false
     /// Whether the search for the current query could not read the store, so its matches are not shown.
     private(set) var searchFailed = false
@@ -38,7 +38,7 @@ final class HistoryModel {
     /// Whether the last next-page read failed; the end of the list offers to try again instead of loading.
     private(set) var pageLoadFailed = false
     /// Whether the last Clear All deleted the visits but left some old data on disk until Lodge closes; the
-    /// window says so.
+    /// page says so.
     var clearLeftData = false
     /// The shown visits by day: the search's matches while there is a query, else the loaded pages.
     private(set) var days: [HistoryDay] = []
@@ -52,7 +52,7 @@ final class HistoryModel {
         }
     }
 
-    /// Opens a visit's page in a new tab of the key window's workspace.
+    /// Opens a visit's page from the last active browser window.
     @ObservationIgnored private let openURL: @MainActor (URL) -> Void
     @ObservationIgnored private var store: (any HistorySource)?
     @ObservationIgnored private var pages = HistoryPages() {
@@ -61,13 +61,15 @@ final class HistoryModel {
     @ObservationIgnored private var matches: [HistoryVisit] = [] {
         didSet { if isSearching { regroup() } }
     }
-    @ObservationIgnored private var isVisible = false
-    /// Set when the store changed while the window was closed.
+    /// The History pages showing now. Pages come and go in any order (a workspace switch builds the new window
+    /// content before or after the old one goes), so each counts by its own identity, not by a single flag.
+    @ObservationIgnored private var viewers: Set<UUID> = []
+    /// Set when the store changed while no History page showed.
     @ObservationIgnored private var isDirty = true
     @ObservationIgnored private var isLoadingPage = false
     /// Each refresh replaces the earlier ones; a clear voids them all.
     @ObservationIgnored private var refreshes = LatestOnly()
-    /// Page loads join the current generation; a clear or the window closing voids them.
+    /// Page loads join the current generation; a clear or the last History page going voids them.
     @ObservationIgnored private var pageLoads = LatestOnly()
     /// Each search replaces the earlier ones; a new query or a clear voids them all.
     @ObservationIgnored private var searches = LatestOnly()
@@ -96,7 +98,7 @@ final class HistoryModel {
 
     /// Shows another workspace's history (nil while its store opens, or when it has none): stops following the
     /// previous store, voids its loads and searches still running and empties the list, then follows `store`'s
-    /// changes, loading them while the window shows. The query stays and runs again on the new store.
+    /// changes, loading them while a History page shows. The query stays and runs again on the new store.
     func show(_ store: (any HistorySource)?, state: State) {
         if let changesTask {
             changesTask.cancel()
@@ -139,25 +141,29 @@ final class HistoryModel {
         for task in stoppedChanges.values { await task.value }
     }
 
-    // MARK: Window
+    // MARK: Pages
 
-    /// The window appeared: brings a list that went stale while it was closed up to date.
-    func windowAppeared() {
-        isVisible = true
+    /// Whether any History page shows.
+    var isVisible: Bool { !viewers.isEmpty }
+
+    /// A History page appeared: the first one brings a list that went stale while none showed up to date.
+    func pageAppeared(_ viewer: UUID) {
+        guard viewers.insert(viewer).inserted, viewers.count == 1 else { return }
         regroup()
         if isDirty { Task { await refresh() } }
     }
 
-    /// The window closed: keeps only the first page, so a long scroll's pages are not held while nobody looks.
-    func windowDisappeared() {
-        isVisible = false
+    /// A History page went: when it was the last, keeps only the first page, so a long scroll's pages are not held
+    /// while nobody looks.
+    func pageDisappeared(_ viewer: UUID) {
+        guard viewers.remove(viewer) != nil, viewers.isEmpty else { return }
         pageLoads.invalidate()
         pages.keepFirstPage(limit: Self.pageSize)
         days = []
     }
 
     /// Merges the newest page into the loaded ones, and runs the search again so its matches stay current. A failed
-    /// read leaves the list dirty, so showing the window again retries it.
+    /// read leaves the list dirty, so showing a History page again retries it.
     private func refresh() async {
         guard let store else { return }
         isDirty = false
@@ -202,7 +208,7 @@ final class HistoryModel {
                 if pageLoads.accepts(ticket) { pageLoadFailed = true } else { loadAgain = true }
             }
             isLoadingPage = false
-            // A voided load (the window closed and opened again meanwhile) may have kept the reopened list's own
+            // A voided load (every History page went and one came back meanwhile) may have kept the reopened list's own
             // request out; after a clear, `hasMore` is false and this does nothing.
             if loadAgain, isVisible { loadMore() }
         }
@@ -262,8 +268,7 @@ final class HistoryModel {
         days.lazy.flatMap(\.visits).first { $0.id == id }
     }
 
-    /// Opens the visit's page in a new tab of the key window's workspace; the view has already brought the browser
-    /// window up.
+    /// Opens the visit's page in the window the History page is in: a new tab, or the window already showing it (D4).
     func open(_ visit: HistoryVisit) {
         openURL(visit.url)
     }
@@ -276,7 +281,7 @@ final class HistoryModel {
     }
 
     /// Empties the shown workspace's list at once, voiding every load and search still running, then the store; the
-    /// store's change refreshes the list again. Works with the window closed.
+    /// store's change refreshes the list again. Works with no History page showing.
     func clearAll() {
         guard let store else { return }
         searchTask?.cancel()

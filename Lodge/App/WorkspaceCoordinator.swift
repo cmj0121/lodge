@@ -17,9 +17,9 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     var activeWorkspaceID: UUID { selections.active }
     /// The browser windows, key first, in `selections.windows` order.
     private(set) var windows: [WindowState]
-    /// The browser window that is key; nil while History, Settings or a panel is.
+    /// The browser window that is key; nil while a panel or another app is.
     private(set) var keyBrowserWindow: WindowState?
-    /// The browser window last key; History or Settings becoming key does not change it.
+    /// The browser window last key; a panel becoming key does not change it.
     private(set) var lastActiveBrowserWindow: WindowState?
     /// The pane menus act in; nil (items disabled) with no browser window.
     var commandPane: BrowserPane? { lastActiveBrowserWindow.map(pane(for:)) }
@@ -57,7 +57,8 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     @ObservationIgnored private let downloads: DownloadManager?
     @ObservationIgnored private let defaultLibrary: LinkLibrary
 
-    /// The History window's model: it shows the key window's workspace's visits, and a visit opens there.
+    /// Every History tab's model: it shows the active workspace's visits, and a visit opens in the last active
+    /// browser window, the one whose History tab was used.
     @ObservationIgnored private(set) lazy var history = HistoryModel { [unowned self] url in
         commandPane?.open(historyURL: url)
     }
@@ -352,6 +353,22 @@ extension WorkspaceCoordinator: WindowPlacement {
         if let tab = selections.shown(in: window.id) { model.view(for: tab) }
         didChange()
         return window
+    }
+
+    /// ⌘,, the workspace-bar gear, Show All History: `open(page)` in `commandPane`, or in a new window (its location
+    /// prompt closed) when there is none; the window showing the page comes forward.
+    func open(_ page: LodgePage) {
+        let window: WindowState
+        if let last = lastActiveBrowserWindow {
+            window = last
+        } else {
+            window = newWindow()
+            window.locationPrompt = nil
+        }
+        let pane = pane(for: window)
+        pane.open(page)
+        let shown = pane.model.tab(showing: page).flatMap { selections.window(showing: $0.id) }.flatMap(self.window(for:))
+        bringForward(shown ?? window)
     }
 
     /// Brings the window to the front, key, with the app active.
@@ -678,14 +695,14 @@ extension WorkspaceCoordinator {
     private static let historyLogger = Logger(subsystem: "dev.lodge", category: "history")
 
     /// Launch: opens every listed workspace's history file off the main actor, all at once; each one's tabs record
-    /// into it once it has opened, and the History window shows the active one's as soon as it is there.
+    /// into it once it has opened, and the History tabs show the active one's as soon as it is there.
     func openHistoryStores() async {
         let openings = workspaces.workspaces.compactMap(openHistory(of:))
         showActiveHistory()
         for opening in openings { await opening.value }
     }
 
-    /// Opens a new workspace's history file; a switch to it meanwhile shows the History window loading.
+    /// Opens a new workspace's history file; a switch to it meanwhile shows the History tabs loading.
     func openHistoryStore(for id: UUID) async {
         guard let workspace = workspaces[id] else { return }
         let opening = openHistory(of: workspace)
@@ -702,7 +719,7 @@ extension WorkspaceCoordinator {
         models[id]?.historyRecorder = nil
         await recorder?.drain()
         guard let store = historyStores.removeValue(forKey: id) else { return }
-        // The History window stops observing it first, or closing fails.
+        // The History model stops observing it first, or closing fails.
         if id == activeWorkspaceID { history.show(nil, state: .unavailable) }
         await history.stoppedFollowing()
         try store.close()
@@ -762,7 +779,7 @@ extension WorkspaceCoordinator {
         if id == activeWorkspaceID { showActiveHistory() }
     }
 
-    /// Shows the active workspace's history in the History window: loading while its file opens.
+    /// Shows the active workspace's history in the History tabs: loading while its file opens, not kept in Anonymous.
     private func showActiveHistory() {
         let workspace = activeWorkspace
         if let store = historyStores[workspace.id] {

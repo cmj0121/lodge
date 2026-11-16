@@ -28,6 +28,10 @@ struct BrowserCommands: Commands {
     var body: some Commands {
         // The scene's opener, which works with no window open, is how the coordinator opens browser windows.
         let _ = installWindowOpener()
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { coordinator.open(.settings) }
+                .keyboardShortcut(",")
+        }
         CommandGroup(replacing: .newItem) {
             Button(ShortcutCatalog[.newTab].title) { pane?.newTab() }
                 .shortcut(.newTab, enabled: !noPane)
@@ -84,7 +88,7 @@ struct BrowserCommands: Commands {
             Button("Forward") { pane?.goForward() }
                 .disabled(noPane)
             Divider()
-            Button("Show All History") { openWindow(id: "history") }
+            Button("Show All History") { coordinator.open(.history) }
             Button("Clear All History…") { HistoryPrompts.clearAll(model: history) }
                 .disabled(!history.canClearAll)
         }

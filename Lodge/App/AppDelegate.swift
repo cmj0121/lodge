@@ -10,7 +10,7 @@ import os
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var store = SessionStore()
 
-    /// The History window's model; it shows the active workspace's history once its file has opened.
+    /// The History tabs' model; it shows the active workspace's history once its file has opened.
     var history: HistoryModel { coordinator.history }
 
     /// The downloads, kept in memory only when Application Support cannot be found.

@@ -85,4 +85,14 @@ import Testing
         tab.title = "Example"
         #expect(tab.displayTitle == "Example")
     }
+
+    @Test func aLodgePageTabIsTitledAfterItsPage() throws {
+        var tab = BrowserTab(url: LodgePage.settings.url, title: "Stale")
+        #expect(tab.displayTitle == "Settings")
+        tab.url = LodgePage.history.url
+        #expect(tab.displayTitle == "History")
+        tab.url = try #require(URL(string: "lodge://nowhere"))
+        tab.title = ""
+        #expect(tab.displayTitle == "nowhere")
+    }
 }

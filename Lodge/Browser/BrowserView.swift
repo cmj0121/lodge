@@ -110,6 +110,7 @@ private struct PageCard: View {
 
 private struct PageArea: View {
     let pane: BrowserPane
+    @Environment(WorkspaceCoordinator.self) private var coordinator
 
     private var tab: BrowserTab? { pane.selected }
     /// No tab, or a blank one with nothing on its way.
@@ -118,13 +119,22 @@ private struct PageArea: View {
     var body: some View {
         ZStack {
             Color(nsColor: .textBackgroundColor)
-            if let tab {
-                WebViewHost(tab: tab.id)
-            }
-            if let tab, tab.hasCrashed {
-                CrashedPlaceholder(host: tab.url?.host(), reload: pane.reload)
-            } else if showsNewTab {
-                NewTabPlaceholder()
+            if let tab, LodgePage.isLodge(tab.url) {
+                // A `lodge:` address naming no page leaves the page area empty.
+                switch tab.lodgePage {
+                case .settings: SettingsView()
+                case .history: HistoryView(model: coordinator.history)
+                case nil: EmptyView()
+                }
+            } else {
+                if let tab {
+                    WebViewHost(tab: tab.id)
+                }
+                if let tab, tab.hasCrashed {
+                    CrashedPlaceholder(host: tab.url?.host(), reload: pane.reload)
+                } else if showsNewTab {
+                    NewTabPlaceholder()
+                }
             }
         }
     }
