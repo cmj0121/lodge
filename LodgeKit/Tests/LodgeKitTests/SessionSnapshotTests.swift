@@ -50,6 +50,25 @@ import Testing
         #expect(restored.map(\.hasCrashed) == [false])
     }
 
+    @Test func lodgePageTabsAndLinksRoundTripAndRestoreNotLive() throws {
+        let pinned = SavedLink(url: LodgePage.settings.url, title: "Settings")
+        let marked = SavedLink(url: LodgePage.history.url, title: "History")
+        let settings = BrowserTab(url: LodgePage.settings.url, link: pinned.id)
+        let history = BrowserTab(url: LodgePage.history.url)
+        let snapshot = SessionSnapshot.defaultOnly(
+            tabs: TabList(tabs: [settings, history]), library: LinkLibrary(pins: [pinned], bookmarks: [marked]),
+            selectedTab: history.id)
+        let decoded = try roundTrip(snapshot)
+        #expect(decoded == snapshot)
+        let restored = decoded.defaultRestored()
+        #expect(restored.tabs.tabs.map(\.lodgePage) == [.settings, .history])
+        #expect(restored.tabs.tabs.map(\.isLive) == [false, false])
+        #expect(restored.tabs.tab(forLink: pinned.id)?.id == settings.id)
+        #expect(restored.library.links(on: .pins).map(\.url) == [LodgePage.settings.url])
+        #expect(restored.library.links(on: .bookmarks).map(\.url) == [LodgePage.history.url])
+        #expect(restored.selectedTab == history.id)
+    }
+
     @Test func dropsALinkNamingNoSavedLink() {
         let tab = BrowserTab(url: pin.url, link: UUID())
         let restored = SessionSnapshot.defaultOnly(tabs: TabList(tabs: [tab]), library: LinkLibrary(pins: [pin]), selectedTab: tab.id)

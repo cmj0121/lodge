@@ -16,6 +16,19 @@ import Testing
     }
 
     @Test(arguments: [
+        ("lodge://settings", "lodge://settings"), ("LODGE://SETTINGS", "lodge://settings"),
+        ("  lodge://history/ ", "lodge://history"),
+    ])
+    func givesALodgePageItsCanonicalURL(input: String, expected: String) {
+        #expect(AddressInput.url(from: input)?.absoluteString == expected)
+    }
+
+    @Test(arguments: ["lodge:", "lodge://", "lodge://about", "lodge://settings?x", "Lodge:settings", "lodge://set tings"])
+    func ignoresAnyOtherLodgeAddressRatherThanSearching(input: String) {
+        #expect(AddressInput.url(from: input) == nil)
+    }
+
+    @Test(arguments: [
         ("example.com", "https://example.com"),
         ("www.example.co.uk/a/b?c=d", "https://www.example.co.uk/a/b?c=d"),
         ("example.com:8080/x", "https://example.com:8080/x"),

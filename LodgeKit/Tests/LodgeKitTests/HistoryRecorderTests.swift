@@ -39,6 +39,15 @@ import Testing
         #expect(try await visits().map(\.0) == ["https://a.example/", "https://a.example/#part"])
     }
 
+    @Test func aLodgePageIsNeverRecorded() async throws {
+        for page in LodgePage.allCases {
+            recorder.send(.committed(tab: tab, url: page.url, title: page.title))
+            recorder.send(.urlChanged(tab: tab, url: page.url, title: page.title))
+            recorder.send(.title(tab: tab, url: page.url, title: "T"))
+        }
+        #expect(try await visits().isEmpty)
+    }
+
     @Test func seenRecordsNothingButSetsTheLastURL() async throws {
         recorder.send(.seen(tab: tab, url: url("https://a.example/")))
         recorder.send(.urlChanged(tab: tab, url: url("https://a.example/"), title: "A"))

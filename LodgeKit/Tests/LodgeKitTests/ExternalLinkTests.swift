@@ -14,7 +14,7 @@ import Testing
 
     @Test(arguments: [
         "file:///etc/passwd", "javascript:alert(1)", "data:text/html,x", "about:blank", "mailto:me@example.com",
-        "ftp://example.com/f", "lodge://open", "http:/nohost", "https://", "x-apple-helpviewer://a",
+        "ftp://example.com/f", "lodge://open", "lodge://settings", "LODGE://HISTORY", "http:/nohost", "https://", "x-apple-helpviewer://a",
     ])
     func ignoresEverythingElse(url: String) throws {
         #expect(!ExternalLink.accepts(try #require(URL(string: url))))
