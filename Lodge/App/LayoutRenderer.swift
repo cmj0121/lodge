@@ -6,7 +6,7 @@
 
     /// Debug aid: `Lodge -renderLayout YES` draws the window's layout (both sidebar modes, find
     /// open, and the shortcut overlay and the location prompt in light and dark), workspace colours and
-    /// Anonymous's dark window, the History window from an in-memory history, and the Downloads popover and button
+    /// Anonymous's dark window, the Settings tab, the History window from an in-memory history, and the Downloads popover and button
     /// from sample items, to PNG files off screen, then exits. It never shows a window or takes focus,
     /// so it can run while someone uses the machine. The only download is a `data:` URL saved to a temporary folder.
     @MainActor
@@ -48,7 +48,7 @@
             checkStepSkipsShownElsewhere()
             checkExternalLinks()
             checkLodgePages()
-            renderSettings(to: directory.appending(path: "layout-settings.png"))
+            renderSettings(in: directory)
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -1124,27 +1124,18 @@
                 "A window registered in Anonymous is dark",
                 settle { third.nsWindow === late && isDark(late) })
 
-            // The app's History and Settings scenes carry no WindowRegistrar, so they are hosted as they are; what can
-            // go wrong is a switch reaching past the browser windows (all of NSApp's windows, or the app's own
-            // appearance). So they are open across a switch out of Anonymous and back, and must stay untouched and
-            // light while the browser windows turn dark again.
-            let suite = "dev.lodge.render-layout"
-            let defaults = UserDefaults(suiteName: suite)!
-            let others = [
-                host(HistoryView(model: coordinator.history), size: NSSize(width: 640, height: 600)),
-                host(
-                    SettingsView(model: DownloadSettingsModel(defaults: defaults)), size: NSSize(width: 480, height: 300)),
-            ]
-            defer {
-                for window in others { window.close() }
-                defaults.removePersistentDomain(forName: suite)
-            }
+            // The app's History scene carries no WindowRegistrar, so it is hosted as it is; what can go wrong is a
+            // switch reaching past the browser windows (all of NSApp's windows, or the app's own appearance). So it is
+            // open across a switch out of Anonymous and back, and must stay untouched and light while the browser
+            // windows turn dark again.
+            let others = [host(HistoryView(model: coordinator.history), size: NSSize(width: 640, height: 600))]
+            defer { for window in others { window.close() } }
             coordinator.switchTo(Workspace.defaultID)
             let leftAnonymous = settle { hosts.allSatisfy { $0.appearance == nil } }
             coordinator.switchTo(Workspace.anonymousID)
             let darkAgain = settle { hosts.allSatisfy(isDark) }
             report(
-                "History and Settings keep the system look in Anonymous",
+                "History keeps the system look in Anonymous",
                 leftAnonymous && darkAgain
                     && others.allSatisfy { $0.appearance == nil && $0.effectiveAppearance.name == .aqua })
 
@@ -1196,15 +1187,62 @@
                     && refused == .anonymousIsFixed && anonymous?.color == .graphite)
         }
 
-        /// The Settings window, its download choices read from a defaults suite of its own, removed afterwards.
-        private static func renderSettings(to url: URL) {
+        /// The Settings tab in light, in dark and in Anonymous (in a light system), its download choices read from a
+        /// defaults suite of its own, removed afterwards. Printed ok or FAILED: the page card follows the window's
+        /// look, light in light and dark in dark and in Anonymous; ⌘, and the gear's `open(.settings)` select the
+        /// one Settings tab, in place of the blank tab.
+        private static func renderSettings(in directory: URL) {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
             let suiteName = "dev.lodge.selfcheck.\(UUID().uuidString)"
             guard let defaults = UserDefaults(suiteName: suiteName) else { return }
             defer { defaults.removePersistentDomain(forName: suiteName) }
-            snapshot(
-                SettingsView(model: DownloadSettingsModel(defaults: defaults)).frame(height: 300),
-                size: NSSize(width: 480, height: 300),
-                title: "Settings", to: url)
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            let settings = DownloadSettingsModel(defaults: defaults)
+            let size = NSSize(width: 1100, height: 700)
+            /// The page's ground in the middle of the card, below the form.
+            let probe = NSPoint(x: (SidebarMode.expanded.width + size.width) / 2, y: size.height - 30)
+            func brightness(_ rep: NSBitmapImageRep?) -> CGFloat? {
+                guard let rep else { return nil }
+                let scale = CGFloat(rep.pixelsWide) / size.width
+                guard let color = rep.colorAt(x: Int(probe.x * scale), y: Int(probe.y * scale))?.usingColorSpace(.sRGB)
+                else { return nil }
+                return (color.redComponent + color.greenComponent + color.blueComponent) / 3
+            }
+
+            var grounds: [String: CGFloat] = [:]
+            var opened = true
+            for (name, anonymous, appearance) in [
+                ("light", false, NSAppearance.Name.aqua), ("dark", false, .darkAqua), ("anonymous", true, .aqua),
+            ] {
+                let coordinator = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+                coordinator.bringForwardHook = { _ in }
+                if anonymous { coordinator.switchTo(Workspace.anonymousID) }
+                let window = coordinator.windows[0]
+                window.locationPrompt = nil
+                let pane = firstPane(coordinator)
+                let blank = pane.selectedID
+                coordinator.open(.settings)
+                coordinator.open(.settings)
+                let tab = pane.model.tab(showing: .settings)
+                opened = opened && tab != nil && pane.selectedID == tab?.id && pane.model.tabs.tabs.count == 1
+                    && blank != tab?.id
+                // Anonymous's look comes from WindowRegistrar on a real window; this stands in for it.
+                let look = NSAppearance(named: anonymous ? .darkAqua : appearance)
+                let system = NSApp.appearance
+                NSApp.appearance = NSAppearance(named: appearance)
+                defer { NSApp.appearance = system }
+                let shown = image(
+                    root(coordinator).defaultAppStorage(defaults).environment(\.downloadSettings, settings), size: size,
+                    appearance: look)
+                try? shown?.representation(using: .png, properties: [:])?
+                    .write(to: directory.appending(path: "layout-settings-\(name).png"))
+                grounds[name] = brightness(shown)
+            }
+            report("⌘, and the gear open the one Settings tab in place of the blank tab", opened)
+            report(
+                "The Settings page follows the window's look, Anonymous included",
+                (grounds["light"] ?? 0) > 0.8 && (grounds["dark"] ?? 1) < 0.3 && (grounds["anonymous"] ?? 1) < 0.3)
         }
 
         /// An off-screen window hosting `view`, never shown; it is not freed on closing, so closing it is safe.

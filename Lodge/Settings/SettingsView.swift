@@ -3,19 +3,17 @@ import LodgeKit
 import SwiftUI
 import os
 
-/// The Settings window. `DownloadSettingsModel` writes each change to UserDefaults at once, and `DownloadManager`
-/// reads them at each download, so they apply to the next one.
+/// Settings, drawn in its tab's page card at `lodge://settings`. `DownloadSettingsModel` writes each change to
+/// UserDefaults at once, and `DownloadManager` reads them at each download, so they apply to the next one; every
+/// Settings tab shows the one app-wide model, so a change shows at once in each.
 struct SettingsView: View {
-    @State private var model: DownloadSettingsModel
+    @Environment(\.downloadSettings) private var injected
     /// Bumped after the folder panel closes, so the menu redraws even when the selection did not change.
     @State private var menuRevision = 0
-    /// Whether Lodge opens http and https links; nil until first read.
-    @State private var isDefaultBrowser: Bool?
-    @State private var isMakingDefault = false
+    private let defaultBrowser = DefaultBrowserStatus.shared
 
-    init(model: DownloadSettingsModel = DownloadSettingsModel()) {
-        _model = State(initialValue: model)
-    }
+    private static let appModel = DownloadSettingsModel()
+    private var model: DownloadSettingsModel { injected ?? Self.appModel }
 
     private enum Option: Hashable {
         case folder(DownloadFolderChoice.Selection)
@@ -23,47 +21,82 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        Form {
-            Section("General") {
-                LabeledContent("Default browser") {
-                    if isDefaultBrowser == true {
-                        Label("Lodge is your default browser", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Button("Make Lodge the Default Browser", action: makeDefaultBrowser)
-                            .disabled(isDefaultBrowser == nil || isMakingDefault)
+        @Bindable var model = model
+        // The page scrolls rather than the form, whose rows are then all laid out at once.
+        ScrollView {
+            Form {
+                Section("General") {
+                    LabeledContent("Default browser") {
+                        if defaultBrowser.isLodge == true {
+                            Label("Lodge is your default browser", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Button("Make Lodge the Default Browser", action: defaultBrowser.makeLodge)
+                                .disabled(defaultBrowser.isLodge == nil || defaultBrowser.isMaking)
+                        }
+                    }
+                }
+                Section("Downloads") {
+                    Picker("Save downloads to:", selection: option) {
+                        Text(DownloadFolderChoice.Selection.downloads.title).tag(Option.folder(.downloads))
+                        if model.selection != .downloads {
+                            Text(model.selection.title).tag(Option.folder(model.selection))
+                        }
+                        Divider()
+                        Text("Other…").tag(Option.other)
+                            .disabled(!model.isResolved)
+                    }
+                    .id(menuRevision)
+                    .accessibilityLabel("Save downloads to")
+                    .help(model.folder?.path(percentEncoded: false) ?? model.selection.title)
+                    if model.showsUnavailableNote {
+                        Label(
+                            "The chosen folder is unavailable; downloads go to Downloads.",
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    }
+                    Toggle("Ask where to save each file", isOn: $model.askEachTime)
+                }
+                Section("About") {
+                    LabeledContent("Version", value: About.appVersion)
+                    LabeledContent("macOS", value: About.systemVersion)
+                    LabeledContent("Data folder") {
+                        VStack(alignment: .trailing, spacing: 6) {
+                            if let folder = About.dataFolder {
+                                Text(folder.path(percentEncoded: false))
+                                    .textSelection(.enabled)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                    .multilineTextAlignment(.trailing)
+                                    .help(folder.path(percentEncoded: false))
+                            } else {
+                                Text("Unavailable")
+                            }
+                            Button("Show in Finder", action: About.revealDataFolder)
+                                .disabled(About.dataFolder == nil)
+                        }
                     }
                 }
             }
-            Section("Downloads") {
-                Picker("Save downloads to:", selection: option) {
-                    Text(DownloadFolderChoice.Selection.downloads.title).tag(Option.folder(.downloads))
-                    if model.selection != .downloads {
-                        Text(model.selection.title).tag(Option.folder(model.selection))
-                    }
-                    Divider()
-                    Text("Other…").tag(Option.other)
-                        .disabled(!model.isResolved)
-                }
-                .id(menuRevision)
-                .accessibilityLabel("Save downloads to")
-                .help(model.folder?.path(percentEncoded: false) ?? model.selection.title)
-                if model.showsUnavailableNote {
-                    Label(
-                        "The chosen folder is unavailable; downloads go to Downloads.",
-                        systemImage: "exclamationmark.triangle"
-                    )
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                }
-                Toggle("Ask where to save each file", isOn: $model.askEachTime)
-            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .scrollDisabled(true)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: 600)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
         }
-        .formStyle(.grouped)
-        .frame(width: 480)
-        .fixedSize(horizontal: false, vertical: true)
+        // As the sidebar's: an always-shown scroller would draw an opaque track over the page.
+        .scrollIndicators(.never)
+        .background(Color(nsColor: .windowBackgroundColor))
         .task { await model.refresh() }
-        .onAppear { isDefaultBrowser = DefaultBrowser.isLodge }
+        .onAppear(perform: defaultBrowser.refresh)
+        // The user may have changed the default browser in System Settings meanwhile.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            defaultBrowser.refresh()
+        }
     }
 
     /// The menu always shows the model's selection; "Other…" only opens the folder panel.
@@ -76,16 +109,6 @@ struct SettingsView: View {
             case .folder: break
             case .other: chooseFolder()
             }
-        }
-    }
-
-    /// macOS asks the user to confirm each scheme; the status is read again whatever they chose.
-    private func makeDefaultBrowser() {
-        isMakingDefault = true
-        Task {
-            await DefaultBrowser.makeLodge()
-            isDefaultBrowser = DefaultBrowser.isLodge
-            isMakingDefault = false
         }
     }
 
@@ -103,6 +126,62 @@ struct SettingsView: View {
         Task {
             await model.useFolder(chosen)
             menuRevision += 1
+        }
+    }
+}
+
+extension EnvironmentValues {
+    /// The download settings a Settings tab shows; nil for the app-wide model over the standard defaults.
+    @Entry var downloadSettings: DownloadSettingsModel?
+}
+
+/// What Settings' About section shows.
+@MainActor
+enum About {
+    /// "1.2 (34)": the marketing version and the build.
+    static var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "–"
+        let build = info?["CFBundleVersion"] as? String ?? "–"
+        return "\(version) (\(build))"
+    }
+
+    /// "26.1" or "26.1.2", the patch left out when it is 0.
+    static var systemVersion: String {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        let base = "\(os.majorVersion).\(os.minorVersion)"
+        return os.patchVersion == 0 ? base : "\(base).\(os.patchVersion)"
+    }
+
+    /// The folder Lodge keeps its session, workspaces and history in; nil when Application Support cannot be found.
+    static var dataFolder: URL? { try? SessionStore.appDirectory() }
+
+    /// Selects the data folder in a Finder window, making it first if Lodge has saved nothing yet.
+    static func revealDataFolder() {
+        guard let folder = dataFolder else { return }
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        NSWorkspace.shared.activateFileViewerSelecting([folder])
+    }
+}
+
+/// Whether Lodge is the default browser, shared by every Settings tab so each shows the same answer.
+@MainActor @Observable
+final class DefaultBrowserStatus {
+    static let shared = DefaultBrowserStatus()
+
+    /// Whether Lodge opens http and https links; nil until first read.
+    private(set) var isLodge: Bool?
+    private(set) var isMaking = false
+
+    func refresh() { isLodge = DefaultBrowser.isLodge }
+
+    /// macOS asks the user to confirm each scheme; the status is read again whatever they chose.
+    func makeLodge() {
+        isMaking = true
+        Task {
+            await DefaultBrowser.makeLodge()
+            refresh()
+            isMaking = false
         }
     }
 }

@@ -1,6 +1,16 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "About" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關於"
+          }
+        }
+      }
+    },
     "Address" : {
       "localizations" : {
         "zh-Hant" : {
@@ -327,6 +337,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "建立"
+          }
+        }
+      }
+    },
+    "Data folder" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資料檔案夾"
           }
         }
       }
@@ -1341,6 +1361,16 @@
         }
       }
     },
+    "Settings…" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定…"
+          }
+        }
+      }
+    },
     "Show All History" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1591,6 +1621,16 @@
         }
       }
     },
+    "Unavailable" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法取得"
+          }
+        }
+      }
+    },
     "Unpin" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1621,6 +1661,16 @@
         }
       }
     },
+    "Version" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "版本"
+          }
+        }
+      }
+    },
     "Work, Personal, Side project…" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1647,6 +1697,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工作空間"
+          }
+        }
+      }
+    },
+    "macOS" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS"
           }
         }
       }

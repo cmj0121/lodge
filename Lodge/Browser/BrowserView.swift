@@ -120,7 +120,11 @@ private struct PageArea: View {
             Color(nsColor: .textBackgroundColor)
             if let tab, LodgePage.isLodge(tab.url) {
                 // A `lodge:` address naming no page leaves the page area empty.
-                if let page = tab.lodgePage { LodgePagePlaceholder(page: page) }
+                switch tab.lodgePage {
+                case .settings: SettingsView()
+                case .history: LodgePagePlaceholder(page: .history)
+                case nil: EmptyView()
+                }
             } else {
                 if let tab {
                     WebViewHost(tab: tab.id)

@@ -34,11 +34,6 @@ struct LodgeApp: App {
         .defaultSize(width: 640, height: 600)
         .handlesExternalEvents(matching: [])
         .restorationBehavior(.disabled)
-
-        Settings {
-            SettingsView()
-        }
-        .handlesExternalEvents(matching: [])
     }
 }
 

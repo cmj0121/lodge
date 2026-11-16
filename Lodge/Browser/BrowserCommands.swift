@@ -28,6 +28,10 @@ struct BrowserCommands: Commands {
     var body: some Commands {
         // The scene's opener, which works with no window open, is how the coordinator opens browser windows.
         let _ = installWindowOpener()
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { coordinator.open(.settings) }
+                .keyboardShortcut(",")
+        }
         CommandGroup(replacing: .newItem) {
             Button(ShortcutCatalog[.newTab].title) { pane?.newTab() }
                 .shortcut(.newTab, enabled: !noPane)
