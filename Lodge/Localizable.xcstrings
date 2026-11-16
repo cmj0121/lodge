@@ -1,12 +1,62 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ search with it." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 正在使用它搜尋。"
+          }
+        }
+      }
+    },
+    "%@ will then search with %@." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除後，%1$@ 會改用 %2$@ 搜尋。"
+          }
+        }
+      }
+    },
     "About" : {
       "localizations" : {
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "關於"
+          }
+        }
+      }
+    },
+    "Add" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加入"
+          }
+        }
+      }
+    },
+    "Add Engine…" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加入搜尋引擎⋯"
+          }
+        }
+      }
+    },
+    "Added engines" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已加入的搜尋引擎"
           }
         }
       }
@@ -457,6 +507,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下載項目"
+          }
+        }
+      }
+    },
+    "Edit" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯"
+          }
+        }
+      }
+    },
+    "Edit %@" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯 %@"
+          }
+        }
+      }
+    },
+    "Engines added here can be picked in every workspace, Anonymous included." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在這裡加入的搜尋引擎可在每個工作空間選用，包括 Anonymous。"
+          }
+        }
+      }
+    },
+    "Example" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "範例"
           }
         }
       }
@@ -1001,6 +1091,16 @@
         }
       }
     },
+    "None yet." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未加入。"
+          }
+        }
+      }
+    },
     "Not found" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1241,6 +1341,16 @@
         }
       }
     },
+    "Remove %@" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除 %@"
+          }
+        }
+      }
+    },
     "Remove every finished, failed, cancelled and interrupted download from the list" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1257,6 +1367,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "從書籤中移除"
+          }
+        }
+      }
+    },
+    "Remove “%@”?" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要移除「%@」嗎？"
           }
         }
       }
@@ -1321,6 +1441,16 @@
         }
       }
     },
+    "Save" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "儲存"
+          }
+        }
+      }
+    },
     "Save downloads to" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1377,6 +1507,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜尋瀏覽紀錄"
+          }
+        }
+      }
+    },
+    "Search address" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋網址"
           }
         }
       }

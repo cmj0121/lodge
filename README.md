@@ -43,6 +43,10 @@ one you are in uses resources.
 | Settings tab          | ⌘, or the gear opens it: General, Search, Downloads, About (version, macOS, data folder) |
 | Search engine         | Each workspace searches with its own; pick it under Search Engine… in the workspace menu |
 | Default's engine      | Settings › Search picks it; custom ones follow it until they pick; Anonymous: DuckDuckGo |
+| Added engines         | Add Engine… in Settings › Search or the Search Engine… sheet: name, address with `%s`    |
+| Edit and remove       | Each added engine has Edit and Remove there; built-in engines stay as they are           |
+| Shared engines        | Engines added in Settings › Search can be picked in every workspace, Anonymous included  |
+| Removed engine        | Workspaces on it fall back: custom to Default's, Default and Anonymous to DuckDuckGo     |
 | Default browser       | Its General section makes Lodge the default; links from other apps open in a Default tab |
 | Credentials           | Passwords and passkeys come from the OS credential store, ready in every workspace       |
 | English and 繁體中文  | Follows macOS or Language & Region › Applications; workspace names stay English          |

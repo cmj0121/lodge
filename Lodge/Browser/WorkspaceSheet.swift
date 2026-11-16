@@ -3,7 +3,7 @@ import SwiftUI
 
 /// What the workspace sheet is open for (D8): a new workspace asks for a name, an icon and a colour, a rename for
 /// the name alone, a change of icon for the icon and colour, a search engine for the engine the workspace searches
-/// with.
+/// with and the engines added to it, which are saved as they are edited rather than on Done.
 enum WorkspaceEditor: Equatable {
     case create
     case rename(UUID)
@@ -17,6 +17,8 @@ struct WorkspaceSheet: View {
     let coordinator: WorkspaceCoordinator
     let editor: WorkspaceEditor
     let close: () -> Void
+    /// While an engine is being added or edited, Esc drops it and Return saves it rather than closing the sheet.
+    @State private var isDrafting = false
 
     var body: some View {
         ZStack {
@@ -25,10 +27,10 @@ struct WorkspaceSheet: View {
                 .contentShape(.rect)
                 .onTapGesture(perform: close)
                 .accessibilityHidden(true)
-            WorkspaceSheetCard(coordinator: coordinator, editor: editor, close: close)
+            WorkspaceSheetCard(coordinator: coordinator, editor: editor, close: close, isDrafting: $isDrafting)
                 .frame(width: WorkspaceSheetCard.width)
         }
-        .background(EscapeKeyCatcher(action: close))
+        .background(EscapeKeyCatcher { if isDrafting { isDrafting = false } else { close() } })
     }
 
     /// Whether the sheet offers the icon grid and colour row: New Workspace and Change Icon do, Rename and Search
@@ -49,6 +51,8 @@ struct WorkspaceSheetCard: View {
     let coordinator: WorkspaceCoordinator
     let editor: WorkspaceEditor
     let close: () -> Void
+    /// True while an engine is being added or edited; the card's Return and Esc then leave it to the engine editor.
+    @Binding var isDrafting: Bool
     @State private var name = ""
     @State private var symbol = WorkspaceSymbols.defaultForNew
     @State private var color: WorkspaceColor?
@@ -141,6 +145,9 @@ struct WorkspaceSheetCard: View {
                         followDefault: target.kind == .custom
                             ? coordinator.searchCatalog(for: Workspace.defaultID).engine : nil,
                         selection: $engine)
+                    SearchEngineEditor(coordinator: coordinator, workspace: target.id, isDrafting: $isDrafting) {
+                        keepPickableEngine()
+                    }
                 }
                 if asksSymbol {
                     SymbolGrid(selection: $symbol, focusesOnAppear: !asksName)
@@ -152,9 +159,9 @@ struct WorkspaceSheetCard: View {
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
                 Button("Cancel", action: close)
-                    .keyboardShortcut(.cancelAction)
+                    .keyboardShortcut(isDrafting ? nil : .cancelAction)
                 Button(commitTitle, action: commit)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(isDrafting ? nil : .defaultAction)
                     .disabled(!canCommit)
             }
             .controlSize(.large)
@@ -239,6 +246,13 @@ struct WorkspaceSheetCard: View {
     /// no longer resolves shows its fallback rather than a stale id.
     private static func pickedEngine(_ catalog: SearchCatalog) -> String? {
         catalog.followsDefault ? nil : catalog.engine.id
+    }
+
+    /// After an engine is removed, a picked engine that is gone goes back to what the workspace searches with now.
+    private func keepPickableEngine() {
+        guard let target, let engine else { return }
+        let catalog = coordinator.searchCatalog(for: target.id)
+        if !catalog.available.contains(where: { $0.id == engine }) { self.engine = Self.pickedEngine(catalog) }
     }
 
     private func commit() {
