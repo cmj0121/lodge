@@ -55,6 +55,65 @@ one you are in uses resources.
 
 Built on WebKit, so passkeys, service workers and extensions follow what Apple opens to browsers.
 
+## Publish
+
+`make publish` ships Lodge with fastlane: a TestFlight build and a notarized Developer ID DMG, published on a GitHub
+Release when `GITHUB_REPOSITORY` is set.
+
+Set it up once:
+
+1. Install fastlane: `bundle install`.
+2. Copy the settings and fill them in: `cp .env.example .env`. Every key is listed in `.env.example` with a comment;
+   values exported in the shell win over the file. Sign in to App Store Connect one of two ways:
+   - API key, used whenever it is complete and never asks a person: `ASC_KEY_ID`, `ASC_ISSUER_ID` and the key file
+     `AuthKey_<ASC_KEY_ID>.p8` in `~/.appstoreconnect/private_keys/` (`~/private_keys`, `~/.private_keys` and
+     `./private_keys` are searched too), or `ASC_KEY_PATH` set to its path; a relative `ASC_KEY_PATH` is resolved from
+     the repo root. `private_keys/` and `*.p8` are git-ignored. The App Manager role is enough for normal runs
+     (read-only match, profiles, the TestFlight upload).
+   - Apple ID, otherwise: `APPLE_ID` and `FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD`, an app-specific password from
+     appleid.apple.com used only for notarizing and the TestFlight upload. The build-number lookup, the TestFlight
+     sign-in and match creating certificates sign in with the Apple ID account password: fastlane asks for it once on
+     the first run, then for the second factor, and keeps it in the login keychain (entry `deliver.<APPLE_ID>`), so a
+     machine that has run fastlane before, even for another project, does not ask again. `FASTLANE_PASSWORD` can
+     supply it instead, but the keychain is preferred. The second factor comes back about monthly; the session is
+     cached in `~/.fastlane/spaceship`.
+   - The GitHub Release is optional and switched on by setting `GITHUB_REPOSITORY` in `.env`; `GITHUB_TOKEN` is then
+     required. A `GITHUB_TOKEN` exported in the shell alone does not turn it on.
+3. `fastlane match` uses the team's shared private repo set in `MATCH_GIT_URL` (branch `main`, set in
+   `fastlane/Matchfile`); match keeps apps apart by bundle ID, so there is no new repo to create.
+   - Leave `MATCH_PASSWORD` unset or empty: on a machine that has run match before, match reads the passphrase from the
+     login keychain. Only a machine without that keychain entry needs it.
+   - The first run needs `MATCH_READONLY=false` in `.env` so match can create what is missing; set it back to `true`
+     afterwards. The shared repo likely has the App Store and Mac installer certificates already, so the first run
+     mainly creates the Lodge profiles and the Developer ID certificate.
+   - With an API key, creating a certificate may need an Admin key, and a Developer ID certificate may need the
+     Account Holder. With an Apple ID, it follows the account's role: the Account Holder can create Developer ID
+     certificates. If match cannot create one, create it in Xcode (Settings → Accounts → Manage Certificates), export a
+     `.p12` and run `bundle exec fastlane match import --type <type> --platform macos`, with `<type>` one of
+     `appstore`, `mac_installer_distribution` or `developer_id`.
+4. Create the app record for the bundle ID (`APP_IDENTIFIER`) in App Store Connect; the upload needs it to exist first.
+
+Then publish:
+
+| Command              | What it does                                                                                 |
+| -------------------- | -------------------------------------------------------------------------------------------- |
+| `make publish-check` | Checks `.env`; names missing keys, and what each sign-in way lacks when neither is complete  |
+| `make publish`       | Runs `make test` and the `.env` check, then the iOS/iPadOS lanes and the macOS publish below |
+
+The iOS and iPadOS lanes skip while `Lodge.xcodeproj` has no such target. The macOS lane (`mac publish`):
+
+1. requires a clean tree with `HEAD` at `origin/main`: commit and push first;
+2. uploads the Mac App Store pkg to TestFlight;
+3. builds a notarized Developer ID DMG into `build/fastlane/` and, with `GITHUB_REPOSITORY` set, publishes it on the
+   GitHub Release `v<version>`; without it the release is skipped and the DMG stays in `build/fastlane/`;
+4. adds the tag `v<version>` locally; it is not pushed.
+
+Bump `MARKETING_VERSION` before each publish: `mac publish` stops before building when the tag `v<version>` already
+exists, and, with the release on, when the GitHub Release `v<version>` exists. A rerun after a failure uses a new build number.
+
+Changing `APP_IDENTIFIER` from `dev.lodge.Lodge` gives the app a new sandbox container, so the saved session does not
+carry over.
+
 ## DDD (Dream-Driven Development)
 
 This project follows DDD (dream-driven development): every feature is built from what I dream of and need.

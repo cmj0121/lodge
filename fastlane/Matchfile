@@ -1,0 +1,8 @@
+# Certificates and profiles, encrypted, in a repo shared with the team's other apps;
+# match keeps them apart by bundle identifier.
+git_url ENV["MATCH_GIT_URL"]
+# match looks for `master` unless told; the repo's default branch is `main`.
+git_branch "main"
+storage_mode "git"
+
+app_identifier [ENV["APP_IDENTIFIER"]]

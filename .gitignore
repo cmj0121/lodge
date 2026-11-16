@@ -4,3 +4,11 @@ DerivedData/
 .build/
 .swiftpm/
 xcuserdata/
+.env
+.env.*
+!.env.example
+private_keys/
+*.p8
+fastlane/report.xml
+fastlane/README.md
+fastlane/test_output/

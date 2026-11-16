@@ -1,0 +1,4 @@
+app_identifier(ENV["APP_IDENTIFIER"])
+team_id(ENV["APPLE_TEAM_ID"])
+# Only the Apple ID sign-in needs this: with an App Store Connect key there is nobody to be.
+apple_id(ENV["APPLE_ID"])
