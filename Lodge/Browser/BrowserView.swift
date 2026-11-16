@@ -42,7 +42,8 @@ struct BrowserView: View {
                 LocationPromptView(
                     prompt: prompt,
                     initialText: prompt.initialText(for: address(of: prompt), engines: pane.searchEngines),
-                    submit: pane.submitLocation, cancel: pane.cancelLocationPrompt
+                    submit: pane.submitLocation, choose: pane.submitLocation(_:words:),
+                    makeSuggestions: pane.makeSuggestions, icon: pane.icon(for:), cancel: pane.cancelLocationPrompt
                 )
                 .transition(.opacity)
             }

@@ -751,6 +751,16 @@
         }
       }
     },
+    "Search %@ with %@": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %2$@ 搜尋「%1$@」"
+          }
+        }
+      }
+    },
     "Settings": {
       "localizations": {
         "zh-Hant": {

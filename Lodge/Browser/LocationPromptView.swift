@@ -1,13 +1,22 @@
+import AppKit
 import LodgeKit
 import SwiftUI
 
-/// The location prompt (D11): one wide field on a card over a dimmed window, its text selected on open. Enter goes
-/// to the address or searches DuckDuckGo; Esc or a click on the dimmed window closes it.
+/// The location prompt (D11): one wide field on a card over a dimmed window, its text selected on open, with this
+/// workspace's suggestions listed under the field as it is typed in. Enter goes to the highlighted row, else to the
+/// address or searches with the workspace's engine; Esc closes the list and drops a completion shown, keeping what
+/// was typed, then closes the prompt, as does a click on the dimmed window.
 struct LocationPromptView: View {
     let prompt: LocationPrompt
     let initialText: String
     let submit: (String) -> Void
+    /// A row picked, with the words typed.
+    let choose: (Suggestion, String) -> Void
+    let makeSuggestions: () -> SuggestionModel
+    let icon: (Suggestion) -> NSImage?
     let cancel: () -> Void
+    @State private var suggestions: SuggestionModel?
+    @State private var dropCompletionRequest = 0
 
     var body: some View {
         ZStack {
@@ -16,20 +25,45 @@ struct LocationPromptView: View {
                 .contentShape(.rect)
                 .onTapGesture(perform: cancel)
                 .accessibilityHidden(true)
-            LocationPromptCard(prompt: prompt, initialText: initialText, submit: submit)
-                .frame(width: 560)
+            LocationPromptCard(
+                prompt: prompt, initialText: initialText, suggestions: suggestions,
+                dropCompletionRequest: dropCompletionRequest, icon: icon, submit: submit, choose: choose
+            )
+            .frame(width: 560)
+            // The card grows down as rows come and go; its top stays put.
+            .frame(height: LocationPromptCard.tallest, alignment: .top)
         }
-        .background(EscapeKeyCatcher(action: cancel))
+        .background(EscapeKeyCatcher(action: escape))
+        .onAppear { suggestions = makeSuggestions() }
+    }
+
+    private func escape() {
+        if let suggestions, !suggestions.rows.isEmpty {
+            suggestions.dismiss()
+            dropCompletionRequest += 1
+        } else {
+            cancel()
+        }
     }
 }
 
 private struct LocationPromptCard: View {
     let prompt: LocationPrompt
     let initialText: String
+    let suggestions: SuggestionModel?
+    /// Esc closed the list: the field drops its completion too.
+    let dropCompletionRequest: Int
+    let icon: (Suggestion) -> NSImage?
     let submit: (String) -> Void
+    let choose: (Suggestion, String) -> Void
     @State private var text = ""
-    @State private var selection: TextSelection?
-    @FocusState private var isFocused: Bool
+    @State private var isFocused = false
+    @State private var focusRequest = 0
+
+    private static let fieldHeight: CGFloat = 56
+    private static let footerHeight: CGFloat = 38
+    /// The card with every row listed.
+    static let tallest = fieldHeight + footerHeight + 2 + SuggestionList.height(rows: SuggestionRanker.limit)
 
     private var destination: String {
         switch prompt {
@@ -45,15 +79,19 @@ private struct LocationPromptCard: View {
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
-                TextField("Search or enter an address", text: $text, selection: $selection)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 20))
-                    .focused($isFocused)
-                    .onSubmit { submit(text) }
-                    .accessibilityLabel("Address")
+                AddressField(
+                    text: $text, isEditing: $isFocused, placeholder: String(localized: "Search or enter an address"),
+                    font: .systemFont(ofSize: 20), address: { _, _ in nil }, suggestions: suggestions,
+                    completion: suggestions?.completion, icon: icon, choose: pick, focusRequest: focusRequest,
+                    dropCompletionRequest: dropCompletionRequest, endsEditingOnSubmit: false,
+                    submit: { submit(text) })
             }
             .padding(.horizontal, 18)
-            .frame(height: 56)
+            .frame(height: Self.fieldHeight)
+            if let suggestions, !suggestions.rows.isEmpty {
+                Divider()
+                SuggestionList(model: suggestions, icon: icon, choose: pick)
+            }
             Divider()
             HStack(spacing: 6) {
                 Text(destination)
@@ -64,7 +102,7 @@ private struct LocationPromptCard: View {
             .font(.callout)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 18)
-            .padding(.vertical, 9)
+            .frame(height: Self.footerHeight)
         }
         .floatingSurface(cornerRadius: 14, fill: .regularMaterial)
         .accessibilityElement(children: .contain)
@@ -75,10 +113,12 @@ private struct LocationPromptCard: View {
         .onChange(of: prompt) { start() }
     }
 
+    private func pick(_ row: Suggestion) { choose(row, suggestions?.words ?? text) }
+
     private func start() {
+        suggestions?.dismiss()
         text = initialText
-        isFocused = true
-        selection = TextSelection(range: text.startIndex..<text.endIndex)
+        focusRequest += 1
     }
 }
 

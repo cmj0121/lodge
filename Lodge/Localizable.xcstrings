@@ -121,6 +121,16 @@
         }
       }
     },
+    "Bookmark" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "書籤"
+          }
+        }
+      }
+    },
     "Bookmark Tab" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1697,6 +1707,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "停止載入"
+          }
+        }
+      }
+    },
+    "Suggestions" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "建議"
+          }
+        }
+      }
+    },
+    "Switch to Tab" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切換到分頁"
           }
         }
       }

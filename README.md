@@ -49,6 +49,10 @@ one you are in uses resources.
 | Removed engine        | Workspaces on it fall back: custom to Default's, Default and Anonymous to DuckDuckGo     |
 | Search words          | Results pages show the words beside the engine's icon and name; Return searches again    |
 | Copy address          | Copy and Copy Address still give the page's full URL while the words are unedited        |
+| Suggestions           | Typing in the address bar or Open Location lists a search, tabs, bookmarks and history   |
+| Local only            | Only this workspace's tabs, bookmarks and history; suggestions never touch the network   |
+| Pick a suggestion     | ↑/↓ moves through the list, Return opens the selection, Esc closes the list              |
+| Inline completion     | The field completes to the top suggestion; → accepts it, deleting drops it               |
 | Default browser       | Its General section makes Lodge the default; links from other apps open in a Default tab |
 | Credentials           | Passwords and passkeys come from the OS credential store, ready in every workspace       |
 | English and 繁體中文  | Follows macOS or Language & Region › Applications; workspace names stay English          |
