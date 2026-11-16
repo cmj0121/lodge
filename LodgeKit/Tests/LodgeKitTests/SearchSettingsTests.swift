@@ -38,6 +38,17 @@ import Testing
         #expect(refusal("X", "https:///?q=%s") == .invalidAddress)
     }
 
+    @Test(arguments: ["Mine\u{202E}elgooG", "\u{2066}Mine", "Mi\u{200B}ne", "\u{FEFF}Mine", "Mi\nne", "Mi\tne", "Mi\u{0}ne"])
+    func validateRefusesANameThatHidesText(_ name: String) {
+        #expect(SearchEngine.validate(name: name, template: "https://x.example/?q=%s").map(\.name)
+            == .failure(.hiddenTextInName))
+    }
+
+    @Test(arguments: ["Mine", "我的搜尋", "検索 🔍", "❤️ Search"])
+    func validateAcceptsPlainCJKAndEmojiNames(_ name: String) {
+        #expect(SearchEngine.validate(name: name, template: "https://x.example/?q=%s").map(\.name) == .success(name))
+    }
+
     @Test func everyBuiltInValidates() {
         for engine in SearchEngine.builtIns {
             #expect((try? SearchEngine.validate(name: engine.name, template: engine.template).get()) != nil)
@@ -484,8 +495,8 @@ import Testing
 
     @Test func everyRefusalHasItsOwnMessage() {
         let errors: [SearchEngine.EditError] = [
-            .emptyName, .missingPlaceholder, .misplacedPlaceholder, .unsupportedScheme, .invalidAddress, .builtInIsFixed,
-            .unknown("x"),
+            .emptyName, .hiddenTextInName, .missingPlaceholder, .misplacedPlaceholder, .unsupportedScheme, .invalidAddress,
+            .builtInIsFixed, .unknown("x"),
         ]
         let messages = errors.map(\.message)
         #expect(Set(messages).count == errors.count)
@@ -626,6 +637,59 @@ import Testing
         #expect(settings.catalog(for: .default).choice == "E1")
         #expect(settings.catalog(for: work).engine == .duckDuckGo)
         #expect(settings.catalog(for: work).choice == "E2")
+    }
+
+    /// A session file edited by hand: Default holds an engine whose name reverses its text and one posing as Google,
+    /// Default choosing the first and Work the second.
+    private static let impostors = """
+        {
+          "pendingDeletions" : [],
+          "version" : 4,
+          "windows" : [{ "activeWorkspace" : "00000000-0000-0000-0000-000000000000" }],
+          "workspaces" : [
+            {
+              "content" : {
+                "bookmarks" : { "children" : [], "id" : "F0000000-0000-0000-0000-000000000001", "isExpanded" : true, "title" : "Bookmarks" },
+                "pins" : [],
+                "search" : {
+                  "choice" : "E1",
+                  "engines" : [
+                    { "id" : "E1", "name" : "Safe\\u202Eevil", "template" : "https://evil.example/?q=%s" },
+                    { "id" : "google", "name" : "Google", "template" : "https://evil.example/?q=%s" },
+                    { "id" : "E5", "name" : "Fine", "template" : "https://fine.example/?q=%s" }
+                  ]
+                },
+                "tabs" : []
+              },
+              "workspace" : { "id" : "00000000-0000-0000-0000-000000000000", "kind" : "default", "name" : "Default", "symbol" : "square.stack.3d.up" }
+            },
+            {
+              "content" : {
+                "bookmarks" : { "children" : [], "id" : "F0000000-0000-0000-0000-000000000002", "isExpanded" : true, "title" : "Bookmarks" },
+                "pins" : [],
+                "search" : { "choice" : "google" },
+                "tabs" : []
+              },
+              "workspace" : { "id" : "D0000000-0000-0000-0000-000000000001", "kind" : "custom", "name" : "Work", "symbol" : "briefcase" }
+            }
+          ]
+        }
+        """
+
+    @Test func bidiNamedAndBuiltInIdEnginesAreDroppedFromAFileAndTheirChoicesFallBack() throws {
+        let decoded = try SessionSnapshot.decode(Data(Self.impostors.utf8))
+        let settings = SearchSettings(
+            Dictionary(uniqueKeysWithValues: decoded.workspaces.map { ($0.workspace.id, $0.content.search) }))
+        let work = try #require(decoded.workspaceList[UUID(uuidString: "D0000000-0000-0000-0000-000000000001")!])
+        let fine = SearchEngine(id: "E5", name: "Fine", template: "https://fine.example/?q=%s")
+        let google = SearchEngine.builtIns[1]
+        #expect(settings[Workspace.defaultID].engines == [fine])
+        #expect(settings.catalog(for: .default).available == SearchEngine.builtIns + [fine])
+        #expect(settings.catalog(for: .default).engine == .duckDuckGo)
+        #expect(settings.catalog(for: .default).choice == "E1")
+        #expect(settings.catalog(for: work).engine == google)
+        #expect(google.template == "https://www.google.com/search?q=%s")
+        #expect(settings.catalog(for: work).choice == "google")
     }
 
     @Test func anOlderFileWithAnUnknownChoiceFallsBackAndAcceptsNewEngines() throws {

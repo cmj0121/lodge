@@ -751,6 +751,16 @@
         }
       }
     },
+    "Remove invisible or control characters from the name.": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請移除名稱中的隱形字元或控制字元。"
+          }
+        }
+      }
+    },
     "Runner": {
       "localizations": {
         "zh-Hant": {

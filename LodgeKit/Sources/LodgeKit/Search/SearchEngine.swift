@@ -52,13 +52,15 @@ public struct SearchEngine: Identifiable, Hashable, Codable, Sendable {
     }
 
     public enum EditError: Error, Equatable {
-        case emptyName, missingPlaceholder, misplacedPlaceholder, unsupportedScheme, invalidAddress, builtInIsFixed
+        case emptyName, hiddenTextInName, missingPlaceholder, misplacedPlaceholder, unsupportedScheme, invalidAddress, builtInIsFixed
         case unknown(String)
 
         /// Why the engine was not saved, as the line under its fields says it.
         public var message: String {
             switch self {
             case .emptyName: String(localized: "Enter a name.", bundle: .module)
+            case .hiddenTextInName:
+                String(localized: "Remove invisible or control characters from the name.", bundle: .module)
             case .missingPlaceholder:
                 String(localized: "Put \(SearchEngine.placeholder) where your search words go.", bundle: .module)
             case .misplacedPlaceholder:
@@ -74,15 +76,18 @@ public struct SearchEngine: Identifiable, Hashable, Codable, Sendable {
         }
     }
 
-    /// Trimmed name and template, or why they are refused, checked in this order: an empty name, no `%s`, a
-    /// template that is no URL with a scheme once `%s` is filled in (`.invalidAddress`), a scheme other than `http`
-    /// or `https`, no host (`.invalidAddress`), a `%s` that is not, once and alone, the whole value of one query item
-    /// (`.misplacedPlaceholder`: none in the host, path, fragment or an item's name, and only one).
+    /// Trimmed name and template, or why they are refused, checked in this order: an empty name, a name holding a
+    /// control or format character (`.hiddenTextInName`: newlines, tabs, bidi overrides and isolates, zero-width
+    /// characters), no `%s`, a template that is no URL with a scheme once `%s` is filled in (`.invalidAddress`), a
+    /// scheme other than `http` or `https`, no host (`.invalidAddress`), a `%s` that is not, once and alone, the whole
+    /// value of one query item (`.misplacedPlaceholder`: none in the host, path, fragment or an item's name, and only
+    /// one).
     public static func validate(name: String, template: String) -> Result<(name: String, template: String), EditError>
     {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let template = template.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return .failure(.emptyName) }
+        guard !name.unicodeScalars.contains(where: \.hidesText) else { return .failure(.hiddenTextInName) }
         guard template.contains(placeholder) else { return .failure(.missingPlaceholder) }
         guard let components = URLComponents(string: template.replacingOccurrences(of: placeholder, with: "x")),
             let scheme = components.scheme
@@ -94,5 +99,16 @@ public struct SearchEngine: Identifiable, Hashable, Codable, Sendable {
             marked.percentEncodedQueryItems?.contains(where: { $0.value == marker }) == true
         else { return .failure(.misplacedPlaceholder) }
         return .success((name, template))
+    }
+}
+
+extension Unicode.Scalar {
+    /// A control or format character, or a line or paragraph separator: text that can hide or reorder what is shown
+    /// beside it (bidi overrides and isolates, zero-width characters, newlines, tabs).
+    var hidesText: Bool {
+        switch properties.generalCategory {
+        case .control, .format, .lineSeparator, .paragraphSeparator: true
+        default: false
+        }
     }
 }
