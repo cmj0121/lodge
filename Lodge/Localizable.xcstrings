@@ -971,16 +971,6 @@
         }
       }
     },
-    "Nothing is kept" : {
-      "localizations" : {
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "不保留任何資料"
-          }
-        }
-      }
-    },
     "OK" : {
       "localizations" : {
         "zh-Hant" : {

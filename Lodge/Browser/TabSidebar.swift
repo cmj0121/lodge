@@ -800,11 +800,7 @@ private struct ShortcutHelpButton: View {
 
 /// The shown workspace's symbol and name over its bookmarks and tabs (D6).
 private struct WorkspaceHeader: View {
-    static let anonymousHint = String(localized: "Nothing is kept")
-
     let workspace: Workspace
-
-    private var isAnonymous: Bool { workspace.kind == .anonymous }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -814,9 +810,9 @@ private struct WorkspaceHeader: View {
                 Text(workspace.name)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                // Anonymous says what sets it apart, in the header's own colour, so it reads in light and dark.
-                if isAnonymous {
-                    Text(Self.anonymousHint)
+                // A built-in workspace says what sets it apart, in the header's own colour, so it reads in light and dark.
+                if let summary = workspace.summary {
+                    Text(verbatim: summary)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
@@ -827,7 +823,7 @@ private struct WorkspaceHeader: View {
         .foregroundStyle(.secondary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Workspace: \(workspace.name)")
-        .accessibilityHint(isAnonymous ? Self.anonymousHint : "")
+        .accessibilityHint(workspace.summary ?? "")
         .accessibilityAddTraits(.isHeader)
     }
 }

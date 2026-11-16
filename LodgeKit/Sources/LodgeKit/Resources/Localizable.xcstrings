@@ -601,6 +601,16 @@
         }
       }
     },
+    "Nothing is kept": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不保留任何資料"
+          }
+        }
+      }
+    },
     "Open Location…": {
       "localizations": {
         "zh-Hant": {
@@ -617,16 +627,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "橙色"
-          }
-        }
-      }
-    },
-    "Pages here keep no history, and each tab's cookies are gone when it closes.": {
-      "localizations": {
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "這裡不保留瀏覽紀錄，每個分頁關閉後 cookies 隨即清除。"
           }
         }
       }
@@ -727,6 +727,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "顯示下載項目"
+          }
+        }
+      }
+    },
+    "Signed in and remembered": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留登入與紀錄"
           }
         }
       }
@@ -957,16 +967,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "昨天"
-          }
-        }
-      }
-    },
-    "Your everyday browsing, signed in and remembered.": {
-      "localizations": {
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "日常瀏覽，保留登入狀態與紀錄。"
           }
         }
       }

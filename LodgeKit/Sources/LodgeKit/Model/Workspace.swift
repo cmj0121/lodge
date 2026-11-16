@@ -72,14 +72,11 @@ public struct Workspace: Identifiable, Codable, Hashable, Sendable {
 }
 
 extension Workspace {
-    /// One sentence on what Default or Anonymous is for; nil for a custom workspace.
+    /// A one-line tagline for Default or Anonymous, shown under the name in the sidebar header; nil for a custom one.
     public var summary: String? {
         switch kind {
-        case .default: String(localized: "Your everyday browsing, signed in and remembered.", bundle: .module)
-        case .anonymous:
-            String(
-                localized: "Pages here keep no history, and each tab's cookies are gone when it closes.",
-                bundle: .module)
+        case .default: String(localized: "Signed in and remembered", bundle: .module)
+        case .anonymous: String(localized: "Nothing is kept", bundle: .module)
         case .custom: nil
         }
     }
