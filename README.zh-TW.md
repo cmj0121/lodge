@@ -47,6 +47,8 @@
 | 編輯與移除           | 每個加入的引擎在那裡都能編輯、移除；內建引擎維持不變                                    |
 | 共用的引擎           | 在「設定」的「搜尋」加入的引擎，每個 workspace 都能選用，包括 Anonymous                 |
 | 移除後               | 原本用它的改用：自訂 workspace 用 Default 的引擎，Default 和 Anonymous 用 DuckDuckGo    |
+| 搜尋字詞             | 搜尋結果頁的網址列顯示搜尋字詞，前面附引擎圖示與名稱；改好按 Return 重新搜尋            |
+| 拷貝位址             | 字詞未修改時，拷貝與「拷貝位址」仍給出頁面的完整網址                                    |
 | 預設瀏覽器           | 在「設定」tab 的「一般」設為預設；其他 app 的連結以新的 Default tab 開啟                |
 | Credential           | 密碼和 passkey 來自 OS 的 credential store，在每個 workspace 都能使用                   |
 | 英文與繁體中文       | 跟隨 macOS，或 Language & Region › Applications 裡 Lodge 的設定；workspace 名稱維持英文 |

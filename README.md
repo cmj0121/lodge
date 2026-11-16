@@ -47,6 +47,8 @@ one you are in uses resources.
 | Edit and remove       | Each added engine has Edit and Remove there; built-in engines stay as they are           |
 | Shared engines        | Engines added in Settings › Search can be picked in every workspace, Anonymous included  |
 | Removed engine        | Workspaces on it fall back: custom to Default's, Default and Anonymous to DuckDuckGo     |
+| Search words          | Results pages show the words beside the engine's icon and name; Return searches again    |
+| Copy address          | Copy and Copy Address still give the page's full URL while the words are unedited        |
 | Default browser       | Its General section makes Lodge the default; links from other apps open in a Default tab |
 | Credentials           | Passwords and passkeys come from the OS credential store, ready in every workspace       |
 | English and 繁體中文  | Follows macOS or Language & Region › Applications; workspace names stay English          |
