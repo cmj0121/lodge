@@ -7,7 +7,7 @@ APP          := $(BUILD_DIR)/Lodge.app
 XCODEBUILD   := xcodebuild -project Lodge.xcodeproj -scheme Lodge -destination 'platform=macOS' \
 		-derivedDataPath $(DERIVED_DATA)
 
-.PHONY: all clean test uitest run build install upgrade help $(SUBDIR)
+.PHONY: all clean test uitest run build install publish publish-check upgrade help $(SUBDIR)
 
 all: $(SUBDIR) 		# default action
 	@[ -f .git/hooks/pre-commit ] || pre-commit install --install-hooks
@@ -37,6 +37,13 @@ install: build		# copy build/Lodge.app into $(PREFIX) (default ~/Applications)
 	mkdir -p "$(PREFIX)"
 	rm -rf "$(PREFIX)/Lodge.app"
 	ditto "$(APP)" "$(PREFIX)/Lodge.app"
+
+publish: publish-check test	# check .env, run the tests, then ship iOS and macOS with fastlane
+	bundle exec fastlane ios publish
+	bundle exec fastlane mac publish
+
+publish-check:		# check .env has every key publish needs
+	bundle exec fastlane check_env
 
 upgrade:			# upgrade all the necessary packages
 	pre-commit autoupdate
