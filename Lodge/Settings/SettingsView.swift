@@ -5,8 +5,8 @@ import os
 
 /// Settings, drawn in its tab's page card at `lodge://settings`. `DownloadSettingsModel` writes each change to
 /// UserDefaults at once, and `DownloadManager` reads them at each download, so they apply to the next one; every
-/// Settings tab shows the one app-wide model, so a change shows at once in each. Search picks Default's engine, kept
-/// in the session with Default's content; it applies to the next search.
+/// Settings tab shows the one app-wide model, so a change shows at once in each. Search picks Default's engine and
+/// edits the engines added to Default, kept in the session with Default's content; they apply to the next search.
 struct SettingsView: View {
     let coordinator: WorkspaceCoordinator
     @Environment(\.downloadSettings) private var injected
@@ -45,6 +45,11 @@ struct SettingsView: View {
                         }
                     }
                     Text("Default and the workspaces that follow it search with this engine. Anonymous uses its own.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    SearchEngineEditor(
+                        coordinator: coordinator, workspace: Workspace.defaultID, isDrafting: .constant(false))
+                    Text("Engines added here can be picked in every workspace, Anonymous included.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }

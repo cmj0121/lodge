@@ -301,6 +301,36 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         didChange()
     }
 
+    /// Adds an engine to the workspace and saves it with its content; a refused name or address changes nothing.
+    @discardableResult
+    func addSearchEngine(name: String, template: String, to id: UUID) throws(SearchEngine.EditError) -> SearchEngine {
+        guard workspaces[id] != nil else { throw .unknown(id.uuidString) }
+        let engine = try search.add(name: name, template: template, to: id)
+        didChange()
+        return engine
+    }
+
+    /// Renames or readdresses an engine added to the workspace; choices naming it follow, as its id is kept.
+    func updateSearchEngine(_ engineID: String, name: String, template: String, in id: UUID)
+        throws(SearchEngine.EditError)
+    {
+        try search.update(engineID, name: name, template: template, in: id)
+        didChange()
+    }
+
+    /// Removes an engine added to the workspace. Workspaces choosing it keep that choice and fall back when they
+    /// search: a custom workspace to Default's engine, Default and Anonymous to DuckDuckGo.
+    func removeSearchEngine(_ engineID: String, from id: UUID) throws(SearchEngine.EditError) {
+        try search.remove(engineID, from: id)
+        didChange()
+    }
+
+    /// The workspaces other than Default that search with this Default engine by choice, in bar order.
+    func searchDependents(of engineID: String) -> [Workspace] {
+        let ids = Set(search.dependents(of: engineID))
+        return workspaces.workspaces.filter { ids.contains($0.id) }
+    }
+
     /// Moves a custom workspace in the bar; Default stays first and Anonymous stays last.
     @discardableResult
     func move(from source: Int, to destination: Int) -> Bool {
