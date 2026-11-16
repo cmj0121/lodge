@@ -152,6 +152,19 @@ struct BrowserPane {
     /// What text that is no address searches with: the workspace's engine at this moment.
     private var searchEngine: SearchEngine { coordinator.searchCatalog(for: model.workspaceID).engine }
 
+    /// The engines whose results pages show their words in place of the address: every one the workspace can pick.
+    var searchEngines: [SearchEngine] { coordinator.searchCatalog(for: model.workspaceID).available }
+
+    /// The engine and the words when the shown tab's page, however it was reached, is one of its results pages.
+    var selectedResultsPage: (engine: SearchEngine, words: String)? {
+        selected?.url.flatMap { SearchResultsPage.match($0, engines: searchEngines) }
+    }
+
+    /// Puts the shown page's full address on the pasteboard, also when the address bar shows search words.
+    func copyAddress() {
+        if let url = selected?.url { NSPasteboard.general.setURL(url) }
+    }
+
     /// Loads the address into the shown tab, or opens a loose tab on it when none is shown.
     func load(_ text: String) {
         guard let url = AddressInput.url(from: text, engine: searchEngine) else { return }

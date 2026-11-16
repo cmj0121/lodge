@@ -1,3 +1,4 @@
+import AppKit
 import LodgeKit
 import SwiftUI
 
@@ -29,38 +30,32 @@ struct NavigationButtons: View {
     }
 }
 
-/// The address field: shows the page's address, takes a URL or a search, and hosts the load
-/// progress line along its bottom edge.
+/// The address field: shows the page's address, or the search words on a search engine's results page, takes a URL
+/// or a search, and hosts the load progress line along its bottom edge.
 struct AddressBar: View {
     let pane: BrowserPane
-    /// Narrow homes (the expanded sidebar) keep the Anonymous badge to its icon so the address has room.
+    /// Narrow homes (the expanded sidebar) keep the Anonymous and engine badges to their icons so the address has room.
     var isCompact = false
     @State private var text = ""
-    @FocusState private var isFocused: Bool
+    @State private var isFocused = false
     @Environment(\.workspaceTint) private var tint
 
     private var tab: BrowserTab? { pane.selected }
+    private var resultsPage: (engine: SearchEngine, words: String)? { pane.selectedResultsPage }
+    private var hasLeadingBadge: Bool { pane.model.isAnonymous || resultsPage != nil }
 
     var body: some View {
         HStack(spacing: 6) {
             if pane.model.isAnonymous {
                 AnonymousBadge(isCompact: isCompact)
             }
-            TextField("Search or enter address", text: $text)
-                .textFieldStyle(.plain)
-                .focused($isFocused)
-                .onSubmit {
-                    pane.load(text)
-                    isFocused = false
-                }
-                .onExitCommand {
-                    text = displayedAddress
-                    isFocused = false
-                }
-                .accessibilityLabel("Address")
+            if let resultsPage, let tab {
+                EngineBadge(engine: resultsPage.engine, icon: pane.model.favicons[tab.id], isCompact: isCompact)
+            }
+            AddressField(text: $text, isEditing: $isFocused, address: copiedAddress) { pane.load(text) }
             SiteSecurityButton(pane: pane)
         }
-        .padding(.leading, pane.model.isAnonymous ? 5 : 10)
+        .padding(.leading, hasLeadingBadge ? 5 : 10)
         .padding(.trailing, 4)
         .frame(height: 28)
         .frame(maxWidth: .infinity)
@@ -75,13 +70,63 @@ struct AddressBar: View {
                     .transition(.opacity)
             }
         }
-        .onAppear { text = displayedAddress }
-        .onChange(of: tab?.id) { text = displayedAddress }
-        .onChange(of: tab?.url) { if !isFocused { text = displayedAddress } }
-        .onChange(of: isFocused) { if !isFocused { text = displayedAddress } }
+        .contextMenu {
+            Button("Copy Address", action: pane.copyAddress)
+                .disabled(tab?.url == nil)
+        }
+        .onAppear(perform: showAddress)
+        .onChange(of: tab?.id) { showAddress() }
+        .onChange(of: tab?.url) { if !isFocused { showAddress() } }
+        .onChange(of: isFocused) { if !isFocused { showAddress() } }
     }
 
-    private var displayedAddress: String { tab?.url?.absoluteString ?? "" }
+    /// The words of a results page, else the page's address.
+    private func showAddress() {
+        text = resultsPage?.words ?? tab?.url?.absoluteString ?? ""
+    }
+
+    /// Copy gives the page's full address while the field holds its results page's words unedited, with all or none
+    /// of them selected; otherwise it copies the selected text.
+    private func copiedAddress(_ text: String, _ selected: NSRange) -> URL? {
+        guard let url = tab?.url, let words = resultsPage?.words, text == words,
+            selected.length == 0 || selected.length == (text as NSString).length
+        else { return nil }
+        return url
+    }
+}
+
+/// At the address field's start on a search results page: the engine's name with the icon the tab already loaded for
+/// the page (none fetched for it), else a generic search glyph.
+private struct EngineBadge: View {
+    let engine: SearchEngine
+    let icon: NSImage?
+    let isCompact: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Group {
+                if let icon {
+                    Image(nsImage: icon).resizable().scaledToFit()
+                } else {
+                    Image(systemName: "magnifyingglass").font(.system(size: 10, weight: .semibold))
+                }
+            }
+            .frame(width: 12, height: 12)
+            if !isCompact {
+                Text(verbatim: engine.name)
+            }
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.horizontal, isCompact ? 4 : 7)
+        .frame(height: 18)
+        .background(.fill.secondary, in: .capsule)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(String(localized: "Search results from \(engine.name)"))
+        .help(String(localized: "Search results from \(engine.name)"))
+    }
 }
 
 /// Marks the address field of an Anonymous window, so it is never mistaken for an ordinary one.
