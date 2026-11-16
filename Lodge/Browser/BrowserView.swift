@@ -40,7 +40,8 @@ struct BrowserView: View {
         .overlay {
             if let prompt = pane.window.locationPrompt {
                 LocationPromptView(
-                    prompt: prompt, initialText: prompt.initialText(for: address(of: prompt)),
+                    prompt: prompt,
+                    initialText: prompt.initialText(for: address(of: prompt), engines: pane.searchEngines),
                     submit: pane.submitLocation, cancel: pane.cancelLocationPrompt
                 )
                 .transition(.opacity)

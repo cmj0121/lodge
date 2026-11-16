@@ -371,6 +371,16 @@
         }
       }
     },
+    "Copy Address" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拷貝位址"
+          }
+        }
+      }
+    },
     "Copy Link" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1537,6 +1547,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜尋或輸入網址"
+          }
+        }
+      }
+    },
+    "Search results from %@" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 的搜尋結果"
           }
         }
       }
