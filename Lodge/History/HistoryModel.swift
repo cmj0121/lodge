@@ -273,12 +273,7 @@ final class HistoryModel {
         openURL(visit.url)
     }
 
-    func copyLink(_ visit: HistoryVisit) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.writeObjects([visit.url as NSURL])
-        pasteboard.setString(visit.url.absoluteString, forType: .string)
-    }
+    func copyLink(_ visit: HistoryVisit) { NSPasteboard.general.setURL(visit.url) }
 
     /// Empties the shown workspace's list at once, voiding every load and search still running, then the store; the
     /// store's change refreshes the list again. Works with no History page showing.
