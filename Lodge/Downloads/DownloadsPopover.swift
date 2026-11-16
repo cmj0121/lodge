@@ -21,7 +21,7 @@ struct DownloadsButton: View {
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
-        .help(ShortcutCatalog.tooltip("Downloads", for: .toggleDownloads))
+        .help(ShortcutCatalog.tooltip(String(localized: "Downloads"), for: .toggleDownloads))
         .accessibilityLabel("Downloads")
         .accessibilityValue(DownloadsButtonLabel.accessibilityValue(progress, hasUnseen: manager.hasUnseenEnded))
         .popover(isPresented: $window.isDownloadsVisible, arrowEdge: .trailing) {
@@ -95,9 +95,9 @@ struct DownloadsButtonLabel: View {
             switch progress {
             case .none: ""
             case .determinate(let fraction): fraction.formatted(.percent.precision(.fractionLength(0)))
-            case .indeterminate: "In progress"
+            case .indeterminate: String(localized: "In progress")
             }
-        return [running, hasUnseen ? "New finished downloads" : ""].filter { !$0.isEmpty }.joined(separator: ", ")
+        return [running, hasUnseen ? String(localized: "New finished downloads") : ""].filter { !$0.isEmpty }.joined(separator: ", ")
     }
 }
 
@@ -199,11 +199,11 @@ struct DownloadsList: View {
 extension DownloadRowModel.Action {
     var title: String {
         switch self {
-        case .cancel: "Cancel"
-        case .retry: "Retry"
-        case .open: "Open"
-        case .showInFinder: "Show in Finder"
-        case .remove: "Remove"
+        case .cancel: String(localized: "Cancel")
+        case .retry: String(localized: "Retry")
+        case .open: String(localized: "Open")
+        case .showInFinder: String(localized: "Show in Finder")
+        case .remove: String(localized: "Remove")
         }
     }
 

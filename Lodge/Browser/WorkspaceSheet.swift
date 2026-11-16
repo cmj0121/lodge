@@ -88,24 +88,24 @@ struct WorkspaceSheetCard: View {
 
     private var title: String {
         switch editor {
-        case .create: "New Workspace"
-        case .rename: "Rename Workspace"
-        case .changeIcon: "Change Icon"
+        case .create: String(localized: "New Workspace")
+        case .rename: String(localized: "Rename Workspace")
+        case .changeIcon: String(localized: "Change Icon")
         }
     }
 
     private var commitTitle: String {
         switch editor {
-        case .create: "Create"
-        case .rename: "Rename"
-        case .changeIcon: "Change Icon"
+        case .create: String(localized: "Create")
+        case .rename: String(localized: "Rename")
+        case .changeIcon: String(localized: "Change Icon")
         }
     }
 
     /// The name the preview tile shows: what is typed, else the workspace's own name, else a stand-in.
     private var previewName: String {
         let typed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if asksName { return typed.isEmpty ? "Untitled" : typed }
+        if asksName { return typed.isEmpty ? String(localized: "Untitled") : typed }
         return target?.name ?? ""
     }
 
@@ -373,7 +373,7 @@ private struct ColorCell: View {
     let choose: () -> Void
     @State private var isHovered = false
 
-    static func label(for color: WorkspaceColor?) -> String { color?.label ?? "None" }
+    static func label(for color: WorkspaceColor?) -> String { color?.label ?? String(localized: "None") }
 
     var body: some View {
         Button(action: choose) {

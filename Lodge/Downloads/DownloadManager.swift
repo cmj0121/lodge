@@ -181,7 +181,7 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         guard !isShowingTooMany else { return }
         isShowingTooMany = true
         let alert = NSAlert()
-        alert.messageText = "Too many downloads are running."
+        alert.messageText = String(localized: "Too many downloads are running.")
         Task {
             if let window {
                 await alert.beginSheetModal(for: window)
@@ -197,8 +197,8 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     private func askPermission(for site: Origin, on store: StoreRef, in window: NSWindow?) async -> Bool {
         let alert = NSAlert()
         alert.messageText = DownloadGate.prompt(for: site)
-        alert.addButton(withTitle: "Allow")
-        alert.addButton(withTitle: "Don't Allow")
+        alert.addButton(withTitle: String(localized: "Allow"))
+        alert.addButton(withTitle: String(localized: "Don't Allow"))
         let response = if let window { await alert.beginSheetModal(for: window) } else { alert.runModal() }
         let allowed = response == .alertFirstButtonReturn
         gate.answer(allowed, for: site, on: store)
@@ -242,7 +242,7 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             guard active[ObjectIdentifier(download)] != nil else { return nil }
             // The user approved this exact file, overwrite included.
             guard !reserved.contains(chosen.standardizedFileURL) else {
-                let reason = "Another download is already saving to “\(chosen.lastPathComponent)”."
+                let reason = String(localized: "Another download is already saving to “\(chosen.lastPathComponent)”.")
                 end(download, as: .failed(reason: reason))
                 return nil
             }
@@ -395,7 +395,7 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     func downloadDidFinish(_ download: WKDownload) {
         guard let entry = active[ObjectIdentifier(download)] else { return }
         guard let finalURL = entry.finalURL, let partialURL = entry.partialURL else {
-            end(download, as: .failed(reason: "The download finished before it had a place to go."))
+            end(download, as: .failed(reason: String(localized: "The download finished before it had a place to go.")))
             return
         }
         do {
@@ -526,8 +526,8 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             let alert = NSAlert()
             alert.messageText =
                 item.isPrivate
-                ? "This download's anonymous tab has closed, so it can't be retried."
-                : "This download's workspace no longer exists, so it can't be retried."
+                ? String(localized: "This download's anonymous tab has closed, so it can't be retried.")
+                : String(localized: "This download's workspace no longer exists, so it can't be retried.")
             present(alert, in: NSApp.keyWindow)
             return
         }
@@ -563,8 +563,8 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
     private func confirmOpen(_ id: UUID, name: String) async {
         let alert = NSAlert()
         alert.messageText = DownloadOpenRisk.confirmation(for: name)
-        alert.addButton(withTitle: "Open")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: String(localized: "Open"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         let response =
             if let window = NSApp.mainWindow { await alert.beginSheetModal(for: window) } else { alert.runModal() }
         guard response == .alertFirstButtonReturn else { return }
@@ -581,7 +581,7 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
             Self.logger.error("Cannot quarantine a download: \(error.localizedDescription, privacy: .public)")
             guard isAppOrScript else { return NSWorkspace.shared.open(url) }
             let alert = NSAlert()
-            alert.messageText = "Lodge can't open “\(url.lastPathComponent)” safely."
+            alert.messageText = String(localized: "Lodge can't open “\(url.lastPathComponent)” safely.")
             present(alert, in: NSApp.mainWindow)
             return true
         }
@@ -602,7 +602,7 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         guard withFile(of: item, use) == true else {
             missing.insert(id)
             let alert = NSAlert()
-            alert.messageText = "Lodge can't open “\(item.fileName)”. It may have been moved or deleted."
+            alert.messageText = String(localized: "Lodge can't open “\(item.fileName)”. It may have been moved or deleted.")
             present(alert, in: NSApp.mainWindow)
             return
         }

@@ -210,11 +210,11 @@ struct BookmarkOutline: NSViewRepresentable {
             switch rows.nodes[id] {
             case .folder(let folder, let title, let isExpanded, _)?:
                 return RowView.Content(
-                    label: title, value: isExpanded ? "Folder, expanded" : "Folder, collapsed", toolTip: nil,
-                    isSelected: false, actions: [(isExpanded ? "Collapse" : "Expand", { [model] in model.setFolderExpanded(folder, !isExpanded) })])
+                    label: title, value: isExpanded ? String(localized: "Folder, expanded") : String(localized: "Folder, collapsed"), toolTip: nil,
+                    isSelected: false, actions: [(isExpanded ? String(localized: "Collapse") : String(localized: "Expand"), { [model] in model.setFolderExpanded(folder, !isExpanded) })])
             case .item(let item)?:
-                var actions: [(String, () -> Void)] = [("Open", { [pane] in pane.activate(item.target) })]
-                if let tab = item.tab { actions.append(("Close Tab", { [pane] in pane.close(tab.id) })) }
+                var actions: [(String, () -> Void)] = [(String(localized: "Open"), { [pane] in pane.activate(item.target) })]
+                if let tab = item.tab { actions.append((String(localized: "Close Tab"), { [pane] in pane.close(tab.id) })) }
                 return RowView.Content(
                     label: item.title, value: pane.isShownElsewhere(item) ? ShownElsewhereMark.hint : nil,
                     toolTip: pane.toolTip(for: item),
@@ -309,35 +309,35 @@ struct BookmarkOutline: NSViewRepresentable {
             let row = outline.clickedRow
             switch node(atRow: row) {
             case .folder(let id, let title, _, _)?:
-                menu.addItem(ClosureMenuItem("New Folder…") { [model] in BookmarkPrompts.newFolder(in: id, model: model) })
-                menu.addItem(ClosureMenuItem("Rename…") { [model] in BookmarkPrompts.rename(id, title: title, model: model) })
+                menu.addItem(ClosureMenuItem(String(localized: "New Folder…")) { [model] in BookmarkPrompts.newFolder(in: id, model: model) })
+                menu.addItem(ClosureMenuItem(String(localized: "Rename…")) { [model] in BookmarkPrompts.rename(id, title: title, model: model) })
                 menu.addItem(.separator())
                 menu.addItem(
-                    ClosureMenuItem("Delete Folder…") { [model] in
+                    ClosureMenuItem(String(localized: "Delete Folder…")) { [model] in
                         BookmarkPrompts.deleteFolder(id, title: title, model: model)
                     })
             case .item(.link(let link, _, let tab))?:
                 let parent = folderID(places[.link(link.id)]?.parent)
-                menu.addItem(ClosureMenuItem("New Folder…") { [model] in BookmarkPrompts.newFolder(in: parent, model: model) })
+                menu.addItem(ClosureMenuItem(String(localized: "New Folder…")) { [model] in BookmarkPrompts.newFolder(in: parent, model: model) })
                 menu.addItem(
-                    ClosureMenuItem("Rename…") { [model] in BookmarkPrompts.rename(link.id, title: link.title, model: model) })
+                    ClosureMenuItem(String(localized: "Rename…")) { [model] in BookmarkPrompts.rename(link.id, title: link.title, model: model) })
                 menu.addItem(.separator())
-                menu.addItem(ClosureMenuItem("Pin") { [model] in model.pin(bookmark: link) })
-                menu.addItem(ClosureMenuItem("Remove from Bookmarks") { [model] in model.removeLink(link.id) })
+                menu.addItem(ClosureMenuItem(String(localized: "Pin")) { [model] in model.pin(bookmark: link) })
+                menu.addItem(ClosureMenuItem(String(localized: "Remove from Bookmarks")) { [model] in model.removeLink(link.id) })
                 if let tab {
                     if tab.url != nil {
-                        menu.addItem(workspaceMenu("Move to Workspace") { [workspaces] in
+                        menu.addItem(workspaceMenu(String(localized: "Move to Workspace")) { [workspaces] in
                             workspaces.move(tab: tab.id, to: $0)
                         })
-                        menu.addItem(workspaceMenu("Open in Workspace") { [workspaces] in
+                        menu.addItem(workspaceMenu(String(localized: "Open in Workspace")) { [workspaces] in
                             workspaces.open(tab: tab.id, in: $0)
                         })
                     }
                     menu.addItem(.separator())
-                    menu.addItem(ClosureMenuItem("Close Tab") { [pane] in pane.close(tab.id) })
+                    menu.addItem(ClosureMenuItem(String(localized: "Close Tab")) { [pane] in pane.close(tab.id) })
                 }
             case .item(.tab)?, nil:
-                menu.addItem(ClosureMenuItem("New Folder…") { [model] in BookmarkPrompts.newFolder(in: nil, model: model) })
+                menu.addItem(ClosureMenuItem(String(localized: "New Folder…")) { [model] in BookmarkPrompts.newFolder(in: nil, model: model) })
             }
         }
 
@@ -542,14 +542,14 @@ private final class ClosureMenuItem: NSMenuItem {
 enum BookmarkPrompts {
     /// Asks for a name, then adds the folder to `parent` (nil: the root).
     static func newFolder(in parent: UUID?, model: BrowserModel) {
-        let (alert, field) = nameAlert(message: "New Folder", name: "New Folder", confirm: "Create")
+        let (alert, field) = nameAlert(message: String(localized: "New Folder"), name: String(localized: "New Folder"), confirm: String(localized: "Create"))
         present(alert) { response in
             if response == .alertFirstButtonReturn { model.newFolder(in: parent, title: field.stringValue) }
         }
     }
 
     static func rename(_ id: UUID, title: String, model: BrowserModel) {
-        let (alert, field) = nameAlert(message: "Rename “\(title)”", name: title, confirm: "Rename")
+        let (alert, field) = nameAlert(message: String(localized: "Rename “\(title)”"), name: title, confirm: String(localized: "Rename"))
         present(alert) { response in
             if response == .alertFirstButtonReturn { model.rename(id, to: field.stringValue) }
         }
@@ -561,13 +561,13 @@ enum BookmarkPrompts {
         let alert = NSAlert()
         alert.messageText =
             switch count {
-            case 0: "Delete “\(title)”?"
-            case 1: "Delete “\(title)” and the bookmark in it?"
-            default: "Delete “\(title)” and the \(count) bookmarks in it?"
+            case 0: String(localized: "Delete “\(title)”?")
+            case 1: String(localized: "Delete “\(title)” and the bookmark in it?")
+            default: String(localized: "Delete “\(title)” and the \(count) bookmarks in it?")
             }
-        alert.informativeText = "Tabs open on these bookmarks stay open."
-        alert.addButton(withTitle: "Delete").hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
+        alert.informativeText = String(localized: "Tabs open on these bookmarks stay open.")
+        alert.addButton(withTitle: String(localized: "Delete")).hasDestructiveAction = true
+        alert.addButton(withTitle: String(localized: "Cancel"))
         present(alert) { response in
             if response == .alertFirstButtonReturn { model.removeLink(id) }
         }
@@ -578,10 +578,10 @@ enum BookmarkPrompts {
         alert.messageText = message
         let field = NSTextField(string: name)
         field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
-        field.setAccessibilityLabel("Name")
+        field.setAccessibilityLabel(String(localized: "Name"))
         alert.accessoryView = field
         alert.addButton(withTitle: confirm)
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: String(localized: "Cancel"))
         alert.window.initialFirstResponder = field
         return (alert, field)
     }

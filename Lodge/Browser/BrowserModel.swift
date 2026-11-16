@@ -483,12 +483,12 @@ final class BrowserModel {
     /// Appends a folder named `title` (blank: "New Folder") to `parent`, the root for nil, opening `parent`
     /// so the folder shows. Returns the folder's id; nil for an unknown parent.
     @discardableResult
-    func newFolder(in parent: UUID? = nil, title: String = "New Folder") -> UUID? {
+    func newFolder(in parent: UUID? = nil, title: String = String(localized: "New Folder")) -> UUID? {
         let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
         var folder: BookmarkFolder?
         changeLibrary { library in
             let parent = parent ?? library.bookmarks.id
-            folder = library.addFolder(name.isEmpty ? "New Folder" : name, in: parent)
+            folder = library.addFolder(name.isEmpty ? String(localized: "New Folder") : name, in: parent)
             if folder != nil { library.setExpanded(parent, true) }
         }
         return folder?.id

@@ -248,7 +248,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         _ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
         initiatedByFrame frame: WKFrameInfo
     ) async -> Bool {
-        await presentDialog(message: message, from: frame, in: webView, buttons: ["OK", "Cancel"])
+        await presentDialog(message: message, from: frame, in: webView, buttons: [String(localized: "OK"), String(localized: "Cancel")])
             == .alertFirstButtonReturn
     }
 
@@ -283,7 +283,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         alert.informativeText = message
         buttons.forEach { alert.addButton(withTitle: $0) }
         alert.showsSuppressionButton = true
-        alert.suppressionButton?.title = "Block further dialogs from this page"
+        alert.suppressionButton?.title = String(localized: "Block further dialogs from this page")
         let response = await whileSelected(dismiss: { window.endSheet(alert.window, returnCode: .abort) }) {
             await alert.beginSheetModal(for: window)
         }

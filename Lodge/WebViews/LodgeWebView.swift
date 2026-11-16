@@ -21,7 +21,7 @@ final class LodgeWebView: WKWebView {
         let newWindow = NSUserInterfaceItemIdentifier("WKMenuItemIdentifierOpenLinkInNewWindow")
         guard let index = menu.items.firstIndex(where: { $0.identifier == newWindow }) else { return }
         let original = menu.items[index]
-        let item = NSMenuItem(title: "Open Link in New Tab", action: #selector(openLinkInNewTab(_:)), keyEquivalent: "")
+        let item = NSMenuItem(title: String(localized: "Open Link in New Tab"), action: #selector(openLinkInNewTab(_:)), keyEquivalent: "")
         item.target = self
         item.representedObject = original
         menu.removeItem(at: index)

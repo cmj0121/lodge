@@ -202,7 +202,7 @@ private struct BookmarksMenu: View {
         .onHover { isHovered = $0 }
         .help("Bookmarks")
         .accessibilityLabel("Bookmarks")
-        .accessibilityValue(isSelected ? "Open" : "")
+        .accessibilityValue(isSelected ? String(localized: "Open") : "")
     }
 }
 
@@ -330,10 +330,10 @@ private struct ItemMenu: View {
                 .disabled(!model.canAddLink(from: tab.id))
         }
         if let tab = item.tab {
-            WorkspaceMenu(title: "Move to Workspace", tab: tab, from: model.workspaceID, coordinator: coordinator) {
+            WorkspaceMenu(title: String(localized: "Move to Workspace"), tab: tab, from: model.workspaceID, coordinator: coordinator) {
                 coordinator.move(tab: tab.id, to: $0)
             }
-            WorkspaceMenu(title: "Open in Workspace", tab: tab, from: model.workspaceID, coordinator: coordinator) {
+            WorkspaceMenu(title: String(localized: "Open in Workspace"), tab: tab, from: model.workspaceID, coordinator: coordinator) {
                 coordinator.open(tab: tab.id, in: $0)
             }
             Divider()
@@ -717,7 +717,7 @@ struct SidebarRowLabel: View {
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
                     .opacity(showsClose ? 1 : 0)
-                    .help(ShortcutCatalog.tooltip("Close tab", for: .closeTab))
+                    .help(ShortcutCatalog.tooltip(String(localized: "Close tab"), for: .closeTab))
                     .accessibilityLabel("Close \(item.title)")
                 }
             }
@@ -748,7 +748,7 @@ extension View {
 /// Marks a row or tile whose tab another window shows, where a click brings that window forward (D4): a small
 /// window glyph in the quietest label colour, so it reads in light and dark without competing with the title.
 struct ShownElsewhereMark: View {
-    static let hint = "Shown in another window"
+    static let hint = String(localized: "Shown in another window")
 
     var size: CGFloat = 10
 
@@ -777,11 +777,10 @@ private struct SidebarToggle: View {
     let action: () -> Void
 
     var body: some View {
-        let verb = isRail ? "Expand" : "Collapse"
-        Button("\(verb) Sidebar", systemImage: "sidebar.left", action: action)
+        Button(isRail ? "Expand Sidebar" : "Collapse Sidebar", systemImage: "sidebar.left", action: action)
             .iconButtonStyle()
             .font(isRail ? .system(size: SidebarMode.railSymbolSize) : nil)
-            .help("\(verb) the sidebar")
+            .help(isRail ? "Expand the sidebar" : "Collapse the sidebar")
     }
 }
 
@@ -801,7 +800,7 @@ private struct ShortcutHelpButton: View {
 
 /// The shown workspace's symbol and name over its bookmarks and tabs (D6).
 private struct WorkspaceHeader: View {
-    static let anonymousHint = "Nothing is kept"
+    static let anonymousHint = String(localized: "Nothing is kept")
 
     let workspace: Workspace
 
@@ -839,6 +838,6 @@ private struct NewTabButton: View {
     var body: some View {
         Button("New Tab", systemImage: "plus", action: pane.newTab)
             .iconButtonStyle()
-            .help(ShortcutCatalog.tooltip("Open a new tab", for: .newTab))
+            .help(ShortcutCatalog.tooltip(String(localized: "Open a new tab"), for: .newTab))
     }
 }

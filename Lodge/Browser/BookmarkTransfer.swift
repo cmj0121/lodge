@@ -13,8 +13,8 @@ enum BookmarkTransfer {
     static func importBookmarks(into model: BrowserModel, on window: NSWindow?) {
         guard !model.isImportingBookmarks else { return }
         let panel = NSOpenPanel()
-        panel.message = "Choose a bookmark file exported from a browser."
-        panel.prompt = "Import"
+        panel.message = String(localized: "Choose a bookmark file exported from a browser.")
+        panel.prompt = String(localized: "Import")
         panel.allowedContentTypes = [.html]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -39,9 +39,9 @@ enum BookmarkTransfer {
     /// Asks where to save, then writes every bookmark there as one bookmark HTML file.
     static func exportBookmarks(from model: BrowserModel, on window: NSWindow?) {
         let panel = NSSavePanel()
-        panel.message = "Other browsers can import this file."
-        panel.prompt = "Export"
-        panel.nameFieldStringValue = "Lodge Bookmarks.html"
+        panel.message = String(localized: "Other browsers can import this file.")
+        panel.prompt = String(localized: "Export")
+        panel.nameFieldStringValue = String(localized: "Lodge Bookmarks.html")
         panel.allowedContentTypes = [.html]
         panel.canCreateDirectories = true
         present(panel, on: window) { url in
@@ -51,7 +51,7 @@ enum BookmarkTransfer {
                     try model.exportBookmarks(to: url)
                 } catch {
                     let alert = NSAlert()
-                    alert.messageText = "The bookmarks could not be exported."
+                    alert.messageText = String(localized: "The bookmarks could not be exported.")
                     alert.informativeText = error.localizedDescription
                     show(alert, on: window)
                 }
@@ -63,24 +63,26 @@ enum BookmarkTransfer {
         let alert = NSAlert()
         switch error {
         case BookmarkFile.ReadError.tooLarge:
-            alert.messageText = "“\(file)” is too large to import."
-            alert.informativeText = "Bookmark files larger than 5 MB are not imported."
+            alert.messageText = String(localized: "“\(file)” is too large to import.")
+            alert.informativeText = String(localized: "Bookmark files larger than 5 MB are not imported.")
         case NetscapeBookmarks.ImportError.notABookmarkFile:
-            alert.messageText = "“\(file)” is not a bookmark file."
+            alert.messageText = String(localized: "“\(file)” is not a bookmark file.")
             alert.informativeText =
-                "Export the bookmarks from the other browser as an HTML file, then import that file."
+                String(localized: "Export the bookmarks from the other browser as an HTML file, then import that file.")
         case NetscapeBookmarks.ImportError.tooManyBookmarks(let limit):
-            alert.messageText = "“\(file)” has too many bookmarks to import."
-            alert.informativeText =
-                "Bookmark files with more than \(limit.formatted()) bookmarks are not imported. Nothing was added."
+            alert.messageText = String(localized: "“\(file)” has too many bookmarks to import.")
+            alert.informativeText = String(
+                localized: "Bookmark files with more than \(limit.formatted()) bookmarks are not imported. Nothing was added.")
         case NetscapeBookmarks.ImportError.tooComplex:
-            alert.messageText = "“\(file)” has too many tags to import."
-            alert.informativeText =
-                "The file has more than \(NetscapeBookmarks.maxElements.formatted()) tags, too many for a browser’s "
-                + "bookmark export. Nothing was added."
+            alert.messageText = String(localized: "“\(file)” has too many tags to import.")
+            alert.informativeText = String(
+                localized: """
+                    The file has more than \(NetscapeBookmarks.maxElements.formatted()) tags, too many for a \
+                    browser’s bookmark export. Nothing was added.
+                    """)
         default:
-            alert.messageText = "“\(file)” could not be read."
-            alert.informativeText = "Check that the file still exists and is a text file."
+            alert.messageText = String(localized: "“\(file)” could not be read.")
+            alert.informativeText = String(localized: "Check that the file still exists and is a text file.")
         }
         return alert
     }
@@ -126,8 +128,8 @@ private final class ImportProgress: NSObject {
         spinner.controlSize = .small
         spinner.isIndeterminate = true
         spinner.startAnimation(nil)
-        let label = NSTextField(labelWithString: "Importing Bookmarks…")
-        let button = NSButton(title: "Cancel", target: self, action: #selector(cancelImport))
+        let label = NSTextField(labelWithString: String(localized: "Importing Bookmarks…"))
+        let button = NSButton(title: String(localized: "Cancel"), target: self, action: #selector(cancelImport))
         button.keyEquivalent = "\u{1b}"
 
         let status = NSStackView(views: [spinner, label])

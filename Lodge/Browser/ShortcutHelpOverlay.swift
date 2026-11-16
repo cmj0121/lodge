@@ -78,7 +78,7 @@ private struct ShortcutGroup: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(menu.rawValue)
+            Text(menu.title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .accessibilityAddTraits(.isHeader)
@@ -109,14 +109,14 @@ private struct ShortcutRow: View {
                     }
                     KeyCaps(combo: combos[index])
                 }
-                if let note = shortcut.note { Text("(\(note))").font(.caption).foregroundStyle(.secondary) }
+                if let note = shortcut.note { Text(verbatim: "(\(note))").font(.caption).foregroundStyle(.secondary) }
             }
         }
         .frame(minHeight: 22)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(shortcut.title)
         .accessibilityValue(
-            combos.map(\.display).joined(separator: " or ") + (shortcut.note.map { " (\($0))" } ?? ""))
+            combos.map(\.display).joined(separator: " \(String(localized: "or")) ") + (shortcut.note.map { " (\($0))" } ?? ""))
     }
 }
 
