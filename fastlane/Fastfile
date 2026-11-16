@@ -1,4 +1,8 @@
+require "digest"
 require "dotenv"
+require "open3"
+require "openssl"
+require "plist"
 
 Dotenv.load(File.expand_path("../.env", __dir__))
 
@@ -144,19 +148,20 @@ platform :mac do
   lane :developer_id do |options|
     build_number = options[:build_number] || next_build_number
     match_signing("developer_id")
-    app = with_lodge_signing("developer_id") do
+    app = with_lodge_signing("developer_id") do |identity|
       build_mac_app(
         project: PROJECT,
         scheme: "Lodge",
         export_method: "developer-id",
         output_directory: File.join(OUTPUT_DIR, "developer-id"),
         skip_package_pkg: true,
+        export_options: { signingCertificate: identity },
         xcargs: "CURRENT_PROJECT_VERSION=#{build_number}"
       )
     end
     dmg = File.expand_path(File.join(OUTPUT_DIR, "Lodge-#{lodge_version}.dmg"), project_root)
     sh("hdiutil", "create", "-volname", "Lodge", "-srcfolder", app, "-ov", "-format", "UDZO", dmg)
-    sh("codesign", "--force", "--timestamp", "--sign", certificate_name("developer_id"), dmg)
+    sh("codesign", "--force", "--timestamp", "--sign", identity_for("developer_id"), dmg)
     notarize(package: dmg, asc_provider: ENV["APPLE_TEAM_ID"], **asc_auth)
     dmg
   end
@@ -165,13 +170,14 @@ platform :mac do
   lane :app_store do |options|
     build_number = options[:build_number] || next_build_number
     match_signing("appstore", additional_cert_types: ["mac_installer_distribution"])
-    pkg = with_lodge_signing("appstore") do
+    pkg = with_lodge_signing("appstore") do |identity|
       build_mac_app(
         project: PROJECT,
         scheme: "Lodge",
         export_method: "app-store",
         output_directory: File.join(OUTPUT_DIR, "app-store"),
-        installer_cert_name: installer_certificate_name,
+        installer_cert_name: installer_identity,
+        export_options: { signingCertificate: identity },
         xcargs: "CURRENT_PROJECT_VERSION=#{build_number}"
       )
     end
@@ -224,12 +230,13 @@ end
 def ship_to_testflight(target)
   match_signing("appstore", platform: :ios)
   build_number = next_build_number(platform: "ios")
-  ipa = with_lodge_signing("appstore", platform: :ios, target: target.name) do
+  ipa = with_lodge_signing("appstore", platform: :ios, target: target.name) do |identity|
     build_app(
       project: PROJECT,
       scheme: target.name,
       export_method: "app-store",
       output_directory: File.join(OUTPUT_DIR, "ios", target.name),
+      export_options: { signingCertificate: identity },
       xcargs: "CURRENT_PROJECT_VERSION=#{build_number}"
     )
   end
@@ -311,15 +318,50 @@ def require_head_on_origin_main
   stop!("HEAD #{head} is not origin/main #{origin}", "push, or check out main and pull")
 end
 
-def installer_certificate_name
-  team = ENV["APPLE_TEAM_ID"]
-  identities = sh("security", "find-identity", "-v", "-p", "basic", log: false)
-  name = identities.scan(/"([^"]+)"/).flatten.find do |identity|
-    identity.start_with?("3rd Party Mac Developer Installer:", "Mac Installer Distribution:") &&
-      identity.end_with?("(#{team})")
+def security(*args)
+  output, status = Open3.capture2("security", *args, err: File::NULL)
+  status.success? ? output : ""
+end
+
+# [fingerprint, name] of each valid signing identity in the keychain.
+def keychain_identities(*policy)
+  security("find-identity", "-v", *policy).scan(/^\s*\d+\) (\h{40}) "([^"]+)"/)
+end
+
+# The keychain may hold several valid identities with the same name (one per renewal), and a
+# name lets xcodebuild pick one the profile does not list. The profile carries the certificates
+# it accepts; the fingerprint of the one also in this keychain names exactly one identity.
+def identity_for(type, platform: :macos)
+  profile = match_env(type, "profile-path", platform: platform)
+  plist = Plist.parse_xml(security("cms", "-D", "-i", profile))
+  accepted = Array(plist && plist["DeveloperCertificates"]).map do |der|
+    Digest::SHA1.hexdigest(der.respond_to?(:string) ? der.string : der.to_s).upcase
   end
-  name || stop!("No valid Mac installer certificate for team #{team} in the keychain",
-                "run match appstore with MATCH_READONLY=false, or install the installer certificate")
+  installed = keychain_identities.map(&:first)
+  (accepted & installed).first ||
+    stop!("none of the #{accepted.size} certificates in #{File.basename(profile)} is in this keychain",
+          "run match again, or check the certificate has not expired")
+end
+
+# No profile lists installer certificates, so any valid one of the team signs the pkg; with
+# several (one per renewal) the fingerprint of the one that expires last is used, since an
+# installer name alone is as ambiguous as the app identity's.
+def installer_identity
+  team = ENV["APPLE_TEAM_ID"]
+  candidates = keychain_identities("-p", "basic").select do |_, name|
+    name.start_with?("3rd Party Mac Developer Installer:", "Mac Installer Distribution:") && name.end_with?("(#{team})")
+  end
+  if candidates.empty?
+    stop!("No valid Mac installer certificate for team #{team} in the keychain",
+          "run match appstore with MATCH_READONLY=false, or install the installer certificate")
+  end
+  candidates.map(&:first).max_by { |fingerprint| certificate_expiry(fingerprint, candidates.to_h[fingerprint]) }
+end
+
+def certificate_expiry(fingerprint, name)
+  pems = security("find-certificate", "-a", "-Z", "-p", "-c", name)
+  pem = pems.scan(/SHA-1 hash: (\h{40})\n(-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----)/m).to_h[fingerprint]
+  pem ? OpenSSL::X509::Certificate.new(pem).not_after : Time.at(0)
 end
 
 # match leaves the platform out of iOS variable names.
@@ -328,17 +370,16 @@ def match_env(type, suffix, platform: :macos)
   ENV[name].to_s.strip.empty? ? stop!("match did not set #{name}", "check APP_IDENTIFIER and the match type") : ENV[name]
 end
 
-def certificate_name(type, platform: :macos)
-  match_env(type, "certificate-name", platform: platform)
-end
-
 # Sign only the app target (xcargs would also reach the LodgeKit SwiftPM targets),
 # and always put the committed project file back, keeping any uncommitted edits.
+# Yields the identity's fingerprint, for the export's signingCertificate: without it
+# -exportArchive picks by its default selector, which may be a same-name certificate.
 def with_lodge_signing(type, platform: :macos, target: "Lodge")
   pbxproj = File.join(project_root, PBXPROJ)
   backup = File.join(project_root, PBXPROJ_BACKUP)
   FileUtils.mkdir_p(File.dirname(backup))
   FileUtils.cp(pbxproj, backup)
+  identity = identity_for(type, platform: platform)
   begin
     update_code_signing_settings(
       path: PROJECT,
@@ -346,10 +387,10 @@ def with_lodge_signing(type, platform: :macos, target: "Lodge")
       use_automatic_signing: false,
       team_id: ENV["APPLE_TEAM_ID"],
       bundle_identifier: ENV["APP_IDENTIFIER"],
-      code_sign_identity: certificate_name(type, platform: platform),
+      code_sign_identity: identity,
       profile_name: match_env(type, "profile-name", platform: platform)
     )
-    yield
+    yield identity
   ensure
     FileUtils.cp(backup, pbxproj)
   end
