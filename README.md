@@ -29,6 +29,7 @@ one you are in uses resources.
 | Anonymous workspace   | Always last; each tab is its own browser, gone with the tab; only bookmarks are kept     |
 | Anonymous look        | An unknown-person icon; windows go deep charcoal (not pages); the address shows a badge  |
 | Workspace color       | Pick one of eight colors or none in the workspace sheet; it tints the sidebar and focus  |
+| Sidebar header        | Default and Anonymous show a one-line tagline under their name; custom ones show none    |
 | Own identity          | Sign-ins, cookies and site data stay in the workspace they were made in                  |
 | Own fingerprint       | Every workspace presents a distinct, stable fingerprint to each site                     |
 | Own history           | Each browser keeps the pages visited in it; Anonymous keeps none                         |
@@ -40,6 +41,7 @@ one you are in uses resources.
 | Several windows       | ⌘N opens a window on the same workspaces; each shows its own tab and returns on relaunch |
 | Default browser       | Settings › General makes Lodge the default; links from other apps open in a Default tab  |
 | Credentials           | Passwords and passkeys come from the OS credential store, ready in every workspace       |
+| English and 繁體中文  | Follows macOS or Language & Region › Applications; workspace names stay English          |
 | Three platforms       | Mac, iPhone and iPad share one set of rules, each with the controls that suit it         |
 | Clear promise         | Each workspace keeps its own site data and sign-ins, and Lodge says exactly that         |
 
