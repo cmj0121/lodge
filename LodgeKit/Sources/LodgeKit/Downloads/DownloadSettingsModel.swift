@@ -32,7 +32,7 @@ import os
         self.bookmarks = bookmarks
         askEachTime = defaults.bool(forKey: DownloadSettings.askKey)
         if let bookmark = defaults.data(forKey: DownloadSettings.folderKey) {
-            selection = .custom(name: bookmarks.name(bookmark) ?? "Chosen folder")
+            selection = .custom(name: bookmarks.name(bookmark) ?? String(localized: "Chosen folder", bundle: .module))
         } else {
             selection = .downloads
         }

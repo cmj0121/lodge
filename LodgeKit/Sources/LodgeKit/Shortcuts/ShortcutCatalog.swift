@@ -25,6 +25,18 @@ extension ShortcutID {
 public enum ShortcutMenu: String, CaseIterable, Sendable {
     case file = "File", edit = "Edit", view = "View", bookmarks = "Bookmarks", workspaces = "Workspaces",
         help = "Help"
+
+    /// The group's heading in the overlay.
+    public var title: String {
+        switch self {
+        case .file: String(localized: "File", bundle: .module)
+        case .edit: String(localized: "Edit", bundle: .module)
+        case .view: String(localized: "View", bundle: .module)
+        case .bookmarks: String(localized: "Bookmarks", bundle: .module)
+        case .workspaces: String(localized: "Workspaces", bundle: .module)
+        case .help: String(localized: "Help", bundle: .module)
+        }
+    }
 }
 
 public struct KeyCombo: Hashable, Sendable {
@@ -82,24 +94,28 @@ public struct Shortcut: Identifiable, Hashable, Sendable {
 
 public enum ShortcutCatalog {
     public static let all: [Shortcut] = [
-        Shortcut(.newTab, "New Tab", .file, KeyCombo("t")),
-        Shortcut(.newWindow, "New Window", .file, KeyCombo("n")),
-        Shortcut(.closeTab, "Close Tab", .file, KeyCombo("w")),
-        Shortcut(.openLocation, "Open Location…", .file, KeyCombo("l")),
-        Shortcut(.reload, "Reload Page", .view, KeyCombo("r")),
-        Shortcut(.find, "Find…", .edit, KeyCombo("f")),
-        Shortcut(.bookmarkTab, "Bookmark This Tab", .bookmarks, KeyCombo("d")),
-        Shortcut(.toggleDownloads, "Show Downloads", .view, KeyCombo("j")),
-        Shortcut(.zoomIn, "Zoom In", .view, KeyCombo("="), aliases: [KeyCombo("+")]),
-        Shortcut(.zoomOut, "Zoom Out", .view, KeyCombo("-")),
-        Shortcut(.actualSize, "Actual Size", .view, KeyCombo("0")),
-        Shortcut(.shortcutHelp, "Keyboard Shortcuts", .help, KeyCombo("/"), yieldsToPage: true, note: "outside the page"),
+        Shortcut(.newTab, String(localized: "New Tab", bundle: .module), .file, KeyCombo("t")),
+        Shortcut(.newWindow, String(localized: "New Window", bundle: .module), .file, KeyCombo("n")),
+        Shortcut(.closeTab, String(localized: "Close Tab", bundle: .module), .file, KeyCombo("w")),
+        Shortcut(.openLocation, String(localized: "Open Location…", bundle: .module), .file, KeyCombo("l")),
+        Shortcut(.reload, String(localized: "Reload Page", bundle: .module), .view, KeyCombo("r")),
+        Shortcut(.find, String(localized: "Find…", bundle: .module), .edit, KeyCombo("f")),
+        Shortcut(.bookmarkTab, String(localized: "Bookmark This Tab", bundle: .module), .bookmarks, KeyCombo("d")),
+        Shortcut(.toggleDownloads, String(localized: "Show Downloads", bundle: .module), .view, KeyCombo("j")),
+        Shortcut(
+            .zoomIn, String(localized: "Zoom In", bundle: .module), .view, KeyCombo("="), aliases: [KeyCombo("+")]),
+        Shortcut(.zoomOut, String(localized: "Zoom Out", bundle: .module), .view, KeyCombo("-")),
+        Shortcut(.actualSize, String(localized: "Actual Size", bundle: .module), .view, KeyCombo("0")),
+        Shortcut(
+            .shortcutHelp, String(localized: "Keyboard Shortcuts", bundle: .module), .help, KeyCombo("/"),
+            yieldsToPage: true, note: String(localized: "outside the page", bundle: .module)),
     ]
         + ShortcutID.workspaceSlots.enumerated().map { index, id in
             let slot = index + 1
             return Shortcut(
-                id, "Workspace \(slot)", .workspaces, KeyCombo(Character("\(slot)")),
-                note: slot == 1 ? "⌘2–⌘9 next" : nil, isListed: slot == 1)
+                id, String(localized: "Workspace \(slot)", bundle: .module), .workspaces,
+                KeyCombo(Character("\(slot)")),
+                note: slot == 1 ? String(localized: "⌘2–⌘9 next", bundle: .module) : nil, isListed: slot == 1)
         }
 
     public static subscript(id: ShortcutID) -> Shortcut {

@@ -10,7 +10,8 @@ public struct DownloadFiles: Sendable {
 
         public var errorDescription: String? {
             switch self {
-            case .notARegularFile: "The downloaded file was replaced before it could be saved."
+            case .notARegularFile:
+                String(localized: "The downloaded file was replaced before it could be saved.", bundle: .module)
             }
         }
     }

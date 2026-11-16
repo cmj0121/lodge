@@ -42,11 +42,11 @@ public enum SiteSecurity: Equatable, Sendable {
 
     public var summary: String {
         switch self {
-        case .none: "No page is loaded."
-        case .secure: "The connection to this site is secure."
-        case .mixed: "This page loads some content over an insecure connection."
-        case .insecure: "The connection to this site is not secure."
-        case .local: "This page is on this computer."
+        case .none: String(localized: "No page is loaded.", bundle: .module)
+        case .secure: String(localized: "The connection to this site is secure.", bundle: .module)
+        case .mixed: String(localized: "This page loads some content over an insecure connection.", bundle: .module)
+        case .insecure: String(localized: "The connection to this site is not secure.", bundle: .module)
+        case .local: String(localized: "This page is on this computer.", bundle: .module)
         }
     }
 
