@@ -43,7 +43,7 @@
 | 設定 tab             | ⌘, 或齒輪開啟：一般、搜尋、下載項目、關於（版本、macOS、資料夾）                        |
 | 搜尋引擎             | 每個 workspace 用自己的搜尋引擎；在 workspace 選單的「搜尋引擎…」挑選                   |
 | Default 的引擎       | 在「設定」的「搜尋」挑選；自訂 workspace 未自選前跟隨它；Anonymous 用 DuckDuckGo        |
-| 自訂搜尋引擎         | 在「設定」的「搜尋」或「搜尋引擎…」sheet 按「加入搜尋引擎⋯」：名稱與含 `%s` 的網址      |
+| 自訂搜尋引擎         | 在「設定」的「搜尋」或「搜尋引擎…」sheet 按「加入搜尋引擎⋯」：名稱與 `…?q=%s` 網址      |
 | 編輯與移除           | 每個加入的引擎在那裡都能編輯、移除；內建引擎維持不變                                    |
 | 共用的引擎           | 在「設定」的「搜尋」加入的引擎，每個 workspace 都能選用，包括 Anonymous                 |
 | 移除後               | 原本用它的改用：自訂 workspace 用 Default 的引擎，Default 和 Anonymous 用 DuckDuckGo    |
