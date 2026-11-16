@@ -21,6 +21,10 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var gestures = NavigationGestures()
     /// The next main-frame action is a load the browser started (`browserWillLoad()`).
     private var nextLoadIsBrowserInitiated = false
+    #if DEBUG
+        /// Layout self-checks: how many `lodge:` navigations and popups every tab has refused.
+        static var lodgeRefusals = 0
+    #endif
 
     init(tab: TabID, webView: LodgeWebView, model: BrowserModel, faviconSession: URLSession) {
         self.tab = tab
@@ -42,7 +46,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             webView.observe(\.url, options: .initial) { [weak self] view, _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    if let url = view.url { self.model?.update(self.tab) { $0.url = url } }
+                    if let url = view.url, !LodgePage.isLodge(url) { self.model?.update(self.tab) { $0.url = url } }
                     self.updateSecurity(of: view)
                     self.sendHistory(
                         self.history.urlChanged(
@@ -130,6 +134,12 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
         let browserInitiated = isMainFrame && nextLoadIsBrowserInitiated
         if isMainFrame { nextLoadIsBrowserInitiated = false }
+        if LodgePage.isLodge(navigationAction.request.url) {
+            #if DEBUG
+                Self.lodgeRefusals += 1
+            #endif
+            return (.cancel, preferences)
+        }
         gestures.record(
             Self.gestureRecord(of: navigationAction, browserInitiated: browserInitiated),
             url: navigationAction.request.url, isMainFrame: isMainFrame)
@@ -230,7 +240,13 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
         for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        model?.openPopup(from: tab, configuration: configuration)
+        guard !LodgePage.isLodge(navigationAction.request.url) else {
+            #if DEBUG
+                Self.lodgeRefusals += 1
+            #endif
+            return nil
+        }
+        return model?.openPopup(from: tab, configuration: configuration)
     }
 
     func webViewDidClose(_ webView: WKWebView) {

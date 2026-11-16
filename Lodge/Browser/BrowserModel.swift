@@ -236,12 +236,17 @@ final class BrowserModel {
     }
 
     /// A tab moved or opened here from another workspace: a loose tab on this workspace's store (in Anonymous a new
-    /// browser) with only the address and title, its web view built when a window shows it.
+    /// browser) with only the address and title, its web view built when a window shows it. A Lodge page already open
+    /// here is that tab instead.
     func receive(url: URL, title: String) -> TabID {
+        if let page = LodgePage(url: url), let shown = tab(showing: page) { return shown.id }
         let tab = BrowserTab(store: newTabStore(), url: url, title: title, isLive: false)
         changeTabs { $0.open(tab) }
         return tab.id
     }
+
+    /// The first tab of this workspace showing `page`: the dedupe key.
+    func tab(showing page: LodgePage) -> BrowserTab? { tabs.tabs.first { $0.lodgePage == page } }
 
     /// Closes the tab with every popup it opened, directly or through them, and their web views. A link's row stays,
     /// not open. A window showing one of them moves on first (`WindowPlacement.willClose`); closing the last tab
@@ -310,11 +315,12 @@ final class BrowserModel {
     }
 
     /// The tab's web view, building it (registry + TabController) when the tab has none, then marking the tab
-    /// live. Loads `tab.url` when it built the view and `load` is true. Nil for an unknown tab.
+    /// live. Loads `tab.url` when it built the view and `load` is true. Nil for an unknown tab, and for a tab on a
+    /// `lodge:` address, which never has one: the single guard keeping web views off Lodge pages.
     /// The ONLY place that sets `isLive = true`.
     @discardableResult
     func view(for id: TabID, configuration: WKWebViewConfiguration? = nil, load: Bool = true) -> LodgeWebView? {
-        guard let tab = tabs[id] else { return nil }
+        guard let tab = tabs[id], !LodgePage.isLodge(tab.url) else { return nil }
         if let view = registry.webView(for: id) { return view }
         let isRestoring = restoredTabs.remove(id) != nil
         let saved = savedStates.removeValue(forKey: id)
@@ -339,10 +345,14 @@ final class BrowserModel {
 
     /// Every change to `tabs` goes through here: a tab that closes loses everything kept for it. A new tab holds its
     /// store; a closed one lets go of it, and its web view goes, on the next main-actor turn, so a WebKit callback
-    /// running on it (a popup's opener) returns first.
+    /// running on it (a popup's opener) returns first. A change putting a `lodge:` address on a tab with a web view
+    /// is dropped whole.
     private func changeTabs(_ change: (inout TabList) -> Void) {
         let before = tabs.tabs.map(\.id)
-        change(&tabs)
+        var next = tabs
+        change(&next)
+        guard !next.tabs.contains(where: { putsLodgeOnAWebView(tabs[$0.id], $0) }) else { return }
+        tabs = next
         let kept = Set(before)
         for tab in tabs.tabs where !kept.contains(tab.id) { registry.attach(tab: tab.id, to: tab.store) }
         let dropped = before.filter { tabs[$0] == nil }
@@ -364,12 +374,17 @@ final class BrowserModel {
         }
     }
 
-    /// Writes to `tabs` only when the tab really changes, so unchanged KVO ticks do not redraw the window.
+    /// Writes to `tabs` only when the tab really changes, so unchanged KVO ticks do not redraw the window. A change
+    /// putting a `lodge:` address on a tab with a web view is dropped, so no web view hides behind a Lodge page.
     func update(_ id: TabID, _ change: (inout BrowserTab) -> Void) {
         guard let old = tabs[id] else { return }
         var tab = old
         change(&tab)
-        if tab != old { tabs.update(id) { $0 = tab } }
+        if tab != old, !putsLodgeOnAWebView(old, tab) { tabs.update(id) { $0 = tab } }
+    }
+
+    private func putsLodgeOnAWebView(_ old: BrowserTab?, _ new: BrowserTab) -> Bool {
+        old?.url != new.url && LodgePage.isLodge(new.url) && registry.webView(for: new.id) != nil
     }
 
     /// Keeps the tab's icon; in Anonymous a bookmark's tab also stores it in the bookmark, for when it has no tab.
@@ -543,10 +558,17 @@ final class BrowserModel {
 
     // MARK: Navigation
 
-    /// Loads `url` in the tab; false when the tab has no web view to load in.
+    /// Loads `url` in the tab; false, changing nothing, for an unknown tab or a `lodge:` address. The address is set
+    /// before the view is asked for, so a Lodge page's tab gets a fresh web view with no back entry, and drops its
+    /// link, so that pin or bookmark still leads to the Lodge page.
     func load(_ url: URL, in id: TabID) -> Bool {
+        guard let tab = tabs[id], !LodgePage.isLodge(url) else { return false }
+        let leavesLodge = LodgePage.isLodge(tab.url)
+        update(id) {
+            $0.url = url
+            if leavesLodge { $0.link = nil }
+        }
         guard let view = view(for: id, load: false) else { return false }
-        update(id) { $0.url = url }
         controllers[id]?.browserWillLoad()
         view.load(URLRequest(url: url))
         return true

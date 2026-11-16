@@ -118,15 +118,31 @@ private struct PageArea: View {
     var body: some View {
         ZStack {
             Color(nsColor: .textBackgroundColor)
-            if let tab {
-                WebViewHost(tab: tab.id)
-            }
-            if let tab, tab.hasCrashed {
-                CrashedPlaceholder(host: tab.url?.host(), reload: pane.reload)
-            } else if showsNewTab {
-                NewTabPlaceholder()
+            if let tab, LodgePage.isLodge(tab.url) {
+                // A `lodge:` address naming no page leaves the page area empty.
+                if let page = tab.lodgePage { LodgePagePlaceholder(page: page) }
+            } else {
+                if let tab {
+                    WebViewHost(tab: tab.id)
+                }
+                if let tab, tab.hasCrashed {
+                    CrashedPlaceholder(host: tab.url?.host(), reload: pane.reload)
+                } else if showsNewTab {
+                    NewTabPlaceholder()
+                }
             }
         }
+    }
+}
+
+/// A Lodge page's tab until its page is drawn here: the page's symbol and title.
+private struct LodgePagePlaceholder: View {
+    let page: LodgePage
+
+    var body: some View {
+        ContentUnavailableView(page.title, systemImage: page.symbol)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .textBackgroundColor))
     }
 }
 

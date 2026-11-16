@@ -481,6 +481,16 @@
         }
       }
     },
+    "History": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "瀏覽紀錄"
+          }
+        }
+      }
+    },
     "House": {
       "localizations": {
         "zh-Hant": {
@@ -707,6 +717,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "跑者"
+          }
+        }
+      }
+    },
+    "Settings": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定"
           }
         }
       }

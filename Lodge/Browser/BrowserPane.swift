@@ -71,11 +71,16 @@ struct BrowserPane {
         }
     }
 
-    /// Shows the link's open tab, else opens a fresh tab on the link's URL here, loaded unless `load` is false
-    /// (layout renders, so no request goes out). The tab keeps the link while it navigates.
+    /// Shows the link's open tab, else the tab showing its Lodge page, else opens a fresh tab on the link's URL
+    /// here, loaded unless `load` is false (layout renders, so no request goes out). The tab keeps the link while it
+    /// navigates on the web. A `lodge:` link naming no page opens nothing.
     func openLink(_ link: SavedLink, load: Bool = true) {
         if let tab = model.tabs.tab(forLink: link.id) {
             select(tab.id)
+        } else if let page = LodgePage(url: link.url), let tab = model.tab(showing: page) {
+            select(tab.id)
+        } else if LodgePage.isLodge(link.url), LodgePage(url: link.url) == nil {
+            return
         } else {
             open(model.tab(for: link), load: load)
         }
@@ -108,6 +113,18 @@ struct BrowserPane {
         }
     }
 
+    /// Selects this workspace's tab showing `page` (another window showing it comes forward, D4); else opens a new
+    /// tab on `page.url` (load: false) shown here, then closes the blank tab this window was showing.
+    func open(_ page: LodgePage) {
+        let blank = selectedBlankTab?.id
+        if let tab = model.tab(showing: page) {
+            select(tab.id)
+        } else {
+            open(BrowserTab(store: model.newTabStore(), url: page.url), load: false)
+        }
+        if let blank, selectedID != blank { close(blank) }
+    }
+
     /// Appends the tab to the workspace and shows it in this window.
     private func open(_ tab: BrowserTab, load: Bool) {
         model.append(tab, load: load)
@@ -115,7 +132,16 @@ struct BrowserPane {
     }
 
     private func openLoose(_ url: URL) {
+        guard !routesToLodge(url) else { return }
         open(BrowserTab(store: model.newTabStore(), url: url), load: true)
+    }
+
+    /// The routing choke point (C1): a Lodge page's address opens that page, any other `lodge:` address nothing.
+    /// True when `url` was a `lodge:` address and so is dealt with.
+    private func routesToLodge(_ url: URL) -> Bool {
+        guard LodgePage.isLodge(url) else { return false }
+        if let page = LodgePage(url: url) { open(page) }
+        return true
     }
 
     // MARK: Navigation
@@ -133,6 +159,7 @@ struct BrowserPane {
 
     /// Loads `url` in the tab; when the tab has no web view to load in, opens a loose tab on it instead.
     private func load(_ url: URL, in id: TabID) {
+        guard !routesToLodge(url) else { return }
         if !model.load(url, in: id) { openLoose(url) }
     }
 
@@ -263,9 +290,9 @@ struct BrowserPane {
 
     // MARK: Zoom
 
-    /// The shown tab's zoom, nil when it has no page.
+    /// The shown tab's zoom, nil when it has no web page.
     private var selectedPageZoom: Double? {
-        guard let id = selectedID, model.tabs[id]?.url != nil else { return nil }
+        guard let id = selectedID, let url = model.tabs[id]?.url, !LodgePage.isLodge(url) else { return nil }
         return model.zoom[id] ?? PageZoom.actual
     }
 

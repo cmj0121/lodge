@@ -390,7 +390,13 @@ private enum IconContent {
 
     init(item: SidebarItem, favicon: NSImage?) {
         guard let tab = item.tab else {
-            self = favicon.map { .favicon($0) } ?? .letter(item.title.first.map { String($0).uppercased() } ?? "")
+            if let favicon {
+                self = .favicon(favicon)
+            } else if case .link(let link, _, _) = item, let page = LodgePage(url: link.url) {
+                self = .symbol(page.symbol)
+            } else {
+                self = .letter(item.title.first.map { String($0).uppercased() } ?? "")
+            }
             return
         }
         if tab.hasCrashed {
@@ -400,7 +406,7 @@ private enum IconContent {
         } else if let favicon {
             self = .favicon(favicon)
         } else {
-            self = .symbol(tab.url == nil ? "square.dashed" : "globe")
+            self = .symbol(tab.lodgePage?.symbol ?? (tab.url == nil ? "square.dashed" : "globe"))
         }
     }
 }

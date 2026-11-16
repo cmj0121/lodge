@@ -47,6 +47,7 @@
             checkShownElsewhere(in: directory)
             checkStepSkipsShownElsewhere()
             checkExternalLinks()
+            checkLodgePages()
             renderSettings(to: directory.appending(path: "layout-settings.png"))
             renderHistory(to: directory.appending(path: "layout-history.png"))
             renderDownloads(in: directory)
@@ -816,6 +817,140 @@
                 "A link opens one new tab in the last active window, all windows forward",
                 linkTabs.count == 1 && !before.contains(linkTabs[0].id) && after.contains(linkTabs[0].id)
                     && last.map { coordinator.selections.shown(in: $0.id) } == linkTabs[0].id && forward == 1)
+            settle()
+        }
+
+        /// Lodge pages (D1, C5), printed ok or FAILED for each: a link click, a cmd-click, `window.open`, a redirect
+        /// and an iframe to `lodge://settings` from a web page are refused and open no tab; typed, prompt, pin,
+        /// bookmark and received opens of a page land on its one tab; a Lodge tab never gets a web view, and none
+        /// slips under a web tab's view; loading a web address in a Lodge tab drops its link. Pages are inline HTML
+        /// and `about:blank`, so no request goes out; bringing forward is a hook, so nothing activates.
+        private static func checkLodgePages() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            coordinator.bringForwardHook = { _ in }
+            let window = coordinator.windows[0]
+            window.locationPrompt = nil
+            let hostWindow = host(root(coordinator, window), size: NSSize(width: 900, height: 600))
+            defer { hostWindow.close() }
+            let pane = coordinator.pane(for: window)
+            let model = pane.model
+            func pages(_ page: LodgePage, in model: BrowserModel) -> [BrowserTab] {
+                model.tabs.tabs.filter { $0.lodgePage == page }
+            }
+
+            let blank = pane.selectedID
+            pane.load("lodge://settings")
+            guard let settings = model.tab(showing: .settings) else { return report("A typed Lodge address opens", false) }
+            report(
+                "A typed Lodge address opens its page in place of the blank tab",
+                model.tabs.tabs.map(\.id) == [settings.id] && pane.selectedID == settings.id && blank != settings.id
+                    && settings.url == LodgePage.settings.url)
+
+            window.locationPrompt = .newTab
+            pane.submitLocation("about:blank")
+            guard let web = pane.selected, web.id != settings.id, let view = model.view(for: web.id, load: false) else {
+                return report("A web page cannot reach a Lodge page", false)
+            }
+            let vectors = [
+                ("A link click to lodge:// is refused", "<a id=a href='lodge://settings'>x</a>", "document.getElementById('a').click()"),
+                (
+                    "A cmd-click to lodge:// is refused", "<a id=a href='lodge://settings'>x</a>",
+                    "document.getElementById('a').dispatchEvent(new MouseEvent('click', {metaKey: true, bubbles: true, cancelable: true}))"
+                ),
+                ("window.open of lodge:// is refused", "<p>x</p>", "window.open('lodge://settings')"),
+                ("A redirect to lodge:// is refused", "<p>x</p>", "location.replace('lodge://settings')"),
+                ("An iframe of lodge:// is refused", "<p>x</p>", "document.body.appendChild(Object.assign(document.createElement('iframe'), {src: 'lodge://settings'}))"),
+            ]
+            for (index, (name, html, script)) in vectors.enumerated() {
+                let marker = "vector-\(index)"
+                view.loadHTMLString("<!doctype html><title>\(marker)</title><body>\(html)</body>", baseURL: nil)
+                let deadline = Date.now.addingTimeInterval(5)
+                while view.title != marker || view.isLoading, Date.now < deadline { settle(0.05) }
+                let count = model.tabs.tabs.count
+                let refusals = TabController.lodgeRefusals
+                view.evaluateJavaScript(script)
+                settle(0.5)
+                report(
+                    name,
+                    TabController.lodgeRefusals > refusals && model.tabs.tabs.count == count
+                        && pages(.settings, in: model).map(\.id) == [settings.id]
+                        && !LodgePage.isLodge(model.tabs[web.id]?.url) && model.registry.webView(for: web.id) === view)
+            }
+
+            let webURL = model.tabs[web.id]?.url
+            pane.load("LODGE://SETTINGS")
+            let typedAgain = pane.selectedID == settings.id && model.tabs[web.id]?.url == webURL
+                && model.registry.webView(for: web.id) === view
+            pane.select(web.id)
+            window.locationPrompt = .current(web.id)
+            pane.submitLocation("lodge://settings/")
+            let prompted = pane.selectedID == settings.id && model.tabs[web.id]?.url == webURL
+            let pin = model.addPin(LodgePage.settings.url, title: "Settings")
+            pane.select(web.id)
+            pane.openLink(pin, load: false)
+            let pinned = pane.selectedID == settings.id
+            model.update(web.id) { $0.url = LodgePage.history.url }
+            let guarded = model.tabs[web.id]?.url == webURL
+            report(
+                "Typed, prompt and pin opens of a page select its one tab",
+                typedAgain && prompted && pinned && pages(.settings, in: model).count == 1)
+            report("A web tab's address never turns into a Lodge page", guarded && model.tab(showing: .history) == nil)
+
+            pane.open(.history)
+            guard let marked = model.tab(showing: .history) else { return report("Bookmark opens select one tab", false) }
+            model.addLink(.bookmarks, from: marked.id)
+            guard let bookmark = model.library.links(on: .bookmarks).first(where: { $0.url == LodgePage.history.url })
+            else { return report("Bookmark opens select one tab", false) }
+            model.close(marked.id)
+            pane.openLink(bookmark, load: false)
+            pane.openLink(bookmark, load: false)
+            pane.load("lodge://history")
+            coordinator.open(.history)
+            guard let history = model.tab(showing: .history) else { return report("Bookmark opens select one tab", false) }
+            report(
+                "Bookmark and menu opens of a page select its one tab",
+                pages(.history, in: model).count == 1 && history.link == bookmark.id && pane.selectedID == history.id)
+
+            let made: Workspace? = try? coordinator.create(name: "Work", symbol: "briefcase")
+            coordinator.switchTo(Workspace.defaultID)
+            guard let work = made, let workModel = coordinator.model(for: work.id) else {
+                return report("Received pages dedupe to one tab", false)
+            }
+            let first = coordinator.open(tab: settings.id, in: work.id)
+            let second = coordinator.open(tab: settings.id, in: work.id)
+            report(
+                "Received pages dedupe to one tab",
+                first && second && pages(.settings, in: workModel).count == 1
+                    && model.receive(url: LodgePage.settings.url, title: "") == settings.id
+                    && pages(.settings, in: model).count == 1)
+
+            let lodgeTabs = (model.tabs.tabs + workModel.tabs.tabs).filter { LodgePage.isLodge($0.url) }
+            for owner in [model, workModel] {
+                for tab in owner.tabs.tabs where LodgePage.isLodge(tab.url) { owner.view(for: tab.id) }
+            }
+            pane.select(settings.id)
+            settle()
+            report(
+                "A Lodge tab never gets a web view",
+                lodgeTabs.count == 3
+                    && lodgeTabs.allSatisfy { coordinator.registry.webView(for: $0.id) == nil && !$0.isLive }
+                    && model.tabs[settings.id]?.isLive == false)
+
+            pane.select(history.id)
+            window.locationPrompt = .current(history.id)
+            pane.submitLocation("about:blank#left")
+            settle()
+            let left = model.tabs[history.id]
+            report(
+                "Loading a web address in a Lodge tab drops its link",
+                left?.link == nil && left?.lodgePage == nil && left?.canGoBack == false
+                    && model.registry.webView(for: history.id) != nil && pane.selectedID == history.id)
+            pane.openLink(bookmark, load: false)
+            report(
+                "Its bookmark still opens the Lodge page",
+                model.tab(showing: .history).map { $0.id != history.id && $0.link == bookmark.id } == true)
             settle()
         }
 

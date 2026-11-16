@@ -33,6 +33,7 @@ public struct BrowserTab: Identifiable, Hashable, Sendable {
     }
 
     public var displayTitle: String {
+        if let lodgePage { return lodgePage.title }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return trimmed }
         if let host = url?.host(), !host.isEmpty { return host }

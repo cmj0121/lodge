@@ -354,6 +354,22 @@ extension WorkspaceCoordinator: WindowPlacement {
         return window
     }
 
+    /// ⌘,, the workspace-bar gear, Show All History: `open(page)` in `commandPane`, or in a new window (its location
+    /// prompt closed) when there is none; the window showing the page comes forward.
+    func open(_ page: LodgePage) {
+        let window: WindowState
+        if let last = lastActiveBrowserWindow {
+            window = last
+        } else {
+            window = newWindow()
+            window.locationPrompt = nil
+        }
+        let pane = pane(for: window)
+        pane.open(page)
+        let shown = pane.model.tab(showing: page).flatMap { selections.window(showing: $0.id) }.flatMap(self.window(for:))
+        bringForward(shown ?? window)
+    }
+
     /// Brings the window to the front, key, with the app active.
     func bringForward(_ window: WindowState) {
         #if DEBUG
