@@ -122,7 +122,7 @@ private struct PageArea: View {
             if let tab, LodgePage.isLodge(tab.url) {
                 // A `lodge:` address naming no page leaves the page area empty.
                 switch tab.lodgePage {
-                case .settings: SettingsView()
+                case .settings: SettingsView(coordinator: coordinator)
                 case .history: HistoryView(model: coordinator.history)
                 case nil: EmptyView()
                 }

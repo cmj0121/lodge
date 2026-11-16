@@ -5,8 +5,10 @@ import os
 
 /// Settings, drawn in its tab's page card at `lodge://settings`. `DownloadSettingsModel` writes each change to
 /// UserDefaults at once, and `DownloadManager` reads them at each download, so they apply to the next one; every
-/// Settings tab shows the one app-wide model, so a change shows at once in each.
+/// Settings tab shows the one app-wide model, so a change shows at once in each. Search picks Default's engine, kept
+/// in the session with Default's content; it applies to the next search.
 struct SettingsView: View {
+    let coordinator: WorkspaceCoordinator
     @Environment(\.downloadSettings) private var injected
     /// Bumped after the folder panel closes, so the menu redraws even when the selection did not change.
     @State private var menuRevision = 0
@@ -35,6 +37,16 @@ struct SettingsView: View {
                                 .disabled(defaultBrowser.isLodge == nil || defaultBrowser.isMaking)
                         }
                     }
+                }
+                Section("Search") {
+                    Picker("Search with", selection: defaultEngine) {
+                        ForEach(coordinator.searchCatalog(for: Workspace.defaultID).available) { engine in
+                            Text(verbatim: engine.name).tag(engine.id)
+                        }
+                    }
+                    Text("Default and the workspaces that follow it search with this engine. Anonymous uses its own.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
                 Section("Downloads") {
                     Picker("Save downloads to:", selection: option) {
@@ -96,6 +108,16 @@ struct SettingsView: View {
         // The user may have changed the default browser in System Settings meanwhile.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             defaultBrowser.refresh()
+        }
+    }
+
+    /// The engine Default searches with now, so a choice that no longer resolves shows its fallback. The menu offers
+    /// only engines Default can pick.
+    private var defaultEngine: Binding<String> {
+        Binding {
+            coordinator.searchCatalog(for: Workspace.defaultID).engine.id
+        } set: { id in
+            try? coordinator.chooseSearchEngine(id, for: Workspace.defaultID)
         }
     }
 

@@ -2,11 +2,13 @@ import LodgeKit
 import SwiftUI
 
 /// What the workspace sheet is open for (D8): a new workspace asks for a name, an icon and a colour, a rename for
-/// the name alone, a change of icon for the icon and colour.
+/// the name alone, a change of icon for the icon and colour, a search engine for the engine the workspace searches
+/// with.
 enum WorkspaceEditor: Equatable {
     case create
     case rename(UUID)
     case changeIcon(UUID)
+    case search(UUID)
 }
 
 /// The workspace sheet: a card over the dimmed window, as the location prompt is. Esc, Cancel or a click on the
@@ -29,11 +31,14 @@ struct WorkspaceSheet: View {
         .background(EscapeKeyCatcher(action: close))
     }
 
-    /// Whether the sheet offers the icon grid and colour row: New Workspace and Change Icon do, Rename does not, and
-    /// nothing is offered for Anonymous, which keeps its icon and colour.
+    /// Whether the sheet offers the icon grid and colour row: New Workspace and Change Icon do, Rename and Search
+    /// Engine do not, and nothing is offered for Anonymous, which keeps its icon and colour.
     static func offersIconAndColor(_ editor: WorkspaceEditor, target: Workspace?) -> Bool {
         if target?.kind == .anonymous { return false }
-        if case .rename = editor { return false } else { return true }
+        switch editor {
+        case .create, .changeIcon: return true
+        case .rename, .search: return false
+        }
     }
 }
 
@@ -51,20 +56,27 @@ struct WorkspaceSheetCard: View {
     @State private var isNameEdited = false
     /// What the coordinator refused on commit; cleared by the next edit.
     @State private var refused: WorkspaceList.EditError?
+    /// The engine picked in Search Engine mode; nil is Follow Default, offered for a custom workspace only.
+    @State private var engine: String?
     @FocusState private var isNameFocused: Bool
 
     private var target: Workspace? {
         switch editor {
         case .create: nil
-        case .rename(let id), .changeIcon(let id): coordinator.workspaces[id]
+        case .rename(let id), .changeIcon(let id), .search(let id): coordinator.workspaces[id]
         }
     }
 
+    private var asksEngine: Bool {
+        if case .search = editor { true } else { false }
+    }
+
     /// Anonymous keeps its name, icon and colour; a sheet opened for it anyway says so and offers nothing to change.
-    private var isFixed: Bool { target?.kind == .anonymous }
+    /// Its search engine can still be picked.
+    private var isFixed: Bool { target?.kind == .anonymous && !asksEngine }
 
     private var asksName: Bool {
-        if isFixed { return false }
+        if isFixed || asksEngine { return false }
         if case .changeIcon = editor { return false } else { return true }
     }
 
@@ -91,6 +103,7 @@ struct WorkspaceSheetCard: View {
         case .create: String(localized: "New Workspace")
         case .rename: String(localized: "Rename Workspace")
         case .changeIcon: String(localized: "Change Icon")
+        case .search: String(localized: "Search Engine")
         }
     }
 
@@ -99,6 +112,7 @@ struct WorkspaceSheetCard: View {
         case .create: String(localized: "Create")
         case .rename: String(localized: "Rename")
         case .changeIcon: String(localized: "Change Icon")
+        case .search: String(localized: "Done")
         }
     }
 
@@ -121,6 +135,13 @@ struct WorkspaceSheetCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if asksName { nameField }
+                if asksEngine, let target {
+                    EnginePicker(
+                        catalog: coordinator.searchCatalog(for: target.id),
+                        followDefault: target.kind == .custom
+                            ? coordinator.searchCatalog(for: Workspace.defaultID).engine : nil,
+                        selection: $engine)
+                }
                 if asksSymbol {
                     SymbolGrid(selection: $symbol, focusesOnAppear: !asksName)
                     ColorRow(selection: $color)
@@ -208,9 +229,16 @@ struct WorkspaceSheetCard: View {
         name = target?.name ?? ""
         symbol = target?.symbol ?? WorkspaceSymbols.defaultForNew
         color = target?.color
+        engine = target.flatMap { Self.pickedEngine(coordinator.searchCatalog(for: $0.id)) }
         refused = nil
         isNameEdited = false
         isNameFocused = asksName
+    }
+
+    /// What the picker starts on: Follow Default, else the engine the workspace searches with now, so a choice that
+    /// no longer resolves shows its fallback rather than a stale id.
+    private static func pickedEngine(_ catalog: SearchCatalog) -> String? {
+        catalog.followsDefault ? nil : catalog.engine.id
     }
 
     private func commit() {
@@ -224,10 +252,53 @@ struct WorkspaceSheetCard: View {
             case .changeIcon(let id):
                 try coordinator.setSymbol(id, symbol)
                 try coordinator.setColor(id, color)
+            case .search(let id):
+                chooseEngine(for: id)
             }
             close()
         } catch {
             refused = error
+        }
+    }
+
+    /// Stores the picked engine only when it differs from what the picker started on, so a choice kept for an engine
+    /// that no longer resolves is not overwritten by its fallback; the picker offers only engines the workspace can
+    /// pick.
+    private func chooseEngine(for id: UUID) {
+        guard engine != Self.pickedEngine(coordinator.searchCatalog(for: id)) else { return }
+        try? coordinator.chooseSearchEngine(engine, for: id)
+    }
+}
+
+/// The engines a workspace can search with, in catalog order; a custom workspace also offers Follow Default, named
+/// with the engine Default searches with now. Engine names are brand names, shown as they are.
+private struct EnginePicker: View {
+    let catalog: SearchCatalog
+    /// Default's engine, when the workspace can follow it; nil for Anonymous.
+    let followDefault: SearchEngine?
+    @Binding var selection: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Search with")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Picker("Search with", selection: $selection) {
+                if let followDefault {
+                    Text("Follow Default (\(followDefault.name))").tag(String?.none)
+                    Divider()
+                }
+                ForEach(catalog.available) { engine in
+                    Text(verbatim: engine.name).tag(Optional(engine.id))
+                }
+            }
+            .labelsHidden()
+            .accessibilityLabel("Search with")
+            Text("Only searches made from now on use it; open pages stay as they are.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
