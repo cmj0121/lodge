@@ -1,0 +1,26 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "Your everyday browsing, signed in and remembered.": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日常瀏覽，保留登入狀態與紀錄。"
+          }
+        }
+      }
+    },
+    "Pages here keep no history, and each tab's cookies are gone when it closes.": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這裡不保留瀏覽紀錄，每個分頁關閉後 cookies 隨即清除。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

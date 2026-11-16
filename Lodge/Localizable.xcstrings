@@ -1,0 +1,16 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "Type an address or a search in the address bar.": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在網址列輸入網址或搜尋內容。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

@@ -71,6 +71,20 @@ public struct Workspace: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+extension Workspace {
+    /// One sentence on what Default or Anonymous is for; nil for a custom workspace.
+    public var summary: String? {
+        switch kind {
+        case .default: String(localized: "Your everyday browsing, signed in and remembered.", bundle: .module)
+        case .anonymous:
+            String(
+                localized: "Pages here keep no history, and each tab's cookies are gone when it closes.",
+                bundle: .module)
+        case .custom: nil
+        }
+    }
+}
+
 /// The workspaces in bar order. Default is always first and cannot be renamed, moved or removed; Anonymous is
 /// always last and cannot be changed at all.
 public struct WorkspaceList: Equatable, Sendable {

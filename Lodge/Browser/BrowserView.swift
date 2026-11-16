@@ -110,6 +110,7 @@ private struct PageCard: View {
 
 private struct PageArea: View {
     let pane: BrowserPane
+    @Environment(WorkspaceCoordinator.self) private var coordinator
 
     private var tab: BrowserTab? { pane.selected }
     /// No tab, or a blank one with nothing on its way.
@@ -124,17 +125,31 @@ private struct PageArea: View {
             if let tab, tab.hasCrashed {
                 CrashedPlaceholder(host: tab.url?.host(), reload: pane.reload)
             } else if showsNewTab {
-                NewTabPlaceholder()
+                let workspace = coordinator.workspaces[pane.model.workspaceID]
+                NewTabPlaceholder(name: workspace?.name ?? "", summary: workspace?.summary)
             }
         }
     }
 }
 
 private struct NewTabPlaceholder: View {
+    let name: String
+    let summary: String?
+
     var body: some View {
-        ContentUnavailableView(
-            "New Tab", systemImage: "square.on.square.dashed",
-            description: Text("Type an address or a search in the address bar."))
+        ContentUnavailableView {
+            Label {
+                Text(verbatim: name)
+            } icon: {
+                Image(systemName: "square.on.square.dashed")
+            }
+        } description: {
+            if let summary {
+                Text(verbatim: summary)
+            } else {
+                Text("Type an address or a search in the address bar.")
+            }
+        }
         // Covers the empty web view, which keeps the system's look while the window may be dark.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .textBackgroundColor))
