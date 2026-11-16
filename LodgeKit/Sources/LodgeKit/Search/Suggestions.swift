@@ -157,12 +157,15 @@ public enum SuggestionRanker {
     /// The candidates that match `words` (already folded), closest first, then most recent, then most used; the
     /// given order breaks the remaining ties.
     private static func ordered(_ candidates: [SuggestionCandidate], matching words: String) -> [SuggestionCandidate] {
-        candidates.enumerated()
-            .compactMap { index, candidate in match(words, candidate).map { (candidate, $0, index) } }
-            .sorted { lhs, rhs in
-                lhs.1 != rhs.1 ? lhs.1 < rhs.1 : comesFirst(lhs.0, rhs.0, otherwise: lhs.2 < rhs.2)
-            }
-            .map(\.0)
+        typealias Ranked = (candidate: SuggestionCandidate, match: Match, index: Int)
+        let ranked: [Ranked] = candidates.enumerated().compactMap { index, candidate in
+            match(words, candidate).map { (candidate, $0, index) }
+        }
+        return ranked.sorted { (lhs: Ranked, rhs: Ranked) -> Bool in
+            lhs.match != rhs.match
+                ? lhs.match < rhs.match : comesFirst(lhs.candidate, rhs.candidate, otherwise: lhs.index < rhs.index)
+        }
+        .map(\.candidate)
     }
 
     static func match(_ words: String, _ candidate: SuggestionCandidate) -> Match? {

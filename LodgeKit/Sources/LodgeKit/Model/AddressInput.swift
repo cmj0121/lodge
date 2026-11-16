@@ -11,14 +11,37 @@ public enum AddressInput {
     public static func url(from text: String, engine: SearchEngine = .duckDuckGo) -> URL? {
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { return nil }
-        if input.lowercased().hasPrefix(LodgePage.scheme + ":") { return URL(string: input).flatMap(LodgePage.init)?.url }
+        switch reading(input) {
+        case .address(let url): return url
+        case .search: return engine.url(for: input)
+        }
+    }
+
+    /// Whether `url(from:)` would search for `text` rather than go to an address. Blank text gives false.
+    public static func isSearch(_ text: String) -> Bool {
+        let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty, case .search = reading(input) else { return false }
+        return true
+    }
+
+    private enum Reading {
+        /// nil for a `lodge:` address that names no page.
+        case address(URL?)
+        case search
+    }
+
+    /// What trimmed, non-blank `input` is, as `url(from:)` reads it.
+    private static func reading(_ input: String) -> Reading {
+        if input.lowercased().hasPrefix(LodgePage.scheme + ":") {
+            return .address(URL(string: input).flatMap(LodgePage.init)?.url)
+        }
         if let url = URL(string: input), let scheme = url.scheme?.lowercased(), schemes.contains(scheme) {
-            return url
+            return .address(url)
         }
         if !input.contains(where: \.isWhitespace), let url = hostLikeURL(input) {
-            return url
+            return .address(url)
         }
-        return engine.url(for: input)
+        return .search
     }
 
     private static func hostLikeURL(_ input: String) -> URL? {

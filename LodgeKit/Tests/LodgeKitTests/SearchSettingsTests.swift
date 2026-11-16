@@ -38,6 +38,69 @@ import Testing
         #expect(refusal("X", "https:///?q=%s") == .invalidAddress)
     }
 
+    @Test func everyBuiltInValidates() {
+        for engine in SearchEngine.builtIns {
+            #expect((try? SearchEngine.validate(name: engine.name, template: engine.template).get()) != nil)
+        }
+    }
+
+    @Test(arguments: [
+        "https://example.org%s", "https://%s.example.org/?q=x", "https://example.org/%s", "https://example.org/s/%s?q=x",
+        "https://example.org/?q=x#%s", "https://example.org/?%s", "https://example.org/?%s=x",
+        "https://example.org/?q=site:%s", "https://example.org/?q=%s&again=%s", "https://%s@example.org/?q=x",
+        "https://example.org/?q=LODGESEARCHWORDS&r=%s",
+    ])
+    func validateRefusesAPlaceholderOutsideOneWholeQueryValue(_ template: String) {
+        #expect(SearchEngine.validate(name: "X", template: template).map(\.template) == .failure(.misplacedPlaceholder))
+    }
+
+    @Test(arguments: [
+        "https://example.org/?q=%s", "http://example.org/s?lang=en&q=%s", "https://example.org/?q=%s#top",
+        "https://example.org:8443/find?term=%s&x=1",
+    ])
+    func validateAcceptsThePlaceholderAsAQueryValue(_ template: String) {
+        #expect(SearchEngine.validate(name: "X", template: template).map(\.template) == .success(template))
+    }
+
+    @Test func urlNeverLeavesTheTemplatesHostOrWeb() {
+        let glued = SearchEngine(id: "g", name: "G", template: "https://example.org%s")
+        #expect(glued.url(for: "@evil.com") == nil)
+        let inUser = SearchEngine(id: "u", name: "U", template: "https://%s@example.org/?q=x")
+        #expect(inUser.url(for: "a:b@evil.com/").map { $0.host() == "example.org" } ?? true)
+        #expect(SearchEngine(id: "j", name: "J", template: "javascript:%s").url(for: "alert(1)") == nil)
+        #expect(SearchEngine(id: "f", name: "F", template: "file:///%s").url(for: "etc/passwd") == nil)
+        #expect(SearchEngine(id: "d", name: "D", template: "data:text/html,%s").url(for: "hi") == nil)
+        let mine = SearchEngine(id: "m", name: "M", template: "https://Example.org/?q=%s")
+        #expect(mine.url(for: "@evil.com/x:y")?.host() == "Example.org")
+    }
+
+    @Test(arguments: [
+        "https://bücher.example/?q=%s", "https://xn--bcher-kva.example/?q=%s", "https://XN--BCHER-KVA.example/?q=%s",
+        "https://B%C3%BCcher.example/?q=%s", "https://BÜCHER.example/s?q=%s",
+    ])
+    func urlKeepsAnInternationalHost(_ template: String) throws {
+        #expect(SearchEngine.validate(name: "X", template: template).map(\.template) == .success(template))
+        let engine = SearchEngine(id: "i", name: "I", template: template)
+        let url = try #require(engine.url(for: "swift 6"))
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        #expect(components?.host?.lowercased() == "bücher.example")
+        #expect(components?.query == "q=swift 6")
+        #expect(engine.url(for: "@evil.com") != nil)
+        let glued = SearchEngine(id: "g", name: "G", template: "https://bücher.example%s")
+        #expect(glued.url(for: "@evil.com") == nil)
+    }
+
+    @Test func aResultsPageOnAnInternationalHostMatchesEverySpelling() {
+        let engine = SearchEngine(id: "i", name: "I", template: "https://bücher.example/?q=%s")
+        let punycode = SearchEngine(id: "p", name: "P", template: "https://xn--bcher-kva.example/?q=%s")
+        for page in ["https://xn--bcher-kva.example/?q=swift", "https://bücher.example/?q=swift"] {
+            #expect(SearchResultsPage.match(URL(string: page)!, engines: [engine])?.words == "swift")
+            #expect(SearchResultsPage.match(URL(string: page)!, engines: [punycode])?.words == "swift")
+        }
+        let search = engine.url(for: "swift concurrency")!
+        #expect(SearchResultsPage.match(search, engines: [engine])?.words == "swift concurrency")
+    }
+
     @Test func addressInputSearchesWithTheGivenEngine() {
         let bing = SearchEngine.builtIns[2]
         #expect(AddressInput.url(from: " lodge search ", engine: bing)?.absoluteString
@@ -421,12 +484,14 @@ import Testing
 
     @Test func everyRefusalHasItsOwnMessage() {
         let errors: [SearchEngine.EditError] = [
-            .emptyName, .missingPlaceholder, .unsupportedScheme, .invalidAddress, .builtInIsFixed, .unknown("x"),
+            .emptyName, .missingPlaceholder, .misplacedPlaceholder, .unsupportedScheme, .invalidAddress, .builtInIsFixed,
+            .unknown("x"),
         ]
         let messages = errors.map(\.message)
         #expect(Set(messages).count == errors.count)
         #expect(messages.allSatisfy { !$0.isEmpty })
         #expect(SearchEngine.EditError.missingPlaceholder.message.contains("%s"))
+        #expect(SearchEngine.EditError.misplacedPlaceholder.message.contains("%s"))
     }
 }
 
@@ -509,6 +574,59 @@ import Testing
           ]
         }
         """
+
+    /// A session file edited by hand: Default's engines include ones `validate` refuses, and both workspaces choose
+    /// one of them.
+    private static let tampered = """
+        {
+          "pendingDeletions" : [],
+          "version" : 4,
+          "windows" : [{ "activeWorkspace" : "00000000-0000-0000-0000-000000000000" }],
+          "workspaces" : [
+            {
+              "content" : {
+                "bookmarks" : { "children" : [], "id" : "F0000000-0000-0000-0000-000000000001", "isExpanded" : true, "title" : "Bookmarks" },
+                "pins" : [],
+                "search" : {
+                  "choice" : "E1",
+                  "engines" : [
+                    { "id" : "E1", "name" : "Script", "template" : "javascript:%s" },
+                    { "id" : "E2", "name" : "Glued", "template" : "https://x.org%s" },
+                    { "id" : "E3", "name" : "File", "template" : "file:///%s" },
+                    { "id" : "E4", "name" : "Data", "template" : "data:text/html,%s" },
+                    { "id" : "E5", "name" : "Fine", "template" : "https://fine.example/?q=%s" }
+                  ]
+                },
+                "tabs" : []
+              },
+              "workspace" : { "id" : "00000000-0000-0000-0000-000000000000", "kind" : "default", "name" : "Default", "symbol" : "square.stack.3d.up" }
+            },
+            {
+              "content" : {
+                "bookmarks" : { "children" : [], "id" : "F0000000-0000-0000-0000-000000000002", "isExpanded" : true, "title" : "Bookmarks" },
+                "pins" : [],
+                "search" : { "choice" : "E2" },
+                "tabs" : []
+              },
+              "workspace" : { "id" : "D0000000-0000-0000-0000-000000000001", "kind" : "custom", "name" : "Work", "symbol" : "briefcase" }
+            }
+          ]
+        }
+        """
+
+    @Test func enginesThatValidateRefusesAreDroppedFromAFileAndTheirChoicesFallBack() throws {
+        let decoded = try SessionSnapshot.decode(Data(Self.tampered.utf8))
+        let settings = SearchSettings(
+            Dictionary(uniqueKeysWithValues: decoded.workspaces.map { ($0.workspace.id, $0.content.search) }))
+        let work = try #require(decoded.workspaceList[UUID(uuidString: "D0000000-0000-0000-0000-000000000001")!])
+        let fine = SearchEngine(id: "E5", name: "Fine", template: "https://fine.example/?q=%s")
+        #expect(settings[Workspace.defaultID].engines == [fine])
+        #expect(settings.catalog(for: .default).available == SearchEngine.builtIns + [fine])
+        #expect(settings.catalog(for: .default).engine == .duckDuckGo)
+        #expect(settings.catalog(for: .default).choice == "E1")
+        #expect(settings.catalog(for: work).engine == .duckDuckGo)
+        #expect(settings.catalog(for: work).choice == "E2")
+    }
 
     @Test func anOlderFileWithAnUnknownChoiceFallsBackAndAcceptsNewEngines() throws {
         let decoded = try SessionSnapshot.decode(Data(Self.older.utf8))

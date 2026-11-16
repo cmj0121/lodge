@@ -711,6 +711,16 @@
         }
       }
     },
+    "Put %@ only once, as a whole query value after ?name= or &name=.": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 只能出現一次，並作為查詢參數的完整值，放在 ?名稱= 或 &名稱= 之後。"
+          }
+        }
+      }
+    },
     "Put %@ where your search words go.": {
       "localizations": {
         "zh-Hant": {
