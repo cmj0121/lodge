@@ -26,7 +26,8 @@ final class WindowState {
     var isShortcutHelpVisible = false
     /// The floating location prompt, open for a new tab or for the tab it loads in; nil when closed.
     var locationPrompt: LocationPrompt?
-    /// The workspace sheet, open to create a workspace or to rename one or change its icon; nil when closed.
+    /// The workspace sheet, open to create a workspace or to rename one, change its icon or pick its search engine;
+    /// nil when closed.
     var workspaceEditor: WorkspaceEditor?
 
     init(id: WindowID = WindowID()) {

@@ -7,11 +7,13 @@ import WebKit
 
 /// Owns the workspaces, one `BrowserModel` per workspace (built when first needed, until then its saved content
 /// waits dormant), the browser windows and the tab each shows (`WindowSelections`: every window is on the active
-/// workspace), the shared web view registry, and the session they are saved to.
+/// workspace), every workspace's search settings, the shared web view registry, and the session they are saved to.
 @MainActor
 @Observable
 final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     private(set) var workspaces: WorkspaceList
+    /// Every workspace's engines and choice, read from the session's content and written back with it.
+    private(set) var search: SearchSettings
     /// Which tab each browser window shows, and the active workspace.
     private(set) var selections: WindowSelections
     var activeWorkspaceID: UUID { selections.active }
@@ -98,6 +100,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         lastActiveBrowserWindow = states.first
         dormant = Dictionary(
             (snapshot?.workspaces ?? []).map { ($0.workspace.id, $0.content) }, uniquingKeysWith: { first, _ in first })
+        search = SearchSettings(dormant.mapValues(\.search))
         pendingDeletions = snapshot?.pendingDeletions ?? []
         self.session = session
         self.appDirectory = appDirectory
@@ -178,8 +181,9 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
                     let selected = (selections.remembered(in: workspace.id) ?? model.savedSelection)
                     return model.content(selectedTab: selected.flatMap { model.tabs[$0] != nil ? $0 : nil })
                 }
-                return SessionSnapshot.WorkspaceSnapshot(
-                    workspace: workspace, content: content ?? dormant[workspace.id] ?? .empty)
+                var stored = content ?? dormant[workspace.id] ?? .empty
+                stored.search = search[workspace.id]
+                return SessionSnapshot.WorkspaceSnapshot(workspace: workspace, content: stored)
             },
             windows: windows.isEmpty
                 ? [SessionSnapshot.WindowSnapshot(activeWorkspace: active)]
@@ -282,6 +286,49 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     func setColor(_ id: UUID, _ color: WorkspaceColor?) throws(WorkspaceList.EditError) {
         try workspaces.setColor(id, color)
         didChange()
+    }
+
+    /// What the workspace searches with right now, and what it can pick; Default's for an unknown workspace.
+    func searchCatalog(for id: UUID) -> SearchCatalog {
+        search.catalog(for: workspaces[id] ?? workspaces.default)
+    }
+
+    /// nil follows Default (a custom workspace) or goes back to DuckDuckGo (Default, Anonymous). Only searches made
+    /// afterwards use it; open tabs stay as they are.
+    func chooseSearchEngine(_ engineID: String?, for id: UUID) throws(SearchEngine.EditError) {
+        guard let workspace = workspaces[id] else { return }
+        try search.choose(engineID, for: workspace)
+        didChange()
+    }
+
+    /// Adds an engine to the workspace and saves it with its content; a refused name or address changes nothing.
+    @discardableResult
+    func addSearchEngine(name: String, template: String, to id: UUID) throws(SearchEngine.EditError) -> SearchEngine {
+        guard workspaces[id] != nil else { throw .unknown(id.uuidString) }
+        let engine = try search.add(name: name, template: template, to: id)
+        didChange()
+        return engine
+    }
+
+    /// Renames or readdresses an engine added to the workspace; choices naming it follow, as its id is kept.
+    func updateSearchEngine(_ engineID: String, name: String, template: String, in id: UUID)
+        throws(SearchEngine.EditError)
+    {
+        try search.update(engineID, name: name, template: template, in: id)
+        didChange()
+    }
+
+    /// Removes an engine added to the workspace. Workspaces choosing it keep that choice and fall back when they
+    /// search: a custom workspace to Default's engine, Default and Anonymous to DuckDuckGo.
+    func removeSearchEngine(_ engineID: String, from id: UUID) throws(SearchEngine.EditError) {
+        try search.remove(engineID, from: id)
+        didChange()
+    }
+
+    /// The workspaces other than Default that search with this Default engine by choice, in bar order.
+    func searchDependents(of engineID: String) -> [Workspace] {
+        let ids = Set(search.dependents(of: engineID))
+        return workspaces.workspaces.filter { ids.contains($0.id) }
     }
 
     /// Moves a custom workspace in the bar; Default stays first and Anonymous stays last.
@@ -831,6 +878,7 @@ extension WorkspaceCoordinator {
         selections.forget(workspace: id)
         if let store = workspace.store { deletingStores[id] = store }
         _ = try? workspaces.remove(id)
+        search.drop(id)
         if !pendingDeletions.contains(id) { pendingDeletions.append(id) }
     }
 

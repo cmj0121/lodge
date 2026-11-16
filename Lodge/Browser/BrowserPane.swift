@@ -149,12 +149,48 @@ struct BrowserPane {
     /// The shown tab's web view, built without loading when the tab has none.
     private var selectedView: LodgeWebView? { selectedID.flatMap { model.view(for: $0, load: false) } }
 
+    /// What text that is no address searches with: the workspace's engine at this moment.
+    private var searchEngine: SearchEngine { coordinator.searchCatalog(for: model.workspaceID).engine }
+
+    /// The engines whose results pages show their words in place of the address: every one the workspace can pick.
+    var searchEngines: [SearchEngine] { coordinator.searchCatalog(for: model.workspaceID).available }
+
+    /// The engine and the words when the shown tab's page, however it was reached, is one of its results pages.
+    var selectedResultsPage: (engine: SearchEngine, words: String)? {
+        selected?.url.flatMap { SearchResultsPage.match($0, engines: searchEngines) }
+    }
+
+    /// Puts the shown page's full address on the pasteboard, also when the address bar shows search words.
+    func copyAddress() {
+        if let url = selected?.url { NSPasteboard.general.setURL(url) }
+    }
+
     /// Loads the address into the shown tab, or opens a loose tab on it when none is shown.
     func load(_ text: String) {
-        guard let url = AddressInput.url(from: text) else { return }
+        guard let url = AddressInput.url(from: text, engine: searchEngine) else { return }
+        load(url)
+    }
+
+    private func load(_ url: URL) {
         guard let id = selectedID else { return openLoose(url) }
         load(url, in: id)
         focusSelectedView()
+    }
+
+    /// The address bar's pick: an open tab is shown as a sidebar click shows it, the search row searches `words`
+    /// with the workspace's engine, any other row loads its page as typing its address would.
+    func open(_ suggestion: Suggestion, words: String) {
+        if case .openTab(let id) = suggestion.kind, model.tabs[id] != nil {
+            select(id)
+            focusSelectedView()
+        } else if let url = url(for: suggestion, words: words) {
+            load(url)
+        }
+    }
+
+    /// Where a row other than an open tab leads: its page, or for the search row the engine's results for `words`.
+    private func url(for suggestion: Suggestion, words: String) -> URL? {
+        suggestion.url ?? searchEngine.url(for: words.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// Loads `url` in the tab; when the tab has no web view to load in, opens a loose tab on it instead.
@@ -193,7 +229,25 @@ struct BrowserPane {
     /// Goes where the prompt's text leads: a new tab shown here, or its tab (a new one if that tab has closed since).
     /// Text that makes no address (blank) leaves the prompt open.
     func submitLocation(_ text: String) {
-        guard let prompt = window.locationPrompt, let url = AddressInput.url(from: text) else { return }
+        guard let url = AddressInput.url(from: text, engine: searchEngine) else { return }
+        submitLocation(url)
+    }
+
+    /// The prompt's pick: an open tab is shown in place of loading it again; any other row goes where its URL leads,
+    /// as `submitLocation(_:)` does for text.
+    func submitLocation(_ suggestion: Suggestion, words: String) {
+        guard window.locationPrompt != nil else { return }
+        if case .openTab(let id) = suggestion.kind, model.tabs[id] != nil {
+            window.locationPrompt = nil
+            select(id)
+            focusSelectedView()
+        } else if let url = url(for: suggestion, words: words) {
+            submitLocation(url)
+        }
+    }
+
+    private func submitLocation(_ url: URL) {
+        guard let prompt = window.locationPrompt else { return }
         window.locationPrompt = nil
         if case .current(let id) = prompt, model.tabs[id] != nil {
             load(url, in: id)
@@ -261,6 +315,29 @@ struct BrowserPane {
             view.focusesWhenShown = true
         }
     }
+
+    // MARK: Suggestions
+
+    /// A fresh suggestion list for a field of this window: the workspace's open tabs (all but the one shown here),
+    /// its pins (Default's, for every workspace) and bookmarks, its history file (none in Anonymous, nor while the
+    /// file opens), and the workspace's engine at the moment of typing.
+    func makeSuggestions() -> SuggestionModel {
+        let model = model, window = window, coordinator = coordinator
+        let workspace = model.workspaceID
+        return SuggestionModel(
+            history: coordinator.historyStores[workspace],
+            local: {
+                let shown = coordinator.selections.shown(in: window.id)
+                return (
+                    SuggestionCandidate.openTabs(model.tabs.tabs, except: shown),
+                    SuggestionCandidate.links(model.pins + model.library.links(on: .bookmarks))
+                )
+            },
+            engine: { coordinator.searchCatalog(for: workspace).engine })
+    }
+
+    /// The row's icon from what is already at hand, never fetched: see `BrowserModel.suggestionIcon(for:)`.
+    func icon(for suggestion: Suggestion) -> NSImage? { model.suggestionIcon(for: suggestion) }
 
     // MARK: Pins and bookmarks
 

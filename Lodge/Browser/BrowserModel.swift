@@ -410,6 +410,19 @@ final class BrowserModel {
         return image
     }
 
+    /// A suggestion row's icon from what is already at hand, never fetched: the open tab's favicon, else that of a
+    /// tab open on the row's page, else the stored icon of a pin or bookmark on it; nil for the search row.
+    func suggestionIcon(for suggestion: Suggestion) -> NSImage? {
+        if case .openTab(let id) = suggestion.kind, let image = favicons[id] { return image }
+        guard let url = suggestion.url else { return nil }
+        if let tab = tabs.tabs.first(where: { $0.url == url && favicons[$0.id] != nil }) { return favicons[tab.id] }
+        if let pin = pins.first(where: { $0.url == url }), let image = favicon(for: .link(pin, .pins, nil)) {
+            return image
+        }
+        let bookmark = library.links(on: .bookmarks).first { $0.url == url }
+        return bookmark.flatMap { favicon(for: .link($0, .bookmarks, nil)) }
+    }
+
     private func storeIcon(_ image: NSImage, in link: UUID) {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
             let data = LinkIcon.png(from: cgImage)

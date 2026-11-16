@@ -40,8 +40,10 @@ struct BrowserView: View {
         .overlay {
             if let prompt = pane.window.locationPrompt {
                 LocationPromptView(
-                    prompt: prompt, initialText: prompt.initialText(for: address(of: prompt)),
-                    submit: pane.submitLocation, cancel: pane.cancelLocationPrompt
+                    prompt: prompt,
+                    initialText: prompt.initialText(for: address(of: prompt), engines: pane.searchEngines),
+                    submit: pane.submitLocation, choose: pane.submitLocation(_:words:),
+                    makeSuggestions: pane.makeSuggestions, icon: pane.icon(for:), cancel: pane.cancelLocationPrompt
                 )
                 .transition(.opacity)
             }
@@ -122,7 +124,7 @@ private struct PageArea: View {
             if let tab, LodgePage.isLodge(tab.url) {
                 // A `lodge:` address naming no page leaves the page area empty.
                 switch tab.lodgePage {
-                case .settings: SettingsView()
+                case .settings: SettingsView(coordinator: coordinator)
                 case .history: HistoryView(model: coordinator.history)
                 case nil: EmptyView()
                 }

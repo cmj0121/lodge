@@ -1,12 +1,62 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ search with it." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 正在使用它搜尋。"
+          }
+        }
+      }
+    },
+    "%@ will then search with %@." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除後，%1$@ 會改用 %2$@ 搜尋。"
+          }
+        }
+      }
+    },
     "About" : {
       "localizations" : {
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "關於"
+          }
+        }
+      }
+    },
+    "Add" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加入"
+          }
+        }
+      }
+    },
+    "Add Engine…" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加入搜尋引擎⋯"
+          }
+        }
+      }
+    },
+    "Added engines" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已加入的搜尋引擎"
           }
         }
       }
@@ -67,6 +117,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "阻擋此網頁的後續對話框"
+          }
+        }
+      }
+    },
+    "Bookmark" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "書籤"
           }
         }
       }
@@ -321,6 +381,16 @@
         }
       }
     },
+    "Copy Address" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拷貝位址"
+          }
+        }
+      }
+    },
     "Copy Link" : {
       "localizations" : {
         "zh-Hant" : {
@@ -347,6 +417,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "資料檔案夾"
+          }
+        }
+      }
+    },
+    "Default and the workspaces that follow it search with this engine. Anonymous uses its own." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default 及跟隨它的工作空間都以此引擎搜尋；Anonymous 使用自己的設定。"
           }
         }
       }
@@ -447,6 +527,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下載項目"
+          }
+        }
+      }
+    },
+    "Edit" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯"
+          }
+        }
+      }
+    },
+    "Edit %@" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯 %@"
+          }
+        }
+      }
+    },
+    "Engines added here can be picked in every workspace, Anonymous included." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在這裡加入的搜尋引擎可在每個工作空間選用，包括 Anonymous。"
+          }
+        }
+      }
+    },
+    "Example" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "範例"
           }
         }
       }
@@ -557,6 +677,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "檔案夾，已展開"
+          }
+        }
+      }
+    },
+    "Follow Default (%@)" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跟隨 Default（%@）"
           }
         }
       }
@@ -981,6 +1111,16 @@
         }
       }
     },
+    "None yet." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未加入。"
+          }
+        }
+      }
+    },
     "Not found" : {
       "localizations" : {
         "zh-Hant" : {
@@ -997,6 +1137,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "好"
+          }
+        }
+      }
+    },
+    "Only searches made from now on use it; open pages stay as they are." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有之後的搜尋會使用；已開啟的頁面維持不變。"
           }
         }
       }
@@ -1211,6 +1361,16 @@
         }
       }
     },
+    "Remove %@" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除 %@"
+          }
+        }
+      }
+    },
     "Remove every finished, failed, cancelled and interrupted download from the list" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1227,6 +1387,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "從書籤中移除"
+          }
+        }
+      }
+    },
+    "Remove “%@”?" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要移除「%@」嗎？"
           }
         }
       }
@@ -1291,6 +1461,16 @@
         }
       }
     },
+    "Save" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "儲存"
+          }
+        }
+      }
+    },
     "Save downloads to" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1311,12 +1491,52 @@
         }
       }
     },
+    "Search" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋"
+          }
+        }
+      }
+    },
+    "Search Engine" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋引擎"
+          }
+        }
+      }
+    },
+    "Search Engine…" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋引擎…"
+          }
+        }
+      }
+    },
     "Search History" : {
       "localizations" : {
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜尋瀏覽紀錄"
+          }
+        }
+      }
+    },
+    "Search address" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋網址"
           }
         }
       }
@@ -1337,6 +1557,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜尋或輸入網址"
+          }
+        }
+      }
+    },
+    "Search results from %@" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 的搜尋結果"
+          }
+        }
+      }
+    },
+    "Search with" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋時使用"
           }
         }
       }
@@ -1467,6 +1707,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "停止載入"
+          }
+        }
+      }
+    },
+    "Suggestions" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "建議"
+          }
+        }
+      }
+    },
+    "Switch to Tab" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切換到分頁"
           }
         }
       }

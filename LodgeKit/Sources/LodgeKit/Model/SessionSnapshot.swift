@@ -1,8 +1,9 @@
 import Foundation
 
-/// What Lodge keeps across launches: the workspaces in bar order, each with its tabs, selected tab, pins and
-/// bookmarks; the windows and the workspace each shows; and the workspaces still being deleted. Anonymous keeps
-/// only its bookmarks, and pins live only in Default. Runtime state (loading, history buttons, crashes, progress,
+/// What Lodge keeps across launches: the workspaces in bar order, each with its tabs, selected tab, pins,
+/// bookmarks and search settings; the windows and the workspace each shows; and the workspaces still being deleted.
+/// Anonymous keeps only its bookmarks and search settings, and pins live only in Default. Search words are never
+/// stored. Runtime state (loading, history buttons, crashes, progress,
 /// favicons, security) is not stored.
 public struct SessionSnapshot: Codable, Equatable, Sendable {
     public static let currentVersion = 4
@@ -17,7 +18,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         public var link: UUID?
     }
 
-    /// One workspace's tabs, pins and bookmarks.
+    /// One workspace's tabs, pins, bookmarks and search settings.
     public struct WorkspaceContent: Codable, Equatable, Sendable {
         /// In `TabList` order.
         public var tabs: [Tab]
@@ -26,26 +27,56 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         public var pins: [SavedLink]
         /// The root folder, with every folder's expand state.
         public var bookmarks: BookmarkFolder
+        /// Left out of the file when empty, so it stays readable by a v4 build that predates it.
+        public var search: WorkspaceSearch
 
         public static let empty = WorkspaceContent(tabs: TabList(), library: LinkLibrary(), selectedTab: nil)
 
         /// `selectedTab` is the one an older build restores, and the fallback for the first window (D8).
-        public init(tabs: TabList, library: LinkLibrary, selectedTab: TabID?) {
+        public init(tabs: TabList, library: LinkLibrary, selectedTab: TabID?, search: WorkspaceSearch = .empty) {
             self.init(
                 tabs: tabs.tabs.map { Tab(id: $0.id, url: $0.url, title: $0.title, link: $0.link) },
-                selectedTab: selectedTab, pins: library.links(on: .pins), bookmarks: library.bookmarks)
+                selectedTab: selectedTab, pins: library.links(on: .pins), bookmarks: library.bookmarks,
+                search: search)
         }
 
-        init(tabs: [Tab], selectedTab: TabID?, pins: [SavedLink], bookmarks: BookmarkFolder) {
+        init(
+            tabs: [Tab], selectedTab: TabID?, pins: [SavedLink], bookmarks: BookmarkFolder,
+            search: WorkspaceSearch = .empty
+        ) {
             self.tabs = tabs
             self.selectedTab = selectedTab
             self.pins = pins
             self.bookmarks = bookmarks
+            self.search = search
         }
 
-        /// Only the bookmarks: what Anonymous keeps across launches.
+        private enum CodingKeys: String, CodingKey {
+            case tabs, selectedTab, pins, bookmarks, search
+        }
+
+        /// A missing or malformed `search` reads as `.empty` rather than failing the session file.
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            tabs = try container.decode([Tab].self, forKey: .tabs)
+            selectedTab = try container.decodeIfPresent(TabID.self, forKey: .selectedTab)
+            pins = try container.decode([SavedLink].self, forKey: .pins)
+            bookmarks = try container.decode(BookmarkFolder.self, forKey: .bookmarks)
+            search = (try? container.decodeIfPresent(WorkspaceSearch.self, forKey: .search)) ?? .empty
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(tabs, forKey: .tabs)
+            try container.encodeIfPresent(selectedTab, forKey: .selectedTab)
+            try container.encode(pins, forKey: .pins)
+            try container.encode(bookmarks, forKey: .bookmarks)
+            if !search.isEmpty { try container.encode(search, forKey: .search) }
+        }
+
+        /// Only the bookmarks and search settings: what Anonymous keeps across launches.
         public func anonymized() -> WorkspaceContent {
-            WorkspaceContent(tabs: [], selectedTab: nil, pins: [], bookmarks: bookmarks)
+            WorkspaceContent(tabs: [], selectedTab: nil, pins: [], bookmarks: bookmarks, search: search)
         }
 
         /// Icons checked: an Anonymous bookmark (`anonymous`) keeps one only when `LinkIcon.isValid`; every other
@@ -106,8 +137,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
 
     /// `currentVersion` when written.
     public var version: Int
-    /// Bar order: Default first, then the custom workspaces, then Anonymous with its bookmarks only. Only Default
-    /// has pins.
+    /// Bar order: Default first, then the custom workspaces, then Anonymous with its bookmarks and search only. Only
+    /// Default has pins.
     public var workspaces: [WorkspaceSnapshot]
     /// One to `maxWindows`, all on the same workspace; an unknown active workspace reads as Default.
     public var windows: [WindowSnapshot]

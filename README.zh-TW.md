@@ -40,7 +40,19 @@
 | 輕盈好用             | 沒在用的 workspace 安靜無聲，切換快速，回來就能接著做                                   |
 | 多個視窗             | ⌘N 再開一個共用同一組 workspace 的視窗；各自顯示自己的 tab，重開後還原                  |
 | Lodge 頁面           | `lodge://settings` 與 `lodge://history` 以 tab 開啟，每個 workspace 各一個；網頁連不到  |
-| 設定 tab             | ⌘, 或齒輪開啟：一般、下載項目、關於（版本、macOS、資料夾）                              |
+| 設定 tab             | ⌘, 或齒輪開啟：一般、搜尋、下載項目、關於（版本、macOS、資料夾）                        |
+| 搜尋引擎             | 每個 workspace 用自己的搜尋引擎；在 workspace 選單的「搜尋引擎…」挑選                   |
+| Default 的引擎       | 在「設定」的「搜尋」挑選；自訂 workspace 未自選前跟隨它；Anonymous 用 DuckDuckGo        |
+| 自訂搜尋引擎         | 在「設定」的「搜尋」或「搜尋引擎…」sheet 按「加入搜尋引擎⋯」：名稱與 `…?q=%s` 網址      |
+| 編輯與移除           | 每個加入的引擎在那裡都能編輯、移除；內建引擎維持不變                                    |
+| 共用的引擎           | 在「設定」的「搜尋」加入的引擎，每個 workspace 都能選用，包括 Anonymous                 |
+| 移除後               | 原本用它的改用：自訂 workspace 用 Default 的引擎，Default 和 Anonymous 用 DuckDuckGo    |
+| 搜尋字詞             | 搜尋結果頁的網址列顯示搜尋字詞，前面附引擎圖示與名稱；改好按 Return 重新搜尋            |
+| 拷貝位址             | 字詞未修改時，拷貝與「拷貝位址」仍給出頁面的完整網址                                    |
+| 建議清單             | 在網址列或「打開位置」輸入時，下方列出搜尋、已開啟的 tab、bookmark 與瀏覽紀錄           |
+| 只用本機資料         | 建議只來自目前 workspace 的 tab、bookmark 與瀏覽紀錄，從不連網                          |
+| 選取建議             | ↑/↓ 在清單中移動，Return 開啟選取的項目，Esc 關閉清單                                   |
+| 自動補完             | 欄位直接補上第一個建議；按 → 接受，刪除則捨棄補上的部分                                 |
 | 預設瀏覽器           | 在「設定」tab 的「一般」設為預設；其他 app 的連結以新的 Default tab 開啟                |
 | Credential           | 密碼和 passkey 來自 OS 的 credential store，在每個 workspace 都能使用                   |
 | 英文與繁體中文       | 跟隨 macOS，或 Language & Region › Applications 裡 Lodge 的設定；workspace 名稱維持英文 |
