@@ -49,6 +49,10 @@
 | 移除後               | 原本用它的改用：自訂 workspace 用 Default 的引擎，Default 和 Anonymous 用 DuckDuckGo    |
 | 搜尋字詞             | 搜尋結果頁的網址列顯示搜尋字詞，前面附引擎圖示與名稱；改好按 Return 重新搜尋            |
 | 拷貝位址             | 字詞未修改時，拷貝與「拷貝位址」仍給出頁面的完整網址                                    |
+| 建議清單             | 在網址列或「打開位置」輸入時，下方列出搜尋、已開啟的 tab、bookmark 與瀏覽紀錄           |
+| 只用本機資料         | 建議只來自目前 workspace 的 tab、bookmark 與瀏覽紀錄，從不連網                          |
+| 選取建議             | ↑/↓ 在清單中移動，Return 開啟選取的項目，Esc 關閉清單                                   |
+| 自動補完             | 欄位直接補上第一個建議；按 → 接受，刪除則捨棄補上的部分                                 |
 | 預設瀏覽器           | 在「設定」tab 的「一般」設為預設；其他 app 的連結以新的 Default tab 開啟                |
 | Credential           | 密碼和 passkey 來自 OS 的 credential store，在每個 workspace 都能使用                   |
 | 英文與繁體中文       | 跟隨 macOS，或 Language & Region › Applications 裡 Lodge 的設定；workspace 名稱維持英文 |
