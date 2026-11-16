@@ -27,13 +27,6 @@ struct LodgeApp: App {
         // session.json rebuilds the windows; macOS's own restoration would keep an Anonymous page's title.
         .restorationBehavior(.disabled)
         .commands { BrowserCommands(coordinator: appDelegate.coordinator, history: appDelegate.history) }
-
-        Window("History", id: "history") {
-            HistoryView(model: appDelegate.history)
-        }
-        .defaultSize(width: 640, height: 600)
-        .handlesExternalEvents(matching: [])
-        .restorationBehavior(.disabled)
     }
 }
 

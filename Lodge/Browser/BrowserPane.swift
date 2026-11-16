@@ -94,7 +94,7 @@ struct BrowserPane {
         if let id = selectedID { close(id) }
     }
 
-    /// A History window entry: when another window shows a tab on exactly this URL, that window comes forward (D4);
+    /// A History page entry: when another window shows a tab on exactly this URL, that window comes forward (D4);
     /// otherwise the page opens in a new tab shown here, as before. A URL that is not a web page opens nothing.
     func open(historyURL url: URL) {
         guard NewTabPolicy.allowsFromHistory(url) else { return }

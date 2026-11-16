@@ -2,30 +2,47 @@ import AppKit
 import LodgeKit
 import SwiftUI
 
-/// The History window: every visit by day, newest first, with a search field and Clear All in the toolbar.
+/// History, drawn in its tab's page card at `lodge://history`: every visit of the workspace by day, newest first,
+/// under a search field and Clear All History. Every History tab shows the one app-wide model.
 struct HistoryView: View {
     @Bindable var model: HistoryModel
-    @Environment(\.openWindow) private var openWindow
     @State private var selection: HistoryVisit.ID?
+    /// This page among the History pages the model counts as showing.
+    @State private var viewer = UUID()
 
     var body: some View {
-        content
-            .frame(minWidth: 420, minHeight: 320)
-            .onAppear(perform: model.windowAppeared)
-            .onDisappear(perform: model.windowDisappeared)
-            .searchable(text: $model.query, placement: .toolbar, prompt: "Search History")
-            .alert("History was cleared", isPresented: $model.clearLeftData) {
-                Button("OK") {}
-            } message: {
-                Text("Some data will be removed when Lodge closes.")
+        VStack(spacing: 0) {
+            // Nothing to search or clear where nothing is kept.
+            if model.state != .notKept {
+                header
+                Divider()
             }
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Clear All History…", systemImage: "trash") { HistoryPrompts.clearAll(model: model) }
-                        .help("Clear All History")
-                        .disabled(!model.canClearAll)
-                }
-            }
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { model.pageAppeared(viewer) }
+        .onDisappear { model.pageDisappeared(viewer) }
+        .alert("History was cleared", isPresented: $model.clearLeftData) {
+            Button("OK") {}
+        } message: {
+            Text("Some data will be removed when Lodge closes.")
+        }
+    }
+
+    /// The search field and Clear All History, in place of the toolbar a browser window does not have.
+    private var header: some View {
+        HStack(spacing: 12) {
+            HistorySearchField(text: $model.query)
+                .frame(maxWidth: 360)
+                .disabled(model.state != .ready)
+            Spacer(minLength: 0)
+            Button("Clear All History…") { HistoryPrompts.clearAll(model: model) }
+                .help("Clear All History")
+                .disabled(!model.canClearAll)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     @ViewBuilder
@@ -111,21 +128,42 @@ struct HistoryView: View {
                 .selectionDisabled()
             }
         }
+        .scrollContentBackground(.hidden)
         .contextMenu(forSelectionType: HistoryVisit.ID.self) { ids in
             if let visit = ids.first.flatMap(model.visit) {
-                Button("Open") { open(visit) }
+                Button("Open") { model.open(visit) }
                 Button("Copy Link") { model.copyLink(visit) }
             }
         } primaryAction: { ids in
-            if let visit = ids.first.flatMap(model.visit) { open(visit) }
+            if let visit = ids.first.flatMap(model.visit) { model.open(visit) }
         }
     }
+}
 
-    /// D6: brings the browser window back (reopening it when closed) and opens the page in a new tab there.
-    private func open(_ visit: HistoryVisit) {
-        openWindow(id: "browser")
-        NSApp.activate()
-        model.open(visit)
+/// The page's search field: a magnifying glass, the text, and a button that empties it.
+private struct HistorySearchField: View {
+    @Binding var text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            TextField("Search History", text: $text)
+                .textFieldStyle(.plain)
+                .onExitCommand { text = "" }
+            if !text.isEmpty {
+                Button("Clear", systemImage: "xmark.circle.fill") { text = "" }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Clear")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 7))
+        .overlay { RoundedRectangle(cornerRadius: 7).strokeBorder(.separator, lineWidth: 0.5) }
     }
 }
 

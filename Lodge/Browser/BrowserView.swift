@@ -110,6 +110,7 @@ private struct PageCard: View {
 
 private struct PageArea: View {
     let pane: BrowserPane
+    @Environment(WorkspaceCoordinator.self) private var coordinator
 
     private var tab: BrowserTab? { pane.selected }
     /// No tab, or a blank one with nothing on its way.
@@ -122,7 +123,7 @@ private struct PageArea: View {
                 // A `lodge:` address naming no page leaves the page area empty.
                 switch tab.lodgePage {
                 case .settings: SettingsView()
-                case .history: LodgePagePlaceholder(page: .history)
+                case .history: HistoryView(model: coordinator.history)
                 case nil: EmptyView()
                 }
             } else {
@@ -136,17 +137,6 @@ private struct PageArea: View {
                 }
             }
         }
-    }
-}
-
-/// A Lodge page's tab until its page is drawn here: the page's symbol and title.
-private struct LodgePagePlaceholder: View {
-    let page: LodgePage
-
-    var body: some View {
-        ContentUnavailableView(page.title, systemImage: page.symbol)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .textBackgroundColor))
     }
 }
 

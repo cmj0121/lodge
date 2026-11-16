@@ -88,7 +88,7 @@ struct BrowserCommands: Commands {
             Button("Forward") { pane?.goForward() }
                 .disabled(noPane)
             Divider()
-            Button("Show All History") { openWindow(id: "history") }
+            Button("Show All History") { coordinator.open(.history) }
             Button("Clear All History…") { HistoryPrompts.clearAll(model: history) }
                 .disabled(!history.canClearAll)
         }

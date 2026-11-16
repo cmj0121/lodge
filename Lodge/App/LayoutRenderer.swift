@@ -6,7 +6,7 @@
 
     /// Debug aid: `Lodge -renderLayout YES` draws the window's layout (both sidebar modes, find
     /// open, and the shortcut overlay and the location prompt in light and dark), workspace colours and
-    /// Anonymous's dark window, the Settings tab, the History window from an in-memory history, and the Downloads popover and button
+    /// Anonymous's dark window, the Settings tab, the History tab from an in-memory history, and the Downloads popover and button
     /// from sample items, to PNG files off screen, then exits. It never shows a window or takes focus,
     /// so it can run while someone uses the machine. The only download is a `data:` URL saved to a temporary folder.
     @MainActor
@@ -49,7 +49,7 @@
             checkExternalLinks()
             checkLodgePages()
             renderSettings(in: directory)
-            renderHistory(to: directory.appending(path: "layout-history.png"))
+            renderHistory(in: directory)
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
             exit(0)
@@ -131,8 +131,8 @@
         }
 
         /// Anonymous shown after Default and two custom workspaces: its bar tile and header in both sidebar modes and
-        /// both appearances, a Rename sheet opened for it anyway, and the History window while it is shown. Prints
-        /// ok or FAILED for: History says Not Kept on Anonymous and leaves that state on Default.
+        /// both appearances, and a Rename sheet opened for it anyway. Anonymous's History tab is drawn by
+        /// `renderHistory`.
         private static func renderAnonymous(in directory: URL) {
             let suite = "dev.lodge.render-layout"
             let defaults = UserDefaults(suiteName: suite)!
@@ -159,13 +159,6 @@
                     size: NSSize(width: 1100, height: 700), appearance: NSAppearance(named: appearance),
                     to: directory.appending(path: "layout-anonymous-sheet.png"))
                 coordinator.windows[0].workspaceEditor = nil
-                let notKept = coordinator.history.state == .notKept
-                snapshot(
-                    HistoryView(model: coordinator.history), size: NSSize(width: 640, height: 600), title: "History",
-                    to: directory.appending(path: "layout-history-not-kept.png"))
-                coordinator.switchTo(Workspace.defaultID)
-                let left = coordinator.history.state != .notKept
-                print("History is Not Kept on Anonymous: \(notKept && left ? "ok" : "FAILED")")
             }
         }
 
@@ -1124,20 +1117,11 @@
                 "A window registered in Anonymous is dark",
                 settle { third.nsWindow === late && isDark(late) })
 
-            // The app's History scene carries no WindowRegistrar, so it is hosted as it is; what can go wrong is a
-            // switch reaching past the browser windows (all of NSApp's windows, or the app's own appearance). So it is
-            // open across a switch out of Anonymous and back, and must stay untouched and light while the browser
-            // windows turn dark again.
-            let others = [host(HistoryView(model: coordinator.history), size: NSSize(width: 640, height: 600))]
-            defer { for window in others { window.close() } }
             coordinator.switchTo(Workspace.defaultID)
             let leftAnonymous = settle { hosts.allSatisfy { $0.appearance == nil } }
             coordinator.switchTo(Workspace.anonymousID)
             let darkAgain = settle { hosts.allSatisfy(isDark) }
-            report(
-                "History keeps the system look in Anonymous",
-                leftAnonymous && darkAgain
-                    && others.allSatisfy { $0.appearance == nil && $0.effectiveAppearance.name == .aqua })
+            report("Browser windows turn light leaving Anonymous and dark again", leftAnonymous && darkAgain)
 
             let model = coordinator.active
             let shown = coordinator.selections.shown(in: first.id)
@@ -1274,9 +1258,19 @@
         /// Which location prompt a render opens: ⌘T's empty one or ⌘L's on the selected page.
         enum PromptRender { case newTab, current }
 
-        /// The History window over sample visits from today back three days, in a store that lives only in memory.
-        private static func renderHistory(to url: URL) {
-            guard let store = try? HistoryStore.inMemory() else { return }
+        /// The History tab over sample visits from today back three days, in a store that lives only in memory: in
+        /// light, in dark, searching, and Anonymous's not-kept page. Printed ok or FAILED: Show All History's
+        /// `open(.history)` gives each workspace one History tab; the search filters the list; Anonymous's tab says
+        /// history is not kept; the page follows the window's look; and the model knows whether a History page shows
+        /// whatever order pages appear and disappear in, a switch between workspaces that each show one included.
+        private static func renderHistory(in directory: URL) {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(3)
+                while !done(), Date.now < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) }
+                return done()
+            }
+            guard let store = try? HistoryStore.inMemory() else { return report("History opens in memory", false) }
             let sites = [
                 ("https://developer.apple.com/documentation/swiftui", "SwiftUI | Apple Developer Documentation"),
                 ("https://www.swift.org/blog/", "Blog | Swift.org"),
@@ -1286,20 +1280,152 @@
                 ("https://example.com/untitled", ""),
             ]
             // Oldest first, as a clock would record them; the store coalesces a revisit only against the newest.
-            let done = Task {
+            Task {
                 for index in (0..<24).reversed() {
                     let (address, title) = sites[index % sites.count]
                     let date = Date.now.addingTimeInterval(-Double(index) * 4 * 3600)
                     _ = try? await store.record(URL(string: address)!, title: title, at: date)
                 }
             }
-            let model = HistoryModel { _ in }
-            Task {
-                await done.value
-                model.show(store, state: .ready)
-            }
             RunLoop.main.run(until: Date().addingTimeInterval(1))
-            snapshot(HistoryView(model: model), size: NSSize(width: 640, height: 600), title: "History", to: url)
+            func visits(_ model: HistoryModel) -> [HistoryVisit] { model.days.flatMap(\.visits) }
+
+            // The model alone, its pages coming and going in every order a window or a switch can produce.
+            let model = HistoryModel { _ in }
+            model.show(store, state: .ready)
+            let (a, b, c, d) = (UUID(), UUID(), UUID(), UUID())
+            model.pageAppeared(a)
+            model.pageAppeared(b)
+            model.pageAppeared(b)
+            model.pageDisappeared(a)
+            var counted = model.isVisible
+            model.pageDisappeared(a)
+            counted = counted && model.isVisible
+            model.pageDisappeared(b)
+            counted = counted && !model.isVisible
+            model.pageDisappeared(c)
+            counted = counted && !model.isVisible
+            model.pageAppeared(c)
+            counted = counted && model.isVisible && settle { !visits(model).isEmpty }
+            // A switch: the new workspace's page appears before the old one's goes, then the other way round.
+            model.pageAppeared(d)
+            model.pageDisappeared(c)
+            counted = counted && model.isVisible && !visits(model).isEmpty
+            model.pageDisappeared(d)
+            counted = counted && !model.isVisible && model.days.isEmpty
+            model.pageAppeared(a)
+            counted = counted && model.isVisible && settle { !visits(model).isEmpty }
+            model.pageDisappeared(a)
+            report("History knows a page shows whatever order pages appear and disappear in", counted)
+
+            let suiteName = "dev.lodge.selfcheck.\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            let size = NSSize(width: 1100, height: 700)
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+            coordinator.bringForwardHook = { _ in }
+            let history = coordinator.history
+            let window = coordinator.windows[0]
+            window.locationPrompt = nil
+            let pane = firstPane(coordinator)
+            func historyTabs(_ model: BrowserModel) -> Int { model.tabs.tabs.filter { $0.lodgePage == .history }.count }
+            /// Default's history is the sample store; the other workspaces have none in a renderer with no folder.
+            func enter(_ id: UUID) {
+                coordinator.switchTo(id)
+                if id == Workspace.defaultID { history.show(store, state: .ready) }
+            }
+
+            let blank = pane.selectedID
+            coordinator.open(.history)
+            coordinator.open(.history)
+            let defaultTab = pane.model.tab(showing: .history)
+            var single = defaultTab != nil && pane.selectedID == defaultTab?.id && historyTabs(pane.model) == 1
+                && pane.model.tabs.tabs.count == 1 && blank != defaultTab?.id
+            guard let work = try? coordinator.create(name: "Work", symbol: "briefcase"),
+                let personal = try? coordinator.create(name: "Personal", symbol: "house")
+            else { return report("Workspaces for History", false) }
+            enter(work.id)
+            coordinator.open(.history)
+            coordinator.open(.history)
+            let workModel = firstPane(coordinator).model
+            single = single && historyTabs(workModel) == 1 && firstPane(coordinator).selected?.lodgePage == .history
+            enter(Workspace.defaultID)
+            single = single && historyTabs(pane.model) == 1 && historyTabs(workModel) == 1
+                && pane.selected?.lodgePage == .history
+            report("Show All History opens one History tab per workspace", single)
+
+            // A real window: its History page counts while shown, across switches that rebuild the window's content.
+            let hosted = host(root(coordinator).defaultAppStorage(defaults), size: size)
+            defer { hosted.close() }
+            var visible = settle { history.isVisible }
+            enter(work.id)
+            visible = visible && settle { history.isVisible }
+            enter(personal.id)
+            visible = visible && settle { !history.isVisible }
+            enter(Workspace.defaultID)
+            visible = visible && settle { history.isVisible && !visits(history).isEmpty }
+
+            history.query = "swift"
+            let all = 24
+            let searched = settle { !history.isSearchPending && !visits(history).isEmpty }
+            let found = visits(history)
+            report(
+                "Searching History shows only the matching visits",
+                searched && found.count < all
+                    && found.allSatisfy {
+                        $0.title.localizedCaseInsensitiveContains("swift")
+                            || $0.url.absoluteString.localizedCaseInsensitiveContains("swift")
+                    })
+            // Emptied, not closed: closing would close the coordinator's window too.
+            hosted.contentView = nil
+            visible = visible && settle { !history.isVisible }
+            report("A History tab counts as shown exactly while a window shows it, across workspace switches", visible)
+
+            /// The page's ground: the median over a grid on the card, where text is the minority.
+            func ground(_ rep: NSBitmapImageRep?) -> CGFloat? {
+                guard let rep else { return nil }
+                let scale = CGFloat(rep.pixelsWide) / size.width
+                var values: [CGFloat] = []
+                for x in stride(from: SidebarMode.expanded.width + 40, to: size.width - 40, by: 23) {
+                    for y in stride(from: 80, to: size.height - 40, by: 17) {
+                        guard let color = rep.colorAt(x: Int(x * scale), y: Int(y * scale))?.usingColorSpace(.sRGB)
+                        else { continue }
+                        values.append((color.redComponent + color.greenComponent + color.blueComponent) / 3)
+                    }
+                }
+                return values.isEmpty ? nil : values.sorted()[values.count / 2]
+            }
+            func render(_ name: String, look: NSAppearance.Name) -> CGFloat? {
+                let shown = image(root(coordinator).defaultAppStorage(defaults), size: size, appearance: NSAppearance(named: look))
+                try? shown?.representation(using: .png, properties: [:])?
+                    .write(to: directory.appending(path: "layout-history-\(name).png"))
+                return ground(shown)
+            }
+            let system = NSApp.appearance
+            defer { NSApp.appearance = system }
+            NSApp.appearance = NSAppearance(named: .aqua)
+            let search = render("search", look: .aqua)
+            history.query = ""
+            let light = render("light", look: .aqua)
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+            let dark = render("dark", look: .darkAqua)
+            NSApp.appearance = NSAppearance(named: .aqua)
+
+            enter(Workspace.anonymousID)
+            coordinator.open(.history)
+            let anonymousTab = firstPane(coordinator).selected?.lodgePage == .history
+            let notKept = history.state == .notKept
+            // Anonymous's look comes from WindowRegistrar on a real window; this stands in for it.
+            let anonymous = render("not-kept", look: .darkAqua)
+            enter(Workspace.defaultID)
+            report(
+                "Anonymous's History tab says history is not kept",
+                anonymousTab && notKept && history.state == .ready)
+            report(
+                "The History page follows the window's look, Anonymous included",
+                (light ?? 0) > 0.8 && (search ?? 0) > 0.8 && (dark ?? 1) < 0.3 && (anonymous ?? 1) < 0.3)
         }
 
         /// One sample item per D5 state, newest first; the second finished one stands for a moved file.
