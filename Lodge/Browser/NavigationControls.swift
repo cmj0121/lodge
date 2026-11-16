@@ -31,13 +31,16 @@ struct NavigationButtons: View {
 }
 
 /// The address field: shows the page's address, or the search words on a search engine's results page, takes a URL
-/// or a search, and hosts the load progress line along its bottom edge.
+/// or a search, lists this workspace's suggestions under it while it is edited, and hosts the load progress line
+/// along its bottom edge.
 struct AddressBar: View {
     let pane: BrowserPane
     /// Narrow homes (the expanded sidebar) keep the Anonymous and engine badges to their icons so the address has room.
     var isCompact = false
     @State private var text = ""
     @State private var isFocused = false
+    /// The list while the field is edited, made fresh each time it takes the keys.
+    @State private var suggestions: SuggestionModel?
     @Environment(\.workspaceTint) private var tint
 
     private var tab: BrowserTab? { pane.selected }
@@ -52,7 +55,11 @@ struct AddressBar: View {
             if let resultsPage, let tab {
                 EngineBadge(engine: resultsPage.engine, icon: pane.model.favicons[tab.id], isCompact: isCompact)
             }
-            AddressField(text: $text, isEditing: $isFocused, address: copiedAddress) { pane.load(text) }
+            AddressField(
+                text: $text, isEditing: $isFocused, address: copiedAddress, suggestions: suggestions,
+                panelRows: suggestions?.rows.count ?? 0, icon: pane.icon(for:),
+                choose: { pane.open($0, words: suggestions?.words ?? text) },
+                submit: { pane.load(text) })
             SiteSecurityButton(pane: pane)
         }
         .padding(.leading, hasLeadingBadge ? 5 : 10)
@@ -75,9 +82,20 @@ struct AddressBar: View {
                 .disabled(tab?.url == nil)
         }
         .onAppear(perform: showAddress)
-        .onChange(of: tab?.id) { showAddress() }
+        .onChange(of: tab?.id) {
+            showAddress()
+            // The rows were for the text just replaced, and may list the tab now shown.
+            if isFocused { suggestions = pane.makeSuggestions() }
+        }
         .onChange(of: tab?.url) { if !isFocused { showAddress() } }
-        .onChange(of: isFocused) { if !isFocused { showAddress() } }
+        .onChange(of: isFocused) {
+            if isFocused {
+                suggestions = pane.makeSuggestions()
+            } else {
+                suggestions = nil
+                showAddress()
+            }
+        }
     }
 
     /// The words of a results page, else the page's address.
