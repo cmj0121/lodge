@@ -44,6 +44,20 @@ public struct SearchEngine: Identifiable, Hashable, Codable, Sendable {
 
     public enum EditError: Error, Equatable {
         case emptyName, missingPlaceholder, unsupportedScheme, invalidAddress, builtInIsFixed, unknown(String)
+
+        /// Why the engine was not saved, as the line under its fields says it.
+        public var message: String {
+            switch self {
+            case .emptyName: String(localized: "Enter a name.", bundle: .module)
+            case .missingPlaceholder:
+                String(localized: "Put \(SearchEngine.placeholder) where your search words go.", bundle: .module)
+            case .unsupportedScheme:
+                String(localized: "Use an address that starts with https:// or http://.", bundle: .module)
+            case .invalidAddress: String(localized: "Enter a valid web address.", bundle: .module)
+            case .builtInIsFixed: String(localized: "Built-in engines can’t be changed or removed.", bundle: .module)
+            case .unknown: String(localized: "This engine no longer exists.", bundle: .module)
+            }
+        }
     }
 
     /// Trimmed name and template, or why they are refused, checked in this order: an empty name, no `%s`, a

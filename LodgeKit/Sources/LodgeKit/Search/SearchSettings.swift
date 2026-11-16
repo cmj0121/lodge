@@ -56,9 +56,60 @@ public struct SearchSettings: Equatable, Sendable {
         byWorkspace[workspace.id] = search.isEmpty ? nil : search
     }
 
+    /// Adds an engine to the workspace with a new UUID id, after Default's and its earlier ones; Default's engines
+    /// are offered in every workspace, any other workspace's only in it. The name and template are trimmed; a
+    /// refused one changes nothing.
+    @discardableResult
+    public mutating func add(name: String, template: String, to workspace: UUID) throws(SearchEngine.EditError)
+        -> SearchEngine
+    {
+        let fields = try SearchEngine.validate(name: name, template: template).get()
+        let engine = SearchEngine(id: UUID().uuidString, name: fields.name, template: fields.template)
+        byWorkspace[workspace, default: .empty].engines.append(engine)
+        return engine
+    }
+
+    /// Renames or readdresses one of the workspace's added engines in place, keeping its id, so every choice naming
+    /// it follows. Built-ins throw `.builtInIsFixed`, an id not added to this workspace `.unknown`, a refused name or
+    /// template its `validate` error; a refusal changes nothing.
+    public mutating func update(_ engineID: String, name: String, template: String, in workspace: UUID)
+        throws(SearchEngine.EditError)
+    {
+        let index = try ownIndex(of: engineID, in: workspace)
+        let fields = try SearchEngine.validate(name: name, template: template).get()
+        byWorkspace[workspace]?.engines[index].name = fields.name
+        byWorkspace[workspace]?.engines[index].template = fields.template
+    }
+
+    /// Built-ins throw `.builtInIsFixed`, an id not added to this workspace `.unknown`. Choices naming it are left
+    /// as they are; they fall back at resolution: a custom workspace to Default's engine, Default and Anonymous to
+    /// DuckDuckGo.
+    public mutating func remove(_ engineID: String, from workspace: UUID) throws(SearchEngine.EditError) {
+        let index = try ownIndex(of: engineID, in: workspace)
+        var search = self[workspace]
+        search.engines.remove(at: index)
+        byWorkspace[workspace] = search.isEmpty ? nil : search
+    }
+
+    /// The other workspaces (Anonymous included, Default excluded) whose `choice` is this Default engine, in id
+    /// order; none for an id that is not one of Default's added engines.
+    public func dependents(of engineID: String) -> [UUID] {
+        guard self[Workspace.defaultID].engines.contains(where: { $0.id == engineID }) else { return [] }
+        return byWorkspace.filter { $0.key != Workspace.defaultID && $0.value.choice == engineID }.keys
+            .sorted { $0.uuidString < $1.uuidString }
+    }
+
     /// Forgets the workspace's engines and choice, as when it is deleted.
     public mutating func drop(_ workspace: UUID) {
         byWorkspace[workspace] = nil
+    }
+
+    private func ownIndex(of engineID: String, in workspace: UUID) throws(SearchEngine.EditError) -> Int {
+        if SearchEngine.builtIns.contains(where: { $0.id == engineID }) { throw .builtInIsFixed }
+        guard let index = self[workspace].engines.firstIndex(where: { $0.id == engineID }) else {
+            throw .unknown(engineID)
+        }
+        return index
     }
 
     private static func resolve(_ choice: String?, in engines: [SearchEngine]) -> SearchEngine? {

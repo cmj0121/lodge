@@ -151,6 +151,16 @@
         }
       }
     },
+    "Built-in engines can’t be changed or removed.": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "內建搜尋引擎無法變更或移除。"
+          }
+        }
+      }
+    },
     "Camera": {
       "localizations": {
         "zh-Hant": {
@@ -297,6 +307,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "請輸入名稱。"
+          }
+        }
+      }
+    },
+    "Enter a valid web address.": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請輸入有效的網址。"
           }
         }
       }
@@ -691,6 +711,16 @@
         }
       }
     },
+    "Put %@ where your search words go.": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請在搜尋字詞的位置放入 %@。"
+          }
+        }
+      }
+    },
     "Red": {
       "localizations": {
         "zh-Hant": {
@@ -861,6 +891,16 @@
         }
       }
     },
+    "This engine no longer exists.": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這個搜尋引擎已不存在。"
+          }
+        }
+      }
+    },
     "This page is on this computer.": {
       "localizations": {
         "zh-Hant": {
@@ -927,6 +967,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "名稱不得超過 %lld 個字元。"
+          }
+        }
+      }
+    },
+    "Use an address that starts with https:// or http://.": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請使用以 https:// 或 http:// 開頭的網址。"
           }
         }
       }
