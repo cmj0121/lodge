@@ -57,7 +57,7 @@ struct AddressBar: View {
             }
             AddressField(
                 text: $text, isEditing: $isFocused, address: copiedAddress, suggestions: suggestions,
-                panelRows: suggestions?.rows.count ?? 0, icon: pane.icon(for:),
+                completion: suggestions?.completion, panelRows: suggestions?.rows.count ?? 0, icon: pane.icon(for:),
                 choose: { pane.open($0, words: suggestions?.words ?? text) },
                 submit: { pane.load(text) })
             SiteSecurityButton(pane: pane)

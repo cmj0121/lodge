@@ -106,18 +106,61 @@ public enum SuggestionRanker {
             }
     }
 
+    /// The text to complete to when `typed` (no spaces) is a prefix of a candidate's host without `www.` (the host
+    /// itself when `typed` starts with `www.`), or, once `typed` reaches past the host, of host+path: the
+    /// best-ranked candidate's such text, nil otherwise. Only `http`/`https` pages complete. Case-insensitive; the
+    /// result keeps `typed` as typed and adds the rest, so it is always longer than `typed`. Best-ranked: a host
+    /// before a host+path, then `lastUsed` desc, then `useCount` desc, then the order given.
+    public static func completion(for typed: String, among candidates: [SuggestionCandidate]) -> String? {
+        guard !typed.isEmpty, !typed.contains(where: \.isWhitespace) else { return nil }
+        let keepsWWW = typed.range(of: "www.", options: [.caseInsensitive, .anchored]) != nil
+        var best: (rest: String, isHost: Bool, candidate: SuggestionCandidate)?
+        for candidate in candidates {
+            guard let scheme = candidate.url.scheme?.lowercased(), scheme == "https" || scheme == "http",
+                var host = candidate.url.host()?.lowercased(), !host.isEmpty
+            else { continue }
+            if !keepsWWW, host.hasPrefix("www.") { host.removeFirst(4) }
+            let found: (String, Bool)
+            if let rest = rest(of: host, after: typed) {
+                found = (rest, true)
+            } else if typed.count > host.count, let rest = rest(of: host + candidate.url.path(), after: typed) {
+                found = (rest, false)
+            } else {
+                continue
+            }
+            guard let current = best else {
+                best = (found.0, found.1, candidate)
+                continue
+            }
+            let isBetter =
+                found.1 != current.isHost ? found.1 : comesFirst(candidate, current.candidate, otherwise: false)
+            if isBetter { best = (found.0, found.1, candidate) }
+        }
+        return best.map { typed + $0.rest }
+    }
+
+    /// What `text` has after `typed` when `typed` is a strict prefix of it, ignoring case; nil otherwise.
+    private static func rest(of text: String, after typed: String) -> String? {
+        guard let found = text.range(of: typed, options: [.caseInsensitive, .anchored]),
+            found.upperBound < text.endIndex
+        else { return nil }
+        return String(text[found.upperBound...])
+    }
+
+    /// `lhs` before `rhs` by `lastUsed` desc (none last), then `useCount` desc; `otherwise` when they tie.
+    private static func comesFirst(_ lhs: SuggestionCandidate, _ rhs: SuggestionCandidate, otherwise: Bool) -> Bool {
+        if lhs.lastUsed != rhs.lastUsed { return (lhs.lastUsed ?? .distantPast) > (rhs.lastUsed ?? .distantPast) }
+        if lhs.useCount != rhs.useCount { return lhs.useCount > rhs.useCount }
+        return otherwise
+    }
+
     /// The candidates that match `words` (already folded), closest first, then most recent, then most used; the
     /// given order breaks the remaining ties.
     private static func ordered(_ candidates: [SuggestionCandidate], matching words: String) -> [SuggestionCandidate] {
         candidates.enumerated()
             .compactMap { index, candidate in match(words, candidate).map { (candidate, $0, index) } }
             .sorted { lhs, rhs in
-                if lhs.1 != rhs.1 { return lhs.1 < rhs.1 }
-                if lhs.0.lastUsed != rhs.0.lastUsed {
-                    return (lhs.0.lastUsed ?? .distantPast) > (rhs.0.lastUsed ?? .distantPast)
-                }
-                if lhs.0.useCount != rhs.0.useCount { return lhs.0.useCount > rhs.0.useCount }
-                return lhs.2 < rhs.2
+                lhs.1 != rhs.1 ? lhs.1 < rhs.1 : comesFirst(lhs.0, rhs.0, otherwise: lhs.2 < rhs.2)
             }
             .map(\.0)
     }
@@ -166,6 +209,9 @@ public enum SuggestionRanker {
     public var highlighted: Int?
     /// The words `rows` are for, as typed.
     public private(set) var words = ""
+    /// The address `words` complete to from this field's candidates (history included once read), longer than
+    /// `words`; nil when they complete to none.
+    public private(set) var completion: String?
 
     @ObservationIgnored private let history: (any HistorySource)?
     @ObservationIgnored private let local: LocalSources
@@ -192,9 +238,9 @@ public enum SuggestionRanker {
         delay = debounce
     }
 
-    /// Ranks the local sources and the last history read for `typed` at once, then reads history for it once typing
-    /// pauses; a newer `update` or `dismiss` drops a read under way. Blank text empties the list. Never touches the
-    /// network.
+    /// Ranks and completes `typed` from the local sources and the last history read at once, then reads history for
+    /// it once typing pauses; a newer `update` or `dismiss` drops a read under way. Blank text empties the list.
+    /// Never touches the network.
     public func update(_ typed: String) {
         words = typed
         highlighted = nil
@@ -203,6 +249,7 @@ public enum SuggestionRanker {
         let query = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
             rows = []
+            completion = nil
             return
         }
         rank()
@@ -229,15 +276,16 @@ public enum SuggestionRanker {
         highlighted = min((highlighted ?? -1) + 1, rows.count - 1)
     }
 
-    /// Closes the list; the next `update` opens it again.
+    /// Closes the list and drops the completion; the next `update` opens and completes again.
     public func dismiss() {
         historyRead?.cancel()
         historyRead = nil
         rows = []
         highlighted = nil
+        completion = nil
     }
 
-    /// Ranks for `words` again; a highlighted row still listed stays highlighted.
+    /// Ranks for `words` again, and completes them; a highlighted row still listed stays highlighted.
     private func rank() {
         let kept = highlighted.flatMap { rows.indices.contains($0) ? rows[$0] : nil }
         let sources = local()
@@ -245,5 +293,7 @@ public enum SuggestionRanker {
             words: words, engine: engine(), openTabs: sources.openTabs, bookmarks: sources.bookmarks,
             history: historyCandidates)
         highlighted = kept.flatMap { rows.firstIndex(of: $0) }
+        completion = SuggestionRanker.completion(
+            for: words, among: sources.openTabs + sources.bookmarks + historyCandidates)
     }
 }
