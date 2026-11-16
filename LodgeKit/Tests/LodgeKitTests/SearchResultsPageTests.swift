@@ -92,4 +92,30 @@ import Testing
         #expect(try #require(match("https://same.example/?q=x", [first, second])).engine == first)
         #expect(try #require(match("https://same.example/?q=x", [second, first])).engine == second)
     }
+
+    @Test(arguments: [
+        "https%3A%2F%2Fpaypal.com%2Flogin", "paypal.com%2Flogin", "paypal.com", "localhost:8080", "192.168.0.1",
+        "javascript%3Aalert(1)", "mailto%3Ame%40example.com", "data%3Atext%2Fhtml%2Chi", "JavaScript%3Ax",
+        "see+https%3A%2F%2Fpaypal.com", "file%3A%2F%2F%2Fetc%2Fpasswd", "lodge%3A%2F%2Fsettings",
+    ])
+    func wordsThatLookLikeAnAddressShowTheRealURL(_ value: String) {
+        #expect(match("https://www.google.com/search?q=\(value)") == nil)
+    }
+
+    @Test(arguments: [
+        "%E2%80%AEevil", "a%E2%80%AAb", "a%E2%80%ADb", "a%E2%81%A6b%E2%81%A9", "a%E2%81%A8b", "a%E2%80%8Bb",
+        "a%EF%BB%BFb", "a%0Ab", "a%0Db", "a%09b", "a%00b", "a%1Bb", "a%C2%85b", "a%E2%80%A8b", "swift%0A",
+    ])
+    func wordsThatHideWhatTheySayShowTheRealURL(_ value: String) {
+        #expect(match("https://duckduckgo.com/?q=\(value)") == nil)
+    }
+
+    @Test func runsOfSpaceCollapseAndPlainWordsAreShown() {
+        #expect(match("https://duckduckgo.com/?q=swift+++++concurrency")?.words == "swift concurrency")
+        #expect(match("https://duckduckgo.com/?q=a%20%E3%80%80%C2%A0b")?.words == "a b")
+        #expect(match("https://duckduckgo.com/?q=weather+in+taipei")?.words == "weather in taipei")
+        #expect(match("https://duckduckgo.com/?q=what+is+a+URL%3F")?.words == "what is a URL?")
+        #expect(match("https://duckduckgo.com/?q=time+12%3A30")?.words == "time 12:30")
+        #expect(match("https://duckduckgo.com/?q=%D7%A9%D7%9C%D7%95%D7%9D")?.words == "שלום")
+    }
 }
