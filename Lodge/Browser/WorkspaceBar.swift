@@ -4,9 +4,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// The sidebar's foot: one icon per workspace in bar order, New Workspace and Settings. A click switches, the
-/// context menu renames or changes the icon, and a drag reorders, Default staying first and Anonymous last: Anonymous
-/// has no edits and no drag, and a drop onto it lands just before it. Past a few workspaces the icons scroll:
-/// sideways in the sidebar, up and down in the rail.
+/// context menu renames, changes the icon or picks the search engine, and a drag reorders, Default staying first and
+/// Anonymous last: Anonymous offers only its search engine and no drag, and a drop onto it lands just before it.
+/// Past a few workspaces the icons scroll: sideways in the sidebar, up and down in the rail.
 struct WorkspaceBar: View {
     let coordinator: WorkspaceCoordinator
     let pane: BrowserPane
@@ -112,6 +112,7 @@ private struct WorkspaceIcon: View {
             if !isAnonymous {
                 Button("Change Icon…") { edit(.changeIcon(workspace.id)) }
             }
+            Button("Search Engine…", action: editSearch)
             if !workspace.isFixed {
                 Button("Delete…") { WorkspacePrompts.delete(workspace, coordinator: coordinator) }
             }
@@ -123,6 +124,7 @@ private struct WorkspaceIcon: View {
             if !isAnonymous {
                 Button("Change Icon…") { edit(.changeIcon(workspace.id)) }
             }
+            Button("Search Engine…", action: editSearch)
             if !workspace.isFixed {
                 Divider()
                 Button("Delete…") { WorkspacePrompts.delete(workspace, coordinator: coordinator) }
@@ -141,6 +143,15 @@ private struct WorkspaceIcon: View {
 
     private func edit(_ editor: WorkspaceEditor) {
         pane.showWorkspaceEditor(editor)
+    }
+
+    /// Default's engine is picked in Settings › Search; every other workspace's in its sheet.
+    private func editSearch() {
+        if workspace.kind == .default {
+            coordinator.open(.settings)
+        } else {
+            edit(.search(workspace.id))
+        }
     }
 
     private func move(by offset: Int) {

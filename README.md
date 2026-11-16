@@ -40,7 +40,9 @@ one you are in uses resources.
 | Light to use          | Idle workspaces stay quiet, switching is quick, and you pick up where you left off       |
 | Several windows       | ⌘N opens a window on the same workspaces; each shows its own tab and returns on relaunch |
 | Lodge pages           | `lodge://settings` and `lodge://history` open in a tab, one per workspace; sites can't   |
-| Settings tab          | ⌘, or the gear opens it: General, Downloads, About (version, macOS, data folder)         |
+| Settings tab          | ⌘, or the gear opens it: General, Search, Downloads, About (version, macOS, data folder) |
+| Search engine         | Each workspace searches with its own; pick it under Search Engine… in the workspace menu |
+| Default's engine      | Settings › Search picks it; custom ones follow it until they pick; Anonymous: DuckDuckGo |
 | Default browser       | Its General section makes Lodge the default; links from other apps open in a Default tab |
 | Credentials           | Passwords and passkeys come from the OS credential store, ready in every workspace       |
 | English and 繁體中文  | Follows macOS or Language & Region › Applications; workspace names stay English          |

@@ -149,9 +149,12 @@ struct BrowserPane {
     /// The shown tab's web view, built without loading when the tab has none.
     private var selectedView: LodgeWebView? { selectedID.flatMap { model.view(for: $0, load: false) } }
 
+    /// What text that is no address searches with: the workspace's engine at this moment.
+    private var searchEngine: SearchEngine { coordinator.searchCatalog(for: model.workspaceID).engine }
+
     /// Loads the address into the shown tab, or opens a loose tab on it when none is shown.
     func load(_ text: String) {
-        guard let url = AddressInput.url(from: text) else { return }
+        guard let url = AddressInput.url(from: text, engine: searchEngine) else { return }
         guard let id = selectedID else { return openLoose(url) }
         load(url, in: id)
         focusSelectedView()
@@ -193,7 +196,8 @@ struct BrowserPane {
     /// Goes where the prompt's text leads: a new tab shown here, or its tab (a new one if that tab has closed since).
     /// Text that makes no address (blank) leaves the prompt open.
     func submitLocation(_ text: String) {
-        guard let prompt = window.locationPrompt, let url = AddressInput.url(from: text) else { return }
+        guard let prompt = window.locationPrompt, let url = AddressInput.url(from: text, engine: searchEngine)
+        else { return }
         window.locationPrompt = nil
         if case .current(let id) = prompt, model.tabs[id] != nil {
             load(url, in: id)

@@ -351,6 +351,16 @@
         }
       }
     },
+    "Default and the workspaces that follow it search with this engine. Anonymous uses its own." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Default 及跟隨它的工作空間都以此引擎搜尋；Anonymous 使用自己的設定。"
+          }
+        }
+      }
+    },
     "Default browser" : {
       "localizations" : {
         "zh-Hant" : {
@@ -557,6 +567,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "檔案夾，已展開"
+          }
+        }
+      }
+    },
+    "Follow Default (%@)" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跟隨 Default（%@）"
           }
         }
       }
@@ -1001,6 +1021,16 @@
         }
       }
     },
+    "Only searches made from now on use it; open pages stay as they are." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有之後的搜尋會使用；已開啟的頁面維持不變。"
+          }
+        }
+      }
+    },
     "Open" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1311,6 +1341,36 @@
         }
       }
     },
+    "Search" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋"
+          }
+        }
+      }
+    },
+    "Search Engine" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋引擎"
+          }
+        }
+      }
+    },
+    "Search Engine…" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋引擎…"
+          }
+        }
+      }
+    },
     "Search History" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1337,6 +1397,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜尋或輸入網址"
+          }
+        }
+      }
+    },
+    "Search with" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋時使用"
           }
         }
       }
