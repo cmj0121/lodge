@@ -37,7 +37,7 @@ struct BrowserCommands: Commands {
                 .shortcut(.openLocation, enabled: !noPane)
         }
         CommandGroup(replacing: .saveItem) {
-            Button(isBrowserWindow == true ? ShortcutCatalog[.closeTab].title : "Close Window") {
+            Button(isBrowserWindow == true ? ShortcutCatalog[.closeTab].title : String(localized: "Close Window")) {
                 if isBrowserWindow == true { pane?.closeSelectedTab() } else { NSApp.keyWindow?.performClose(nil) }
             }
                 .shortcut(.closeTab)
@@ -67,7 +67,7 @@ struct BrowserCommands: Commands {
             Button("Stop") { pane?.stopLoading() }
                 .disabled(noPane)
             Divider()
-            Button(pane?.window.isDownloadsVisible == true ? "Hide Downloads" : "Show Downloads") { pane?.toggleDownloads() }
+            Button(pane?.window.isDownloadsVisible == true ? String(localized: "Hide Downloads") : String(localized: "Show Downloads")) { pane?.toggleDownloads() }
                 .shortcut(.toggleDownloads, enabled: !noPane)
             Divider()
             Button(ShortcutCatalog[.zoomIn].title) { pane?.zoomIn() }
@@ -91,7 +91,7 @@ struct BrowserCommands: Commands {
         CommandMenu("Bookmarks") {
             Button(ShortcutCatalog[.bookmarkTab].title) { pane?.bookmarkSelectedTab() }
                 .shortcut(.bookmarkTab, enabled: canAddLink)
-            Button(pane?.isSelectedTabPinned == true ? "Unpin Tab" : "Pin This Tab") { pane?.togglePinSelectedTab() }
+            Button(pane?.isSelectedTabPinned == true ? String(localized: "Unpin Tab") : String(localized: "Pin This Tab")) { pane?.togglePinSelectedTab() }
                 .disabled(!canAddLink)
             Button("New Folder…") { if let model = pane?.model { BookmarkPrompts.newFolder(in: nil, model: model) } }
                 .disabled(noPane)

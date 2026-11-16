@@ -36,6 +36,8 @@ public struct DialogGate: Sendable {
 
     /// Dialog title naming the frame's origin; an opaque one is named as an embedded page.
     public static func title(for origin: Origin) -> String {
-        origin.isOpaque ? "An embedded page says" : "\(origin) says"
+        origin.isOpaque
+            ? String(localized: "An embedded page says", bundle: .module)
+            : String(localized: "\(origin.description) says", bundle: .module)
     }
 }

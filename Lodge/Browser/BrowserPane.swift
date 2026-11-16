@@ -15,6 +15,9 @@ struct BrowserPane {
 
     var selected: BrowserTab? { selectedID.flatMap { model.tabs[$0] } }
 
+    /// The shown tab when it has no page and none loading: the blank tab an empty window or a closed last tab leaves.
+    private var selectedBlankTab: BrowserTab? { selected.flatMap { $0.url == nil && !$0.isLoading ? $0 : nil } }
+
     /// The window's title: "Anonymous" whatever its tab shows, else the shown tab's title.
     var windowTitle: String { model.isAnonymous ? Workspace.anonymousName : selected?.displayTitle ?? "Lodge" }
 
@@ -98,7 +101,7 @@ struct BrowserPane {
 
     /// A link from another app: it loads in the blank tab shown here, else in a new tab shown here.
     func openExternal(_ url: URL) {
-        if let blank = selected, blank.url == nil, !blank.isLoading {
+        if let blank = selectedBlankTab {
             load(url, in: blank.id)
         } else {
             openLoose(url)
@@ -167,7 +170,7 @@ struct BrowserPane {
         window.locationPrompt = nil
         if case .current(let id) = prompt, model.tabs[id] != nil {
             load(url, in: id)
-        } else if case .newTab = prompt, let blank = selected, blank.url == nil, !blank.isLoading {
+        } else if case .newTab = prompt, let blank = selectedBlankTab {
             // The blank tab an empty window or closing the last tab leaves takes the page, so no empty New Tab row
             // is left behind.
             load(url, in: blank.id)
@@ -219,10 +222,13 @@ struct BrowserPane {
     }
 
     /// Makes the shown page first responder; a view not in a window yet (a tab just opened) takes focus when
-    /// SwiftUI puts it in one.
+    /// SwiftUI puts it in one. A blank tab's web view never loaded, so it would swallow the menu's key equivalents
+    /// (⌘T included); the window keeps the keys instead.
     private func focusSelectedView() {
         guard let view = selectedView else { return }
-        if let window = view.window {
+        if selectedBlankTab != nil {
+            view.window?.makeFirstResponder(nil)
+        } else if let window = view.window {
             window.makeFirstResponder(view)
         } else {
             view.focusesWhenShown = true
@@ -314,7 +320,7 @@ struct BrowserPane {
     func hideShortcutHelp() {
         guard window.isShortcutHelpVisible else { return }
         window.isShortcutHelpVisible = false
-        if let view = selectedView { view.window?.makeFirstResponder(view) }
+        focusSelectedView()
     }
 
     func toggleShortcutHelp() {
@@ -332,7 +338,7 @@ struct BrowserPane {
 
     func hideFind() {
         window.dismissFind()
-        if let view = selectedView { view.window?.makeFirstResponder(view) }
+        focusSelectedView()
     }
 
     func findNext() { find(backwards: false) }

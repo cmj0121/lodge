@@ -21,6 +21,6 @@ public enum DownloadOpenRisk {
     }
 
     public static func confirmation(for fileName: String) -> String {
-        "“\(fileName)” is an app or script. Open it anyway?"
+        String(localized: "“\(fileName)” is an app or script. Open it anyway?", bundle: .module)
     }
 }

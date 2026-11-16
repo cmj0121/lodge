@@ -150,8 +150,8 @@ private struct CrashedPlaceholder: View {
             Label("This page stopped working", systemImage: "exclamationmark.triangle")
         } description: {
             Text(
-                host.map { "The web content process for \($0) ended unexpectedly." }
-                    ?? "The web content process ended unexpectedly.")
+                host.map { String(localized: "The web content process for \($0) ended unexpectedly.") }
+                    ?? String(localized: "The web content process ended unexpectedly."))
         } actions: {
             Button("Reload Page", action: reload)
                 .keyboardShortcut(.defaultAction)

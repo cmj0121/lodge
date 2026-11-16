@@ -19,8 +19,8 @@ public struct HistoryDay: Identifiable, Equatable, Sendable {
             .map { day, visits in
                 let title =
                     switch day {
-                    case today: "Today"
-                    case yesterday: "Yesterday"
+                    case today: String(localized: "Today", bundle: .module)
+                    case yesterday: String(localized: "Yesterday", bundle: .module)
                     default: day.formatted(format)
                     }
                 return HistoryDay(id: day, title: title, visits: visits)

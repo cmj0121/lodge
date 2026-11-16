@@ -199,11 +199,11 @@ enum WorkspacePrompts {
     static func delete(_ workspace: Workspace, coordinator: WorkspaceCoordinator) {
         guard workspace.kind == .custom else { return }
         let alert = NSAlert()
-        alert.messageText = "Delete “\(workspace.name)”?"
-        alert.informativeText =
-            "Its tabs close, and its bookmarks, history, sign-ins and site data are deleted. This cannot be undone."
-        alert.addButton(withTitle: "Delete").hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "Delete “\(workspace.name)”?")
+        alert.informativeText = String(
+            localized: "Its tabs close, and its bookmarks, history, sign-ins and site data are deleted. This cannot be undone.")
+        alert.addButton(withTitle: String(localized: "Delete")).hasDestructiveAction = true
+        alert.addButton(withTitle: String(localized: "Cancel"))
         let handle = { (response: NSApplication.ModalResponse) in
             guard response == .alertFirstButtonReturn else { return }
             Task { await coordinator.delete(workspace.id) }

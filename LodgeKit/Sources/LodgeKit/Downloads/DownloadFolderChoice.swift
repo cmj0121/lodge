@@ -58,9 +58,11 @@ public struct DownloadFolderChoice: Equatable, Sendable {
 
         public var title: String {
             switch self {
-            case .downloads: "Downloads"
-            case .custom(let name): name
-            case .unavailable(let name): "\(name ?? "Chosen folder") (unavailable)"
+            case .downloads: return String(localized: "Downloads", bundle: .module)
+            case .custom(let name): return name
+            case .unavailable(let name):
+                let folder = name ?? String(localized: "Chosen folder", bundle: .module)
+                return String(localized: "\(folder) (unavailable)", bundle: .module)
             }
         }
     }

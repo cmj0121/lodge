@@ -20,7 +20,8 @@ public struct DownloadRowModel: Equatable, Sendable {
     public let actions: [Action]
 
     /// The note on a finished private file whose source address could not be removed.
-    public static let keptOriginNote = "Couldn't remove the source address from this file"
+    public static let keptOriginNote = String(
+        localized: "Couldn't remove the source address from this file", bundle: .module)
 
     /// `isMissing`: a finished item's file cannot be reached; ignored in every other state. `keptOrigin`: a finished
     /// private file still names its source (`keptOriginNote`).
@@ -28,13 +29,13 @@ public struct DownloadRowModel: Equatable, Sendable {
         let retry: [Action] = item.canRetry(isMissing: isMissing) ? [.retry] : []
         switch item.state {
         case .waitingForLocation:
-            status = "Waiting for location…"
+            status = String(localized: "Waiting for location…", bundle: .module)
             progress = .none
             actions = [.cancel]
         case .running:
             let received = Self.size(item.receivedBytes)
             if let total = item.totalBytes {
-                status = "\(received) of \(Self.size(total))"
+                status = String(localized: "\(received) of \(Self.size(total))", bundle: .module)
                 progress =
                     total > 0 ? .determinate(Double(min(item.receivedBytes, total)) / Double(total)) : .indeterminate
             } else {
@@ -43,7 +44,7 @@ public struct DownloadRowModel: Equatable, Sendable {
             }
             actions = [.cancel]
         case .finished where isMissing:
-            status = "File moved or deleted"
+            status = String(localized: "File moved or deleted", bundle: .module)
             progress = .none
             actions = retry + [.remove]
         case .finished:
@@ -51,15 +52,15 @@ public struct DownloadRowModel: Equatable, Sendable {
             progress = .none
             actions = [.open, .showInFinder, .remove]
         case .failed(let reason):
-            status = "Failed — \(reason)"
+            status = String(localized: "Failed — \(reason)", bundle: .module)
             progress = .none
             actions = retry + [.remove]
         case .cancelled:
-            status = "Cancelled"
+            status = String(localized: "Cancelled", bundle: .module)
             progress = .none
             actions = retry + [.remove]
         case .interrupted:
-            status = "Interrupted"
+            status = String(localized: "Interrupted", bundle: .module)
             progress = .none
             actions = retry + [.remove]
         }

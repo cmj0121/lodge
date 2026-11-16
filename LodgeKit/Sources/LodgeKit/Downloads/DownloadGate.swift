@@ -114,6 +114,6 @@ public struct DownloadGate: Sendable {
     }
 
     public static func prompt(for site: Origin) -> String {
-        "Allow \(site.host) to download multiple files?"
+        String(localized: "Allow \(site.host) to download multiple files?", bundle: .module)
     }
 }

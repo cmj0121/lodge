@@ -10,15 +10,15 @@ public enum WorkspaceColor: String, Codable, Sendable, CaseIterable {
     /// The spoken name.
     public var label: String {
         switch self {
-        case .red: "Red"
-        case .orange: "Orange"
-        case .yellow: "Yellow"
-        case .green: "Green"
-        case .teal: "Teal"
-        case .blue: "Blue"
-        case .purple: "Purple"
-        case .pink: "Pink"
-        case .graphite: "Graphite"
+        case .red: String(localized: "Red", bundle: .module)
+        case .orange: String(localized: "Orange", bundle: .module)
+        case .yellow: String(localized: "Yellow", bundle: .module)
+        case .green: String(localized: "Green", bundle: .module)
+        case .teal: String(localized: "Teal", bundle: .module)
+        case .blue: String(localized: "Blue", bundle: .module)
+        case .purple: String(localized: "Purple", bundle: .module)
+        case .pink: String(localized: "Pink", bundle: .module)
+        case .graphite: String(localized: "Graphite", bundle: .module)
         }
     }
 }

@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "LodgeKit",
+    defaultLocalization: "en",
     platforms: [.macOS(.v26)],
     products: [
         .library(name: "LodgeKit", targets: ["LodgeKit"])
@@ -17,7 +18,8 @@ let package = Package(
             dependencies: [
                 .product(name: "SwiftSoup", package: "SwiftSoup"),
                 .product(name: "GRDB", package: "GRDB.swift"),
-            ]),
+            ],
+            resources: [.process("Resources")]),
         .testTarget(name: "LodgeKitTests", dependencies: ["LodgeKit"]),
     ]
 )

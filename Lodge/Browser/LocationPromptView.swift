@@ -33,8 +33,8 @@ private struct LocationPromptCard: View {
 
     private var destination: String {
         switch prompt {
-        case .newTab: "Opens in a new tab"
-        case .current: "Opens in this tab"
+        case .newTab: String(localized: "Opens in a new tab")
+        case .current: String(localized: "Opens in this tab")
         }
     }
 
@@ -85,7 +85,7 @@ private struct LocationPromptCard: View {
 /// ⏎ drawn as the shortcut overlay draws its key caps.
 private struct ReturnKeyCap: View {
     var body: some View {
-        Text("⏎")
+        Text(verbatim: "⏎")
             .font(.system(size: 12, weight: .medium))
             .frame(minWidth: 20, minHeight: 20)
             .background(.fill.tertiary, in: .rect(cornerRadius: 5))

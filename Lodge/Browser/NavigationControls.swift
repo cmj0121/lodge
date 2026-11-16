@@ -19,7 +19,7 @@ struct NavigationButtons: View {
             } else {
                 Button("Reload", systemImage: "arrow.clockwise", action: pane.reload)
                     .disabled(pane.selected?.url == nil)
-                    .help(ShortcutCatalog.tooltip("Reload this page", for: .reload))
+                    .help(ShortcutCatalog.tooltip(String(localized: "Reload this page"), for: .reload))
             }
         }
         .labelStyle(.iconOnly)

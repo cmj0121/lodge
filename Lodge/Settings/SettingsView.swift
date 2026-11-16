@@ -95,8 +95,8 @@ struct SettingsView: View {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        panel.prompt = "Choose"
-        panel.message = "Choose a folder for downloads."
+        panel.prompt = String(localized: "Choose")
+        panel.message = String(localized: "Choose a folder for downloads.")
         panel.directoryURL = model.folder
         // The panel's grant on the folder is held until Lodge quits, so the model can bookmark it afterwards.
         let chosen = panel.runModal() == .OK ? panel.url : nil

@@ -160,7 +160,7 @@ private struct HistoryRow: View {
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title), \(host), \(time)")
+        .accessibilityLabel(Text(verbatim: "\(title), \(host), \(time)"))
         .accessibilityHint("Opens the page in a new tab")
     }
 }
@@ -171,10 +171,11 @@ enum HistoryPrompts {
     static func clearAll(model: HistoryModel) {
         guard model.canClearAll else { return }
         let alert = NSAlert()
-        alert.messageText = "Clear all history?"
-        alert.informativeText = "This removes every page from this workspace's history. Open tabs keep their back and forward pages."
-        alert.addButton(withTitle: "Clear All History").hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "Clear all history?")
+        alert.informativeText = String(
+            localized: "This removes every page from this workspace's history. Open tabs keep their back and forward pages.")
+        alert.addButton(withTitle: String(localized: "Clear All History")).hasDestructiveAction = true
+        alert.addButton(withTitle: String(localized: "Cancel"))
         let handle = { (response: NSApplication.ModalResponse) in
             if response == .alertFirstButtonReturn { model.clearAll() }
         }
