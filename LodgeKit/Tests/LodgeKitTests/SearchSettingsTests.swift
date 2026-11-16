@@ -270,3 +270,256 @@ import Testing
         #expect(pending.content(of: work.id) == nil)
     }
 }
+
+@Suite struct CustomEngineTests {
+    private let work = Workspace(name: "Work", symbol: "briefcase")
+    private let play = Workspace(name: "Play", symbol: "gamecontroller")
+    private static let kagi = SearchEngine.builtIns[3]
+    private static let template = "https://example.com/search?q=%s"
+
+    @Test func addRenameEditAndRemove() throws {
+        var settings = SearchSettings()
+        let added = try settings.add(name: " Example ", template: " \(Self.template) ", to: work.id)
+        #expect(added.name == "Example")
+        #expect(added.template == Self.template)
+        #expect(UUID(uuidString: added.id) != nil)
+        #expect(!added.isBuiltIn)
+        #expect(settings[work.id].engines == [added])
+        try settings.choose(added.id, for: work)
+        try settings.update(added.id, name: "Renamed", template: "https://other.example/?s=%s", in: work.id)
+        let edited = try #require(settings[work.id].engines.first)
+        #expect(edited.id == added.id)
+        #expect(edited.name == "Renamed")
+        #expect(edited.template == "https://other.example/?s=%s")
+        #expect(settings.catalog(for: work).engine == edited)
+        try settings.remove(added.id, from: work.id)
+        #expect(settings[work.id].engines.isEmpty)
+        #expect(settings[work.id].choice == added.id)
+    }
+
+    @Test func refusedEditsChangeNothing() throws {
+        var settings = SearchSettings()
+        let added = try settings.add(name: "Example", template: Self.template, to: Workspace.defaultID)
+        let before = settings
+        #expect(throws: SearchEngine.EditError.missingPlaceholder) {
+            try settings.add(name: "X", template: "https://x.example/", to: work.id)
+        }
+        #expect(throws: SearchEngine.EditError.unsupportedScheme) {
+            try settings.update(added.id, name: "X", template: "ftp://x.example/%s", in: Workspace.defaultID)
+        }
+        #expect(throws: SearchEngine.EditError.emptyName) {
+            try settings.update(added.id, name: "  ", template: Self.template, in: Workspace.defaultID)
+        }
+        #expect(throws: SearchEngine.EditError.unknown(added.id)) {
+            try settings.update(added.id, name: "X", template: Self.template, in: work.id)
+        }
+        #expect(throws: SearchEngine.EditError.unknown(added.id)) { try settings.remove(added.id, from: work.id) }
+        #expect(throws: SearchEngine.EditError.unknown("nope")) {
+            try settings.remove("nope", from: Workspace.defaultID)
+        }
+        #expect(settings == before)
+    }
+
+    @Test func builtInsCannotBeEditedOrRemoved() {
+        var settings = SearchSettings()
+        for engine in SearchEngine.builtIns {
+            #expect(throws: SearchEngine.EditError.builtInIsFixed) {
+                try settings.remove(engine.id, from: Workspace.defaultID)
+            }
+            #expect(throws: SearchEngine.EditError.builtInIsFixed) {
+                try settings.update(engine.id, name: "X", template: Self.template, in: work.id)
+            }
+        }
+        #expect(settings == SearchSettings())
+        #expect(settings.catalog(for: .default).available == SearchEngine.builtIns)
+    }
+
+    @Test func defaultsEnginesAreEverywhereAndOwnEnginesStayHome() throws {
+        var settings = SearchSettings()
+        let shared = try settings.add(name: "Shared", template: Self.template, to: Workspace.defaultID)
+        let own = try settings.add(name: "Own", template: "https://own.example/?q=%s", to: work.id)
+        let hidden = try settings.add(
+            name: "Hidden", template: "https://hidden.example/?q=%s", to: Workspace.anonymousID)
+        #expect(settings.catalog(for: .default).available == SearchEngine.builtIns + [shared])
+        #expect(settings.catalog(for: work).available == SearchEngine.builtIns + [shared, own])
+        #expect(settings.catalog(for: play).available == SearchEngine.builtIns + [shared])
+        #expect(settings.catalog(for: .anonymous).available == SearchEngine.builtIns + [shared, hidden])
+        try settings.choose(shared.id, for: .anonymous)
+        #expect(settings.catalog(for: .anonymous).engine == shared)
+        #expect(throws: SearchEngine.EditError.unknown(own.id)) { try settings.choose(own.id, for: play) }
+        #expect(throws: SearchEngine.EditError.unknown(hidden.id)) { try settings.choose(hidden.id, for: .default) }
+    }
+
+    @Test func anAddedEngineAsDefaultSearchesWithTheWordsInPlaceOfThePlaceholder() throws {
+        var settings = SearchSettings()
+        let added = try settings.add(name: "Example", template: Self.template, to: Workspace.defaultID)
+        try settings.choose(added.id, for: .default)
+        #expect(settings.catalog(for: work).engine == added)
+        #expect(settings.catalog(for: work).followsDefault)
+        let engine = settings.catalog(for: work).engine
+        #expect(AddressInput.url(from: "lodge browser", engine: engine)?.absoluteString
+            == "https://example.com/search?q=lodge%20browser")
+    }
+
+    @Test func removalFallsBackPerWorkspaceKindAndKeepsTheStoredChoice() throws {
+        var settings = SearchSettings()
+        let shared = try settings.add(name: "Shared", template: Self.template, to: Workspace.defaultID)
+        let own = try settings.add(name: "Own", template: "https://own.example/?q=%s", to: work.id)
+        try settings.choose(Self.kagi.id, for: .default)
+        try settings.choose(own.id, for: work)
+        try settings.choose(shared.id, for: play)
+        try settings.choose(shared.id, for: .anonymous)
+        try settings.remove(own.id, from: work.id)
+        let workCatalog = settings.catalog(for: work)
+        #expect(workCatalog.engine == Self.kagi)
+        #expect(workCatalog.choice == own.id)
+        #expect(!workCatalog.followsDefault)
+        #expect(!workCatalog.available.contains { $0.id == own.id })
+        try settings.choose(shared.id, for: .default)
+        try settings.remove(shared.id, from: Workspace.defaultID)
+        #expect(settings.catalog(for: .default).engine == .duckDuckGo)
+        #expect(settings.catalog(for: .default).choice == shared.id)
+        #expect(settings.catalog(for: play).engine == .duckDuckGo)
+        #expect(settings.catalog(for: play).choice == shared.id)
+        #expect(settings.catalog(for: .anonymous).engine == .duckDuckGo)
+        #expect(settings[Workspace.anonymousID].choice == shared.id)
+        #expect(settings[work.id].choice == own.id)
+    }
+
+    @Test func aCustomWorkspaceFallsBackToDefaultsEngineAfterRemoval() throws {
+        var settings = SearchSettings()
+        let shared = try settings.add(name: "Shared", template: Self.template, to: Workspace.defaultID)
+        try settings.choose(Self.kagi.id, for: .default)
+        try settings.choose(shared.id, for: play)
+        try settings.remove(shared.id, from: Workspace.defaultID)
+        #expect(settings.catalog(for: play).engine == Self.kagi)
+        #expect(settings.catalog(for: play).choice == shared.id)
+    }
+
+    @Test func dependentsAreTheOtherWorkspacesChoosingADefaultEngine() throws {
+        var settings = SearchSettings()
+        let shared = try settings.add(name: "Shared", template: Self.template, to: Workspace.defaultID)
+        let own = try settings.add(name: "Own", template: "https://own.example/?q=%s", to: work.id)
+        #expect(settings.dependents(of: shared.id).isEmpty)
+        try settings.choose(shared.id, for: .default)
+        try settings.choose(shared.id, for: play)
+        try settings.choose(shared.id, for: .anonymous)
+        try settings.choose(own.id, for: work)
+        #expect(Set(settings.dependents(of: shared.id)) == [play.id, Workspace.anonymousID])
+        #expect(settings.dependents(of: shared.id).count == 2)
+        #expect(settings.dependents(of: own.id).isEmpty)
+        #expect(settings.dependents(of: Self.kagi.id).isEmpty)
+    }
+
+    @Test func dropForgetsTheWorkspacesEngines() throws {
+        var settings = SearchSettings()
+        try settings.add(name: "Own", template: Self.template, to: work.id)
+        settings.drop(work.id)
+        #expect(settings[work.id] == .empty)
+        #expect(settings.catalog(for: work).available == SearchEngine.builtIns)
+    }
+
+    @Test func everyRefusalHasItsOwnMessage() {
+        let errors: [SearchEngine.EditError] = [
+            .emptyName, .missingPlaceholder, .unsupportedScheme, .invalidAddress, .builtInIsFixed, .unknown("x"),
+        ]
+        let messages = errors.map(\.message)
+        #expect(Set(messages).count == errors.count)
+        #expect(messages.allSatisfy { !$0.isEmpty })
+        #expect(SearchEngine.EditError.missingPlaceholder.message.contains("%s"))
+    }
+}
+
+@Suite struct CustomEnginePersistenceTests {
+    private let work = Workspace(name: "Work", symbol: "briefcase")
+    private static let template = "https://example.com/search?q=%s"
+
+    @Test func anonymousEnginesAndChoiceSurviveWhileItsTabsDoNot() throws {
+        var settings = SearchSettings()
+        let added = try settings.add(name: "Mine", template: Self.template, to: Workspace.anonymousID)
+        try settings.choose(added.id, for: .anonymous)
+        let tab = BrowserTab(url: URL(string: "https://example.com/search?q=secretwords")!, title: "secretwords")
+        let original = SessionSnapshot(
+            workspaces: [
+                .init(workspace: .default, content: .empty),
+                .init(
+                    workspace: .anonymous,
+                    content: .init(
+                        tabs: TabList(tabs: [tab]), library: LinkLibrary(), selectedTab: tab.id,
+                        search: settings[Workspace.anonymousID])),
+            ],
+            windows: [.init(activeWorkspace: Workspace.defaultID)], pendingDeletions: [])
+        let text = String(decoding: try original.encoded(), as: UTF8.self)
+        #expect(!text.contains("secretwords"))
+        let decoded = try SessionSnapshot.decode(Data(text.utf8))
+        let anonymous = try #require(decoded.content(of: Workspace.anonymousID))
+        #expect(anonymous.tabs.isEmpty)
+        #expect(anonymous.search == WorkspaceSearch(engines: [added], choice: added.id))
+        let restored = SearchSettings([Workspace.anonymousID: anonymous.search])
+        #expect(restored.catalog(for: .anonymous).engine == added)
+    }
+
+    @Test func addedEnginesAndARemovedChoiceRoundTrip() throws {
+        var settings = SearchSettings()
+        let shared = try settings.add(name: "Shared", template: Self.template, to: Workspace.defaultID)
+        let own = try settings.add(name: "Own", template: "https://own.example/?q=%s", to: work.id)
+        try settings.choose(shared.id, for: work)
+        try settings.remove(shared.id, from: Workspace.defaultID)
+        let original = SessionSnapshot(
+            workspaces: [Workspace.default, work].map {
+                .init(
+                    workspace: $0,
+                    content: .init(tabs: TabList(), library: LinkLibrary(), selectedTab: nil, search: settings[$0.id]))
+            },
+            windows: [.init(activeWorkspace: Workspace.defaultID)], pendingDeletions: [])
+        let decoded = try SessionSnapshot.decode(original.encoded())
+        let restored = SearchSettings(
+            Dictionary(uniqueKeysWithValues: decoded.workspaces.map { ($0.workspace.id, $0.content.search) }))
+        #expect(restored == settings)
+        #expect(restored.catalog(for: work).available == SearchEngine.builtIns + [own])
+        #expect(restored.catalog(for: work).engine == .duckDuckGo)
+        #expect(restored.catalog(for: work).choice == shared.id)
+    }
+
+    /// A v4 file from a build that knew built-in choices only, its custom workspace naming an engine it never had.
+    private static let older = """
+        {
+          "pendingDeletions" : [],
+          "version" : 4,
+          "windows" : [{ "activeWorkspace" : "00000000-0000-0000-0000-000000000000" }],
+          "workspaces" : [
+            {
+              "content" : {
+                "bookmarks" : { "children" : [], "id" : "F0000000-0000-0000-0000-000000000001", "isExpanded" : true, "title" : "Bookmarks" },
+                "pins" : [],
+                "search" : { "choice" : "kagi" },
+                "tabs" : []
+              },
+              "workspace" : { "id" : "00000000-0000-0000-0000-000000000000", "kind" : "default", "name" : "Default", "symbol" : "square.stack.3d.up" }
+            },
+            {
+              "content" : {
+                "bookmarks" : { "children" : [], "id" : "F0000000-0000-0000-0000-000000000002", "isExpanded" : true, "title" : "Bookmarks" },
+                "pins" : [],
+                "search" : { "choice" : "5A1C0000-0000-0000-0000-00000000BEEF" },
+                "tabs" : []
+              },
+              "workspace" : { "id" : "D0000000-0000-0000-0000-000000000001", "kind" : "custom", "name" : "Work", "symbol" : "briefcase" }
+            }
+          ]
+        }
+        """
+
+    @Test func anOlderFileWithAnUnknownChoiceFallsBackAndAcceptsNewEngines() throws {
+        let decoded = try SessionSnapshot.decode(Data(Self.older.utf8))
+        var settings = SearchSettings(
+            Dictionary(uniqueKeysWithValues: decoded.workspaces.map { ($0.workspace.id, $0.content.search) }))
+        let work = try #require(decoded.workspaceList[UUID(uuidString: "D0000000-0000-0000-0000-000000000001")!])
+        #expect(settings[work.id].engines.isEmpty)
+        #expect(settings.catalog(for: work).engine == SearchEngine.builtIns[3])
+        #expect(settings.catalog(for: work).choice == "5A1C0000-0000-0000-0000-00000000BEEF")
+        let added = try settings.add(name: "Mine", template: Self.template, to: work.id)
+        try settings.choose(added.id, for: work)
+        #expect(settings.catalog(for: work).engine == added)
+    }
+}
