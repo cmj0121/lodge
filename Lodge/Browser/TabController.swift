@@ -21,6 +21,8 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var gestures = NavigationGestures()
     /// The next main-frame action is a load the browser started (`browserWillLoad()`).
     private var nextLoadIsBrowserInitiated = false
+    /// A main-frame form submission is loading; it holds the page (`PageWork`) until that load ends.
+    private var isFormPostLoading = false
     #if DEBUG
         /// Layout self-checks: how many `lodge:` navigations and popups every tab has refused.
         static var lodgeRefusals = 0
@@ -150,6 +152,12 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             model?.open(url: url, from: tab)
             return (.cancel, preferences)
         }
+        // A form aimed at a new window (`target=_blank`) has no target frame here: it loads in the popup, not this tab.
+        if navigationAction.targetFrame?.isMainFrame == true,
+            [.formSubmitted, .formResubmitted].contains(navigationAction.navigationType)
+        {
+            setFormPostLoading(true)
+        }
         return (.allow, preferences)
     }
 
@@ -220,14 +228,35 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             sendHistory(history.committed(url, title: webView.title ?? "", store: store, isRestore: isRestore))
         }
         favicons.pageCommitted(webView.url)
+        model?.resetWork(tab)
         model?.update(tab) { $0.hasCrashed = false }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         favicons.pageFinished(in: webView)
+        setFormPostLoading(false)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        setFormPostLoading(false)
+    }
+
+    func webView(
+        _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error
+    ) {
+        setFormPostLoading(false)
+    }
+
+    /// Tells the model when a main-frame form submission starts or stops loading.
+    private func setFormPostLoading(_ loading: Bool) {
+        guard loading != isFormPostLoading else { return }
+        isFormPostLoading = loading
+        model?.formPost(inFlight: loading, in: tab)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        setFormPostLoading(false)
+        model?.resetWork(tab)
         model?.update(tab) {
             $0.hasCrashed = true
             $0.isLoading = false

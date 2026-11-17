@@ -48,6 +48,7 @@
             checkStepSkipsShownElsewhere()
             checkExternalLinks()
             checkLodgePages()
+            checkWorkHolds()
             renderSettings(in: directory)
             renderHistory(in: directory)
             renderDownloads(in: directory)
@@ -944,6 +945,138 @@
             report(
                 "Its bookmark still opens the Lodge page",
                 model.tab(showing: .history).map { $0.id != history.id && $0.link == bookmark.id } == true)
+            settle()
+        }
+
+        /// Checks in the background, printing ok or FAILED, that unsent work keeps a hidden workspace's tab: text
+        /// inserted into a field of an offscreen page (`insertText`, no keyboard) keeps the tab's web view when its
+        /// workspace is left, and the page sending the form, or emptying the field, lets it go at once. A form posted
+        /// into a new window does not hold its opener. A page whose `beforeunload` handler cancels is kept (best
+        /// effort) and asked only once however often the release is retried within the re-ask interval, then released
+        /// on a retry after it once the handler is gone; one whose handler stalls is released
+        /// after the probe's deadline. The pages are HTML strings, so no request goes out.
+        private static func checkWorkHolds() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            func waitUntil(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(5)
+                while !done(), Date.now < deadline { settle(0.05) }
+                return done()
+            }
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            coordinator.bringForwardHook = { _ in }
+            let window = coordinator.windows[0]
+            window.locationPrompt = .newTab
+            let hostWindow = host(root(coordinator, window), size: NSSize(width: 900, height: 600))
+            defer { hostWindow.close() }
+            let pane = coordinator.pane(for: window)
+            let model = pane.model
+            pane.submitLocation("about:blank")
+            guard let tab = pane.selected, let made = try? coordinator.create(name: "Work", symbol: "briefcase") else {
+                return report("Typed text keeps a hidden workspace's tab", false)
+            }
+            /// Shows the tab on a fresh page, with "draft" typed into its field `f` when `typing`.
+            func show(_ name: String, _ body: String, typing: Bool = false) -> LodgeWebView? {
+                coordinator.switchTo(Workspace.defaultID)
+                coordinator.pane(for: window).select(tab.id)
+                guard let view = model.view(for: tab.id, load: false) else { return nil }
+                view.loadHTMLString("<!doctype html><title>\(name)</title><body>\(body)</body>", baseURL: nil)
+                guard waitUntil({ view.title == name && !view.isLoading }) else { return nil }
+                settle()
+                if typing {
+                    hostWindow.makeFirstResponder(view)
+                    view.evaluateJavaScript("document.getElementById('f').focus()")
+                    settle()
+                    view.insertText("draft")
+                    guard waitUntil({ model.hasUnsentWork(tab.id) }) else { return nil }
+                }
+                return view
+            }
+            /// Leaves the workspace and says whether the view is still there a moment later.
+            func keptAfterLeaving(_ view: LodgeWebView) -> Bool {
+                coordinator.switchTo(made.id)
+                settle(1.5)
+                return coordinator.registry.webView(for: tab.id) === view
+            }
+            func pageValue(_ view: LodgeWebView, _ script: String) -> Any? {
+                var answer: Any?
+                var done = false
+                view.evaluateJavaScript(script) { value, _ in
+                    answer = value
+                    done = true
+                }
+                _ = waitUntil { done }
+                return answer
+            }
+
+            let form = "<form id=form onsubmit='return false'><input id=f></form>"
+            let endings = [
+                ("Typed text keeps a hidden workspace's tab until the form is sent", "form.requestSubmit()"),
+                (
+                    "Typed text keeps a hidden workspace's tab until the field is emptied",
+                    "f.value = ''; f.dispatchEvent(new Event('input', {bubbles: true}))"
+                ),
+            ]
+            for (index, (name, ending)) in endings.enumerated() {
+                guard let view = show("work-\(index)", form, typing: true), keptAfterLeaving(view) else {
+                    report(name, false)
+                    continue
+                }
+                view.evaluateJavaScript(ending)
+                report(name, waitUntil { coordinator.registry.webView(for: tab.id) == nil })
+            }
+
+            let blankForm = "<form id=form method=post target=_blank action='about:blank'><input name=q value=x></form>"
+            let before = Set(model.tabs.tabs.map(\.id))
+            if let view = show("blank-form", blankForm) {
+                view.evaluateJavaScript("form.requestSubmit()")
+                let opened = waitUntil { model.tabs.tabs.count > before.count }
+                settle(0.5)
+                report("A form posted into a new window does not hold its opener", opened && !model.hasUnsentWork(tab.id))
+                for popup in model.tabs.tabs where !before.contains(popup.id) { model.close(popup.id) }
+                settle()
+            } else {
+                report("A form posted into a new window does not hold its opener", false)
+            }
+
+            let asks = """
+                <script>
+                window.probes = 0;
+                window.onbeforeunload = (e) => { window.probes += 1; e.preventDefault(); return 'leave?'; };
+                </script>
+                """
+            if let view = show("asks", asks), keptAfterLeaving(view) {
+                for _ in 0..<3 {
+                    model.holdStateChanged(tab.id)
+                    settle(0.5)
+                }
+                let probes = pageValue(view, "window.probes") as? Int
+                report(
+                    "A page that asks before leaving keeps a hidden workspace's tab, asked once",
+                    coordinator.registry.webView(for: tab.id) === view && probes == 1 && !model.hasUnsentWork(tab.id))
+                // The editor saved and dropped its handler: once the (shortened) re-ask interval passes, a retry
+                // asks again and lets the tab go.
+                let reprobe = BrowserModel.beforeUnloadReprobe
+                BrowserModel.beforeUnloadReprobe = .milliseconds(300)
+                defer { BrowserModel.beforeUnloadReprobe = reprobe }
+                view.evaluateJavaScript("window.onbeforeunload = null")
+                settle(0.4)
+                model.holdStateChanged(tab.id)
+                report(
+                    "A page that stops asking is released on a later retry",
+                    waitUntil { coordinator.registry.webView(for: tab.id) == nil })
+            } else {
+                report("A page that asks before leaving keeps a hidden workspace's tab, asked once", false)
+            }
+
+            let stalls = "<script>window.onbeforeunload = () => { const end = Date.now() + 3000; while (Date.now() < end) {} };</script>"
+            if let view = show("stalls", stalls) {
+                report("A page whose beforeunload stalls is released after the deadline", !keptAfterLeaving(view))
+            } else {
+                report("A page whose beforeunload stalls is released after the deadline", false)
+            }
+            coordinator.switchTo(Workspace.defaultID)
+            model.close(tab.id)
             settle()
         }
 

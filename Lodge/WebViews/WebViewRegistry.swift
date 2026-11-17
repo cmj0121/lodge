@@ -19,11 +19,13 @@ final class WebViewRegistry {
     func webView(for tab: TabID) -> LodgeWebView? { views[tab] }
 
     /// A new web view for `tab` on `store`, or on `configuration` when WebKit hands one over in
-    /// `createWebViewWith` (the popup keeps its opener's store, D3), shown at the tab's page `zoom`.
+    /// `createWebViewWith` (the popup keeps its opener's store, D3, and its work handler), shown at the tab's page
+    /// `zoom`. The page's work signals go to `model`.
     func make(
-        for tab: TabID, store: StoreRef, configuration: WKWebViewConfiguration? = nil, zoom: Double = PageZoom.actual
+        for tab: TabID, store: StoreRef, configuration: WKWebViewConfiguration? = nil, zoom: Double = PageZoom.actual,
+        model: BrowserModel
     ) -> LodgeWebView {
-        let config = configuration ?? newConfiguration(for: store)
+        let config = configuration ?? newConfiguration(for: store, model: model)
         let view = LodgeWebView(frame: .zero, configuration: config)
         view.allowsBackForwardNavigationGestures = true
         view.allowsMagnification = true
@@ -118,10 +120,18 @@ final class WebViewRegistry {
         try await WKWebsiteDataStore.remove(forIdentifier: id)
     }
 
-    private func newConfiguration(for ref: StoreRef) -> WKWebViewConfiguration {
+    /// A configuration on the store's data store, with the work script (D3) in its own content world in every frame
+    /// and one handler sending what it reports to `model`.
+    private func newConfiguration(for ref: StoreRef, model: BrowserModel) -> WKWebViewConfiguration {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = dataStore(for: ref)
         config.preferences.isElementFullscreenEnabled = true
+        let world = WKContentWorld.world(name: PageWorkScript.worldName)
+        config.userContentController.addUserScript(
+            WKUserScript(
+                source: PageWorkScript.source, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: world))
+        config.userContentController.add(
+            PageWorkHandler(model: model), contentWorld: world, name: PageWorkScript.handlerName)
         return config
     }
 
@@ -136,5 +146,21 @@ final class WebViewRegistry {
             }
         stores[ref] = store
         return store
+    }
+}
+
+/// Hands the work script's messages to the model of the tab whose view sent them. The content controller keeps its
+/// handlers alive as long as the configuration, so the model is held weakly.
+@MainActor
+private final class PageWorkHandler: NSObject, WKScriptMessageHandler {
+    private weak var model: BrowserModel?
+
+    init(model: BrowserModel) {
+        self.model = model
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let view = message.webView, let signal = PageWorkScript.signal(from: message.body) else { return }
+        model?.didReceiveWork(signal, from: view)
     }
 }
