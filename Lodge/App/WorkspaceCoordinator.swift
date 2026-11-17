@@ -58,6 +58,28 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     @ObservationIgnored private let appDirectory: URL?
     @ObservationIgnored private let downloads: DownloadManager?
     @ObservationIgnored private let defaultLibrary: LinkLibrary
+    @ObservationIgnored private let restDefaults: UserDefaults?
+
+    /// Settings › General › "Rest tabs after", for every workspace; a change is stored and applies at once.
+    var restAfter: RestAfter {
+        didSet {
+            guard restAfter != oldValue else { return }
+            restDefaults?.set(restAfter.rawValue, forKey: RestAfter.defaultsKey)
+            armRest()
+        }
+    }
+    /// The one timer that rests the active workspace's tabs when the next falls due; nil when none can.
+    @ObservationIgnored private var restTask: Task<Void, Never>?
+    @ObservationIgnored private var isResting = false
+    /// After a pass that found a tab held, the next pass waits at least until then, so a held tab is not asked again
+    /// at once.
+    @ObservationIgnored private var restRetryAt: ContinuousClock.Instant?
+    #if DEBUG
+        /// Layout self-checks: rests tabs after this in place of `restAfter`.
+        @ObservationIgnored var restIntervalOverride: Duration? {
+            didSet { armRest() }
+        }
+    #endif
 
     /// Every History tab's model: it shows the active workspace's visits, and a visit opens in the last active
     /// browser window, the one whose History tab was used.
@@ -83,7 +105,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     init(
         restoring snapshot: SessionSnapshot?, session: SessionStore?, appDirectory: URL?,
         downloads: DownloadManager?, registry: WebViewRegistry = WebViewRegistry(),
-        defaultLibrary: LinkLibrary = LinkLibrary()
+        defaultLibrary: LinkLibrary = LinkLibrary(), restDefaults: UserDefaults? = .standard
     ) {
         let list = snapshot?.workspaceList ?? WorkspaceList()
         workspaces = list
@@ -107,6 +129,8 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         self.downloads = downloads
         self.registry = registry
         self.defaultLibrary = defaultLibrary
+        self.restDefaults = restDefaults
+        restAfter = restDefaults.map(RestAfter.load(from:)) ?? .standard
         downloads?.dataStore = { [weak self] in self?.dataStore(for: $0) }
         downloads?.storeHold = { [registry] id, store in
             if let store { registry.hold(download: id, on: store) } else { registry.releaseHold(download: id) }
@@ -120,6 +144,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         model.appendBlanks(change.create)
         selections = restored
         show(model)
+        stampRest()
     }
 
     /// The data store a download's Retry runs on: a listed workspace's, nil once the workspace is gone; an anonymous
@@ -166,6 +191,10 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
             model.sharedPinsDidChange()
         }
         return model
+    }
+
+    isolated deinit {
+        restTask?.cancel()
     }
 
     /// What the session store keeps: the workspaces in bar order with each one's content, the windows (key first)
@@ -225,10 +254,12 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         }
         let change = next.enter(tabs, leaving: leaving)
         model.appendBlanks(change.create)
+        old.rest.update(shown: [], now: .now)
         selections = next
         if closingBlanks { old.remove(Set(change.close)) }
         old.isShown = false
         show(model)
+        stampRest()
         showActiveHistory()
         Task { await old.releaseViews() }
         didChange()
@@ -398,6 +429,7 @@ extension WorkspaceCoordinator: WindowPlacement {
         windows.insert(window, at: 0)
         lastActiveBrowserWindow = window
         if let tab = selections.shown(in: window.id) { model.view(for: tab) }
+        stampRest()
         didChange()
         return window
     }
@@ -543,6 +575,7 @@ extension WorkspaceCoordinator: WindowPlacement {
         windows.removeAll { $0 === window }
         if lastActiveBrowserWindow === window { lastActiveBrowserWindow = windows.first }
         model.remove(Set(change.close))
+        stampRest()
         didChange()
     }
 
@@ -629,8 +662,53 @@ extension WorkspaceCoordinator: WindowPlacement {
             window.dismissFind()
             model.didSelect(tab, previous: previous, previousStillShown: previous.map(shown.contains) == true)
         }
+        stampRest()
         didChange()
         return result
+    }
+}
+
+// MARK: Resting
+
+extension WorkspaceCoordinator {
+    private var restInterval: Duration? {
+        #if DEBUG
+            if let restIntervalOverride { return restIntervalOverride }
+        #endif
+        return restAfter.interval
+    }
+
+    /// The windows' tabs changed: the active workspace's tabs that left the screen are stamped, and the timer follows.
+    private func stampRest() {
+        let model = active
+        model.rest.update(shown: selections.shownTabs, live: model.liveTabs, now: .now)
+        armRest()
+    }
+
+    /// Sets the one rest timer for when the active workspace's next tab falls due; none with Never.
+    private func armRest() {
+        restTask?.cancel()
+        restTask = nil
+        let model = active
+        guard let after = restInterval, let due = model.rest.nextDue(model.liveTabs, after: after) else { return }
+        let wake = max(due, restRetryAt ?? due)
+        restTask = Task { [weak self, weak model] in
+            try? await Task.sleep(until: wake, clock: .continuous)
+            guard !Task.isCancelled, let self, let model else { return }
+            await self.rest(model)
+        }
+    }
+
+    /// Rests every due tab of `model` through its one release path, each re-checked as shown by any window right
+    /// before it goes, then sets the timer again.
+    private func rest(_ model: BrowserModel) async {
+        guard !isResting, model === active, let after = restInterval else { return }
+        isResting = true
+        let due = model.rest.due(model.liveTabs, after: after, now: .now)
+        let isAnyHeld = await model.release(candidates: due) { self.isShown($0) }
+        isResting = false
+        restRetryAt = isAnyHeld ? .now + BrowserModel.releaseRetry : nil
+        armRest()
     }
 }
 

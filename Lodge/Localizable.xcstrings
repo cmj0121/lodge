@@ -21,6 +21,56 @@
         }
       }
     },
+    "15 minutes" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "15 分鐘"
+          }
+        }
+      }
+    },
+    "30 minutes" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "30 分鐘"
+          }
+        }
+      }
+    },
+    "5 minutes" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "5 分鐘"
+          }
+        }
+      }
+    },
+    "60 minutes" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "60 分鐘"
+          }
+        }
+      }
+    },
+    "A tab you have not looked at for this long gives back its memory, and reloads where you left it when selected. Tabs playing, recording or with unsent typing stay awake." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "超過這段時間沒看的分頁會釋放記憶體，選取時會回到你離開的位置。正在播放、錄音錄影或有尚未送出輸入內容的分頁會保持喚醒。"
+          }
+        }
+      }
+    },
     "About" : {
       "localizations" : {
         "zh-Hant" : {
@@ -981,6 +1031,16 @@
         }
       }
     },
+    "Never" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "永不"
+          }
+        }
+      }
+    },
     "New Folder" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1437,6 +1497,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重新命名…"
+          }
+        }
+      }
+    },
+    "Rest tabs after" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分頁休眠時間"
+          }
+        }
+      }
+    },
+    "Resting; selecting it wakes it" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "休眠中；選取即可喚醒"
           }
         }
       }

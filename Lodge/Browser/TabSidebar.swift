@@ -441,7 +441,7 @@ private struct ItemIcon: View {
             }
         }
         .frame(width: size, height: size)
-        .opacity(item.tab == nil ? 0.7 : 1)
+        .opacity(item.tab == nil ? 0.7 : item.tab?.isResting == true ? 0.5 : 1)
     }
 }
 
@@ -552,9 +552,9 @@ private struct ItemButton: View {
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .help(pane.isShownElsewhere(item) ? "\(item.title)\n\(ShownElsewhereMark.hint)" : item.title)
+        .help(pane.note(for: item).map { "\(item.title)\n\($0)" } ?? item.title)
         .accessibilityLabel(item.title)
-        .accessibilityValue(pane.isShownElsewhere(item) ? ShownElsewhereMark.hint : "")
+        .accessibilityValue(pane.note(for: item) ?? "")
         .accessibilityActions {
             // The grid runs left to right, the rail top to bottom.
             Button(shape.isTile ? "Move Left" : "Move Up") { move(by: -1) }
@@ -702,7 +702,7 @@ struct SidebarRowLabel: View {
             Text(item.title)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .foregroundStyle(item.tab == nil ? .secondary : .primary)
+                .foregroundStyle(item.tab == nil || item.tab?.isResting == true ? .secondary : .primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let tab = item.tab {
                 let showsClose = isHovered || isSelected
@@ -741,7 +741,7 @@ extension View {
         accessibilityElement(children: .combine)
             .accessibilityLabel(item.title)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-            .accessibilityValue(pane.isShownElsewhere(item) ? ShownElsewhereMark.hint : "")
+            .accessibilityValue(pane.note(for: item) ?? "")
             .accessibilityAction { pane.activate(item.target) }
             .accessibilityActions {
                 if let tab = item.tab {
@@ -772,9 +772,18 @@ extension BrowserPane {
         item.tab.map { isShownElsewhere($0.id) } == true
     }
 
-    /// A bookmark or tab row's tooltip: its address, and that another window shows it when one does.
+    /// What a row's tooltip and accessibility value add to its title: that another window shows its tab, or that
+    /// its tab rests and selecting it wakes it; nil when neither.
+    func note(for item: SidebarItem) -> String? {
+        if isShownElsewhere(item) { return ShownElsewhereMark.hint }
+        return item.tab?.isResting == true ? Self.restingHint : nil
+    }
+
+    static let restingHint = String(localized: "Resting; selecting it wakes it")
+
+    /// A bookmark or tab row's tooltip: its address, and its note when it has one.
     func toolTip(for item: SidebarItem) -> String {
-        isShownElsewhere(item) ? "\(item.address)\n\(ShownElsewhereMark.hint)" : item.address
+        note(for: item).map { "\(item.address)\n\($0)" } ?? item.address
     }
 }
 

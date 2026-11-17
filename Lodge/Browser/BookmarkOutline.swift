@@ -216,7 +216,7 @@ struct BookmarkOutline: NSViewRepresentable {
                 var actions: [(String, () -> Void)] = [(String(localized: "Open"), { [pane] in pane.activate(item.target) })]
                 if let tab = item.tab { actions.append((String(localized: "Close Tab"), { [pane] in pane.close(tab.id) })) }
                 return RowView.Content(
-                    label: item.title, value: pane.isShownElsewhere(item) ? ShownElsewhereMark.hint : nil,
+                    label: item.title, value: pane.note(for: item),
                     toolTip: pane.toolTip(for: item),
                     isSelected: item.isSelected(pane.selectedID), actions: actions)
             case nil:

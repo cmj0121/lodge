@@ -13,8 +13,8 @@ final class BrowserModel {
     let store: StoreRef?
     /// The Anonymous workspace: each tab is its own browser, its bookmarks keep their icons, nothing is recorded.
     var isAnonymous: Bool { workspaceID == Workspace.anonymousID }
-    /// Every open tab. A tab keeps its web view, built when it is first selected, until it closes or the workspace
-    /// is released (`releaseViews()`).
+    /// Every open tab. A tab keeps its web view, built when it is first selected, until it closes, the workspace
+    /// is released (`releaseViews()`) or it rests unseen (the coordinator's rest timer).
     private(set) var tabs = TabList() {
         didSet { didChangeSession() }
     }
@@ -55,6 +55,8 @@ final class BrowserModel {
     /// Retries `releaseViews()` for tabs that were held; nil when no retry waits.
     @ObservationIgnored private var releaseRetryTask: Task<Void, Never>?
     @ObservationIgnored private var viewRelease = ViewRelease()
+    /// When each tab was last on screen, stamped by the coordinator while the workspace is shown; gone with the tab.
+    @ObservationIgnored var rest = TabRest()
     /// How long a held tab waits before its release is tried again.
     static let releaseRetry: Duration = .seconds(30)
     /// How long a release waits for a page's `beforeunload` handlers before taking it as not asking.
@@ -191,6 +193,9 @@ final class BrowserModel {
         }
         return isAnyHeld
     }
+
+    /// The tabs that have a web view, in tab order.
+    var liveTabs: [TabID] { tabs.tabs.compactMap { registry.webView(for: $0.id) != nil ? $0.id : nil } }
 
     /// A tab's capture, fullscreen or unsent work changed: a held background workspace tries its release again now, or
     /// once the pass running now ends.
@@ -464,6 +469,7 @@ final class BrowserModel {
             savedStates[id] = nil
             popupOpeners[id] = nil
             work[id] = nil
+            rest.forget(id)
             forgetBeforeUnload(id)
             popupOpeners = popupOpeners.filter { $0.value != id }
             historyRecorder?.send(.closed(tab: id))

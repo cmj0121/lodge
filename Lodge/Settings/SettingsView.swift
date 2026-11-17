@@ -7,6 +7,7 @@ import os
 /// UserDefaults at once, and `DownloadManager` reads them at each download, so they apply to the next one; every
 /// Settings tab shows the one app-wide model, so a change shows at once in each. Search picks Default's engine and
 /// edits the engines added to Default, kept in the session with Default's content; they apply to the next search.
+/// "Rest tabs after" is the coordinator's, for every workspace, and applies at once.
 struct SettingsView: View {
     let coordinator: WorkspaceCoordinator
     @Environment(\.downloadSettings) private var injected
@@ -37,6 +38,14 @@ struct SettingsView: View {
                                 .disabled(defaultBrowser.isLodge == nil || defaultBrowser.isMaking)
                         }
                     }
+                    Picker("Rest tabs after", selection: restAfter) {
+                        ForEach(RestAfter.allCases, id: \.self) { choice in
+                            Text(choice.title).tag(choice)
+                        }
+                    }
+                    Text("A tab you have not looked at for this long gives back its memory, and reloads where you left it when selected. Tabs playing, recording or with unsent typing stay awake.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
                 Section("Search") {
                     Picker("Search with", selection: defaultEngine) {
@@ -126,6 +135,11 @@ struct SettingsView: View {
         }
     }
 
+    /// Every workspace's rest time, Anonymous included; a pick applies at once.
+    private var restAfter: Binding<RestAfter> {
+        Binding { coordinator.restAfter } set: { coordinator.restAfter = $0 }
+    }
+
     /// The menu always shows the model's selection; "Other…" only opens the folder panel.
     private var option: Binding<Option> {
         Binding {
@@ -153,6 +167,18 @@ struct SettingsView: View {
         Task {
             await model.useFolder(chosen)
             menuRevision += 1
+        }
+    }
+}
+
+extension RestAfter {
+    fileprivate var title: String {
+        switch self {
+        case .five: String(localized: "5 minutes")
+        case .fifteen: String(localized: "15 minutes")
+        case .thirty: String(localized: "30 minutes")
+        case .sixty: String(localized: "60 minutes")
+        case .never: String(localized: "Never")
         }
     }
 }
