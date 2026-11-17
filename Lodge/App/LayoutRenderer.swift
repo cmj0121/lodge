@@ -52,6 +52,7 @@
             checkResting()
             checkMemoryPressure()
             checkPressureKeepsSessionStore()
+            checkReleasedViewGoes()
             renderSettings(in: directory)
             renderHistory(in: directory)
             renderDownloads(in: directory)
@@ -1342,6 +1343,100 @@
                     && wait({ await names(in: first) }) == ["pressure-session"])
             _ = wait { await first.httpCookieStore.deleteCookie(session) }
             coordinator.switchTo(Workspace.defaultID)
+            settle()
+        }
+
+        /// A released web view and the data store of a closed Anonymous tab are freed, not only dropped from the
+        /// registry: a tab left by a workspace switch and a tab resting under low memory each let their `LodgeWebView`
+        /// go, and closing the last Anonymous tab lets its store go. They are watched only through `weak` references.
+        /// This runs before `NSApplication.run`, so no event loop drains the outermost autorelease pool: every step
+        /// runs in a pool of its own, as each event does in the app, or an autoreleased reference would keep the
+        /// view alive until exit. The left custom workspace's store stays cached on purpose: WebKit keeps a store's
+        /// session cookies only while the store object lives.
+        private static func checkReleasedViewGoes() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) {
+                autoreleasepool { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            }
+            func waitUntil(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(5)
+                while !autoreleasepool(invoking: done), Date.now < deadline { settle(0.05) }
+                return autoreleasepool(invoking: done)
+            }
+            final class Watch<Object: AnyObject> {
+                weak var object: Object?
+                var isGone: Bool { object == nil }
+            }
+            let left = Watch<LodgeWebView>()
+            let rested = Watch<LodgeWebView>()
+            let anonymousStore = Watch<WKWebsiteDataStore>()
+            let switchName = "A tab left by a workspace switch frees its web view"
+            let restName = "A tab resting under low memory frees its web view"
+            let anonymousName = "Closing the last Anonymous tab frees its data store"
+            let coordinator = autoreleasepool {
+                let coordinator = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, restDefaults: nil)
+                coordinator.bringForwardHook = { _ in }
+                coordinator.restAfter = .never
+                return coordinator
+            }
+            let registry = coordinator.registry
+            let window = coordinator.windows[0]
+            let hostWindow = autoreleasepool { host(root(coordinator, window), size: NSSize(width: 900, height: 600)) }
+            defer { hostWindow.close() }
+            /// Opens a new tab in the shown workspace titled `name`, its view watched by `watch`.
+            func open(_ name: String, into watch: Watch<LodgeWebView> = Watch()) -> TabID? {
+                let id: TabID? = autoreleasepool {
+                    let pane = coordinator.pane(for: window)
+                    window.locationPrompt = .newTab
+                    pane.submitLocation("about:blank")
+                    let html = "<!doctype html><title>\(name)</title><p>\(name)</p>"
+                    guard let id = pane.selectedID,
+                        let page = html.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+                            .flatMap({ URL(string: "data:text/html,\($0)") }),
+                        pane.model.load(page, in: id)
+                    else { return nil }
+                    watch.object = registry.webView(for: id)
+                    return id
+                }
+                guard let id, waitUntil({ watch.object.map { $0.title == name && !$0.isLoading } == true }) else {
+                    return nil
+                }
+                return id
+            }
+
+            let made = autoreleasepool { try? coordinator.create(name: "Released", symbol: "briefcase") }
+            guard let made, let store = made.store, open("released-left", into: left) != nil,
+                open("released-left-shown") != nil
+            else { return report(switchName, false) }
+            let leftStore = autoreleasepool { registry.existingDataStore(for: store) }
+            autoreleasepool { coordinator.switchTo(Workspace.defaultID) }
+            report(switchName, waitUntil { left.isGone })
+            report(
+                "The left workspace's data store stays cached for its session cookies",
+                leftStore != nil && autoreleasepool { registry.existingDataStore(for: store) } === leftStore)
+
+            guard open("released-rest", into: rested) != nil, open("released-shown") != nil else {
+                return report(restName, false)
+            }
+            var done = false
+            autoreleasepool {
+                Task {
+                    await coordinator.relieve(.warning)
+                    done = true
+                }
+            }
+            report(restName, waitUntil { done } && waitUntil { rested.isGone })
+
+            autoreleasepool { coordinator.switchTo(Workspace.anonymousID) }
+            guard let anonymous = open("released-anonymous"),
+                let ref = autoreleasepool(invoking: { coordinator.active.tabs[anonymous]?.store })
+            else { return report(anonymousName, false) }
+            autoreleasepool { anonymousStore.object = registry.existingDataStore(for: ref) }
+            guard !anonymousStore.isGone else { return report(anonymousName, false) }
+            autoreleasepool { coordinator.active.close(anonymous) }
+            report(anonymousName, waitUntil { anonymousStore.isGone && registry.existingDataStore(for: ref) == nil })
+            autoreleasepool { coordinator.switchTo(Workspace.defaultID) }
             settle()
         }
 
