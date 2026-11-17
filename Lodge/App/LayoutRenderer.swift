@@ -50,6 +50,8 @@
             checkLodgePages()
             checkWorkHolds()
             checkResting()
+            checkMemoryPressure()
+            checkPressureKeepsSessionStore()
             renderSettings(in: directory)
             renderHistory(in: directory)
             renderDownloads(in: directory)
@@ -1145,6 +1147,201 @@
             }
             report("Selecting a resting tab builds its page again", woke && model.tabs[resting]?.isResting == false)
             for id in [resting, typed, shown] { model.close(id) }
+            settle()
+        }
+
+        /// Memory pressure (#25), with `relieve` called directly, never by using memory: a warning rests an unshown,
+        /// unheld tab of the shown workspace and of a background workspace that keeps a tab with typed text, and keeps
+        /// the selected tab and both tabs with typed text; critical then keeps the Anonymous store a resting tab holds
+        /// and the one a download holds. The pages are `data:` URLs, so no request goes out.
+        private static func checkMemoryPressure() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            func waitUntil(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(5)
+                while !done(), Date.now < deadline { settle(0.05) }
+                return done()
+            }
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, restDefaults: nil)
+            coordinator.bringForwardHook = { _ in }
+            coordinator.restAfter = .never
+            let registry = coordinator.registry
+            let window = coordinator.windows[0]
+            let hostWindow = host(root(coordinator, window), size: NSSize(width: 900, height: 600))
+            defer { hostWindow.close() }
+            func relieve(_ level: MemoryPressureLevel) {
+                var done = false
+                Task {
+                    await coordinator.relieve(level)
+                    done = true
+                }
+                _ = waitUntil { done }
+            }
+            /// Opens a new tab in the shown workspace showing `body`, titled `name`, with "draft" typed into its field
+            /// `f` when `typing`.
+            func open(_ name: String, _ body: String, typing: Bool = false) -> (TabID, LodgeWebView)? {
+                let pane = coordinator.pane(for: window)
+                window.locationPrompt = .newTab
+                pane.submitLocation("about:blank")
+                let html = "<!doctype html><title>\(name)</title><body>\(body)</body>"
+                guard let id = pane.selectedID,
+                    let page = html.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+                        .flatMap({ URL(string: "data:text/html,\($0)") }),
+                    pane.model.load(page, in: id), let view = registry.webView(for: id)
+                else { return nil }
+                guard waitUntil({ view.title == name && !view.isLoading }) else { return nil }
+                settle()
+                if typing {
+                    hostWindow.makeFirstResponder(view)
+                    view.evaluateJavaScript("document.getElementById('f').focus()")
+                    settle()
+                    view.insertText("draft")
+                    guard waitUntil({ pane.model.hasUnsentWork(id) }) else { return nil }
+                }
+                return (id, view)
+            }
+            let failed = "Low memory rests an unshown tab of the shown and of a background workspace"
+            coordinator.switchTo(Workspace.anonymousID)
+            guard let (anonymous, _) = open("pressure-anonymous", "<p>anonymous</p>"),
+                let anonymousStore = coordinator.active.tabs[anonymous]?.store,
+                let made = try? coordinator.create(name: "Pressure", symbol: "briefcase")
+            else { return report(failed, false) }
+            coordinator.switchTo(made.id)
+            let work = coordinator.active
+            guard let (backgroundPlain, _) = open("pressure-bg-plain", "<p>plain</p>"),
+                let (backgroundTyped, backgroundTypedView) = open("pressure-bg-typed", "<input id=f>", typing: true)
+            else { return report(failed, false) }
+            coordinator.switchTo(Workspace.defaultID)
+            let model = coordinator.active
+            let leftBehind = [backgroundPlain, anonymous]
+            guard waitUntil({ leftBehind.allSatisfy { registry.webView(for: $0) == nil } }),
+                let (plain, _) = open("pressure-plain", "<p>plain</p>"),
+                let (typed, typedView) = open("pressure-typed", "<input id=f>", typing: true),
+                let (shown, shownView) = open("pressure-shown", "<p>shown</p>")
+            else { return report(failed, false) }
+            // Built again while its workspace is hidden, it stands in for a tab the leave pass has not reached; the
+            // held tab's retry is 30 s off, so only `relieve` can let it go.
+            guard work.view(for: backgroundPlain) != nil, registry.webView(for: backgroundTyped) === backgroundTypedView
+            else { return report(failed, false) }
+            settle()
+
+            relieve(.warning)
+            report(
+                failed,
+                registry.webView(for: plain) == nil && registry.webView(for: backgroundPlain) == nil
+                    && model.tabs[plain]?.isResting == true)
+            report("Low memory keeps the selected tab", registry.webView(for: shown) === shownView)
+            report(
+                "Low memory keeps tabs with typed text, shown workspace and background",
+                registry.webView(for: typed) === typedView
+                    && registry.webView(for: backgroundTyped) === backgroundTypedView)
+
+            let download = UUID()
+            let downloadStore = StoreRef.ephemeral(UUID())
+            _ = registry.dataStore(for: downloadStore)
+            registry.hold(download: download, on: downloadStore)
+            // An Anonymous bookmark's stored icon, decoded once before the pressure and again after it.
+            let bitmap = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16, bitsPerSample: 8, samplesPerPixel: 4,
+                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+            let bookmark = SavedLink(
+                url: URL(string: "https://pressure.example/")!, title: "Pressure",
+                icon: bitmap?.representation(using: .png, properties: [:]))
+            let item = SidebarItem.link(bookmark, .bookmarks, nil)
+            let anonymousModel = coordinator.model(for: Workspace.anonymousID)
+            let iconBefore = anonymousModel?.favicon(for: item)
+            relieve(.critical)
+            let iconAfter = anonymousModel?.favicon(for: item)
+            report(
+                "Critical low memory drops a decoded bookmark icon and the sidebar decodes it again",
+                iconBefore != nil && iconAfter != nil && iconAfter !== iconBefore
+                    && anonymousModel?.favicon(for: item) === iconAfter)
+            report(
+                "Critical low memory keeps Anonymous stores a resting tab or a download holds",
+                registry.existingDataStore(for: anonymousStore) != nil
+                    && registry.existingDataStore(for: downloadStore) != nil)
+            report(
+                "Critical low memory still keeps the selected tab and tabs with typed text",
+                registry.webView(for: shown) === shownView && registry.webView(for: typed) === typedView
+                    && registry.webView(for: backgroundTyped) === backgroundTypedView)
+            report(
+                "Nothing wakes after low memory",
+                registry.webView(for: plain) == nil && registry.webView(for: backgroundPlain) == nil)
+            registry.releaseHold(download: download)
+            for id in [plain, typed, shown] { model.close(id) }
+            settle()
+        }
+
+        /// Critical memory pressure (#25) keeps a hidden custom workspace's data store, though all its tabs rest:
+        /// WebKit keeps a store's session cookies (no expiry, in memory only) only while the store object lives, so
+        /// dropping it would sign the user out. A session cookie set on that store is still there after `relieve`
+        /// and after a tab wakes. The cookie is set directly and the page is a `data:` URL, so no request goes out.
+        private static func checkPressureKeepsSessionStore() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            func waitUntil(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(5)
+                while !done(), Date.now < deadline { settle(0.05) }
+                return done()
+            }
+            func wait<T>(_ work: @escaping @MainActor () async -> T) -> T? {
+                var result: T?
+                Task { result = await work() }
+                _ = waitUntil { result != nil }
+                return result
+            }
+            let domain = "pressure-cookies.example"
+            func names(in store: WKWebsiteDataStore) async -> Set<String> {
+                Set(await store.httpCookieStore.allCookies().filter { $0.domain.contains(domain) }.map(\.name))
+            }
+            let name = "Critical low memory keeps a hidden workspace's store and its session cookie"
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, restDefaults: nil)
+            coordinator.bringForwardHook = { _ in }
+            coordinator.restAfter = .never
+            let registry = coordinator.registry
+            let window = coordinator.windows[0]
+            let hostWindow = host(root(coordinator, window), size: NSSize(width: 900, height: 600))
+            defer { hostWindow.close() }
+            guard let made = try? coordinator.create(name: "Pressure Cookies", symbol: "briefcase"),
+                let store = made.store
+            else { return report(name, false) }
+            coordinator.switchTo(made.id)
+            let pane = coordinator.pane(for: window)
+            window.locationPrompt = .newTab
+            pane.submitLocation("about:blank")
+            let html = "<!doctype html><title>pressure-cookie</title><p>cookie</p>"
+            guard let tab = pane.selectedID,
+                let page = html.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+                    .flatMap({ URL(string: "data:text/html,\($0)") }),
+                pane.model.load(page, in: tab),
+                waitUntil({
+                    registry.webView(for: tab).map { $0.title == "pressure-cookie" && !$0.isLoading } == true
+                }),
+                let first = registry.existingDataStore(for: store)
+            else { return report(name, false) }
+            let session = HTTPCookie(properties: [.domain: domain, .path: "/", .name: "pressure-session", .value: "1"])!
+            guard wait({ await first.httpCookieStore.setCookie(session) }) != nil else { return report(name, false) }
+
+            coordinator.switchTo(Workspace.defaultID)
+            guard waitUntil({ !registry.hasViews(on: store) }) else { return report(name, false) }
+            var done = false
+            Task {
+                await coordinator.relieve(.critical)
+                done = true
+            }
+            _ = waitUntil { done }
+            report(name, registry.existingDataStore(for: store) === first)
+
+            coordinator.switchTo(made.id)
+            let woke = waitUntil { registry.webView(for: tab)?.title == "pressure-cookie" }
+            report(
+                "A tab woken after critical low memory still has its session cookie",
+                woke && registry.webView(for: tab)?.configuration.websiteDataStore === first
+                    && wait({ await names(in: first) }) == ["pressure-session"])
+            _ = wait { await first.httpCookieStore.deleteCookie(session) }
+            coordinator.switchTo(Workspace.defaultID)
             settle()
         }
 

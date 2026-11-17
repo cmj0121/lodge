@@ -28,12 +28,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The ⌘+ alias of Zoom In (D9), which a menu item cannot carry beside its ⌘= key, and ⌘/ outside the page (D10).
     private var keyMonitor: Any?
+    /// Rests tabs when the system runs low on memory (D4), from launch until quit.
+    private var memoryPressure: MemoryPressureWatcher?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         coordinator.openRestoredWindows()
         openHistory()
         restoreDownloads()
         installKeyMonitor()
+        memoryPressure = MemoryPressureWatcher(coordinator: coordinator)
     }
 
     private static let linkLogger = Logger(subsystem: "dev.lodge", category: "links")
@@ -70,6 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
+        memoryPressure?.cancel()
+        memoryPressure = nil
         downloads.cancelAllForQuit()
         store.writeNow(coordinator.snapshot)
         coordinator.closeAllHistory()
