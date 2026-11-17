@@ -76,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         memoryPressure?.cancel()
         memoryPressure = nil
         downloads.cancelAllForQuit()
+        coordinator.keepLivePlaces()
         store.writeNow(coordinator.snapshot)
         coordinator.closeAllHistory()
     }

@@ -7,7 +7,8 @@ import os
 /// UserDefaults at once, and `DownloadManager` reads them at each download, so they apply to the next one; every
 /// Settings tab shows the one app-wide model, so a change shows at once in each. Search picks Default's engine and
 /// edits the engines added to Default, kept in the session with Default's content; they apply to the next search.
-/// "Rest tabs after" is the coordinator's, for every workspace, and applies at once.
+/// "Rest tabs after" is the coordinator's, for every workspace, and applies at once; below it, what a resting tab keeps
+/// on this Mac (D5).
 struct SettingsView: View {
     let coordinator: WorkspaceCoordinator
     @Environment(\.downloadSettings) private var injected
@@ -44,6 +45,9 @@ struct SettingsView: View {
                         }
                     }
                     Text("A tab you have not looked at for this long gives back its memory, and reloads where you left it when selected. Tabs playing, recording or with unsent typing stay awake.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Text("Resting tabs keep their place on this Mac: the address, scroll position and, for tabs that never sent a form, their back and forward history. Text in form fields and posted form data are never kept, and Anonymous keeps nothing.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
