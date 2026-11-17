@@ -41,19 +41,12 @@ public enum SearchResultsPage {
     /// `mailto:`), or `AddressInput` would go to it rather than search for it.
     private static func shownWords(_ value: String) -> String? {
         guard let decoded = value.replacingOccurrences(of: "+", with: " ").removingPercentEncoding,
-            !decoded.unicodeScalars.contains(where: hidesText)
+            !decoded.unicodeScalars.contains(where: \.hidesText)
         else { return nil }
         let words = decoded.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !words.isEmpty, !words.contains("://"), words.prefixMatch(of: /[A-Za-z][A-Za-z0-9+.\-]*:/) == nil,
             AddressInput.isSearch(words)
         else { return nil }
         return words
-    }
-
-    private static func hidesText(_ scalar: Unicode.Scalar) -> Bool {
-        switch scalar.properties.generalCategory {
-        case .control, .format, .lineSeparator, .paragraphSeparator: true
-        default: false
-        }
     }
 }

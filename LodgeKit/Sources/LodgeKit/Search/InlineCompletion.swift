@@ -1,44 +1,44 @@
 import AppKit
 
-/// The completion a field editor shows after the text typed, its added part selected. The completion never enters
-/// the undo stack: it goes in and out unrecorded, and is taken out before every recorded edit (typed characters,
-/// marked text, undo, redo), so each recorded edit meets the text as it was typed. Any other edit or selection
-/// change first makes it recorded text. `CompletingTextView` calls it at those points.
+/// The completion a field editor shows after the text typed, its added part selected. Putting it in and dropping it
+/// are ordinary edits the undo stack records, the completion a group of its own, so ⌘Z first takes the completion
+/// back, then the typing; a key typed over it takes it back with undo first, so no undo shows it again as text. It
+/// counts as shown only while the text and selection are just as `complete` left them; any edit of the user's
+/// forgets it.
 @MainActor public final class InlineCompletion {
-    /// The text as the user left it, without the completion shown after it.
-    public private(set) var typed = ""
-    /// True while it changes the text or the selection itself, so the notifications and selection changes that
-    /// causes are no edit of the user's.
+    /// True while it changes the text itself, so the notifications that causes are no edit of the user's.
     public private(set) var isChanging = false
-    /// The last edit typed at the end of the text, with no marked text left, so it may complete.
+    /// The text as the user's last edit left it.
+    private var typed = ""
+    /// That edit was typed at the end of the text, with no marked text left, so it may complete.
     private var mayComplete = false
+    /// The text and selected range `complete` left.
+    private var shown: (text: String, range: NSRange)?
 
     public init() {}
 
-    /// The host put `text` in the field, or the field took or gave up the keys: nothing was typed, so nothing
+    /// The host put text in the field, or the field took or gave up the keys: nothing was typed, so nothing
     /// completes.
-    public func restart(from text: String) {
-        typed = text
+    public func restart() {
         mayComplete = false
+        shown = nil
     }
 
     /// The user's edit is made; it may complete when typed characters made it, the caret is at the end and no
     /// input method is composing.
     public func didEdit(in view: NSTextView, wasTyped: Bool) {
         typed = view.string
+        shown = nil
         mayComplete =
             wasTyped && !view.hasMarkedText()
             && view.selectedRange() == NSRange(location: length(typed), length: 0)
     }
 
-    /// The completion's range while it shows after what was typed, still selected as put in.
+    /// The completion's range while it shows, still selected as put in.
     public func shown(in view: NSTextView) -> NSRange? {
-        let typedLength = length(typed)
-        let total = length(view.string)
-        guard total > typedLength, view.string.hasPrefix(typed),
-            view.selectedRange() == NSRange(location: typedLength, length: total - typedLength)
+        guard let shown, view.string == shown.text, view.selectedRange() == shown.range, !view.hasMarkedText()
         else { return nil }
-        return view.selectedRange()
+        return shown.range
     }
 
     /// Shows `completion` after what was typed with the added part selected, in place of one already shown, when the
@@ -51,147 +51,90 @@ import AppKit
         let showsTyped = view.string == typed && view.selectedRange() == NSRange(location: typedLength, length: 0)
         guard let range = showsTyped ? NSRange(location: typedLength, length: 0) : shown(in: view) else { return }
         let added = String(completion.dropFirst(typed.count))
-        changing {
-            change(range, to: added, in: view)
-            view.setSelectedRange(NSRange(location: typedLength, length: length(added)))
-        }
+        guard change(range, to: added, in: view) else { return }
+        let selected = NSRange(location: typedLength, length: length(added))
+        view.setSelectedRange(selected)
+        shown = (view.string, selected)
     }
 
-    /// Takes the completion out, leaving what was typed; nothing completes until the next typed character.
+    /// Completes to what `completion` gives on the next run-loop pass, after the undo manager closed the group of
+    /// the key typed, so the completion is an undo group of its own and ⌘Z takes it back before the typing.
+    public func completeLater(to completion: @escaping @MainActor () -> String?, in view: NSTextView) {
+        nonisolated(unsafe) let run = { [weak self, weak view] in
+            guard let self, let view else { return }
+            complete(to: completion(), in: view)
+        }
+        RunLoop.main.perform(inModes: [.common]) { MainActor.assumeIsolated { run() } }
+    }
+
+    /// Before a key or marked text goes in over the completion: takes it back with undo, its own undo group being the
+    /// last, so the key meets just what was typed and no later undo brings the completion back as text. When that
+    /// undo turns out to be some other change's, redo puts it back. Its undo and redo are no edits of the user's: the
+    /// key that follows is.
+    public func retract(in view: NSTextView) {
+        guard let range = shown(in: view), let undoManager = view.undoManager, undoManager.canUndo else { return }
+        let expected = (view.string as NSString).replacingCharacters(in: range, with: "")
+        isChanging = true
+        defer { isChanging = false }
+        undoManager.undo()
+        if view.string == expected { shown = nil } else { undoManager.redo() }
+    }
+
+    /// Takes the completion out as an edit undo records, leaving what was typed; nothing completes until the next
+    /// typed character.
     public func drop(in view: NSTextView) {
         mayComplete = false
-        strip(in: view)
-    }
-
-    /// Before typed characters, marked text, undo or redo: takes the completion out unrecorded, the caret after what
-    /// was typed, so the recorded edit meets the text it was made on.
-    public func strip(in view: NSTextView) {
         guard let range = shown(in: view) else { return }
-        changing {
-            change(range, to: "", in: view)
-            view.setSelectedRange(NSRange(location: range.location, length: 0))
-        }
+        shown = nil
+        if change(range, to: "", in: view) { view.setSelectedRange(NSRange(location: range.location, length: 0)) }
+        typed = view.string
     }
 
-    /// Before any other edit or caret move: the completion becomes text as an edit undo records, still selected.
-    public func commit(in view: NSTextView) {
-        guard let range = shown(in: view) else { return }
-        let added = (view.string as NSString).substring(with: range)
-        changing {
-            strip(in: view)
-            let inserted = NSRange(location: range.location, length: 0)
-            if view.shouldChangeText(in: inserted, replacementString: added) {
-                view.replaceCharacters(in: inserted, with: added)
-                view.didChangeText()
-            }
-            view.setSelectedRange(range)
-        }
-        restart(from: view.string)
-    }
-
-    /// Accepts the completion as recorded text, the caret at its end; false when none shows.
+    /// Accepts the completion, the caret at its end; false when none shows.
     public func accept(in view: NSTextView) -> Bool {
         guard shown(in: view) != nil else { return false }
-        changing {
-            commit(in: view)
-            view.setSelectedRange(NSRange(location: length(view.string), length: 0))
-        }
+        restart()
+        typed = view.string
+        view.setSelectedRange(NSRange(location: length(view.string), length: 0))
         return true
     }
 
-    /// Changes the text with undo registration off, then tells the view's delegate as for any change.
-    private func change(_ range: NSRange, to text: String, in view: NSTextView) {
-        view.undoManager?.disableUndoRegistration()
-        defer { view.undoManager?.enableUndoRegistration() }
-        view.textStorage?.replaceCharacters(in: range, with: text)
-        view.didChangeText()
-    }
-
-    private func changing(_ body: () -> Void) {
-        let was = isChanging
+    /// Changes the text as any recorded edit does, in an undo group it closes itself when none is open, so nothing
+    /// recorded after it in the same run-loop pass joins its group; false when the view refuses it.
+    private func change(_ range: NSRange, to text: String, in view: NSTextView) -> Bool {
         isChanging = true
-        defer { isChanging = was }
-        body()
+        defer { isChanging = false }
+        let undoManager = view.undoManager
+        let groups = undoManager?.groupingLevel == 0
+        if groups { undoManager?.beginUndoGrouping() }
+        defer { if groups { undoManager?.endUndoGrouping() } }
+        guard view.shouldChangeText(in: range, replacementString: text) else { return false }
+        view.replaceCharacters(in: range, with: text)
+        view.didChangeText()
+        return true
     }
 
     private func length(_ text: String) -> Int { (text as NSString).length }
 }
 
-/// A text view that keeps `inline`'s completion out of its undo stack: it takes the completion out before typed
-/// characters, marked text, undo and redo, and makes it recorded text before any other edit or selection change
-/// (a click, Select All, cut, paste, a drop, a transformation, a spelling correction, a service). Undo and redo are
-/// watched while it is first responder.
+/// A text view that tells typed characters from every other edit, so only typing completes, and has `inline` take
+/// a completion back before a key or marked text goes in over it.
 open class CompletingTextView: NSTextView {
     /// The field's completion.
     public weak var inline: InlineCompletion?
     /// Typed characters are going in, so the edit they make may complete.
     public private(set) var isTyping = false
-    private var undoObservers: [NSObjectProtocol] = []
-
-    isolated deinit { stopObservingUndo() }
-
-    override open func becomeFirstResponder() -> Bool {
-        let became = super.becomeFirstResponder()
-        if became { observeUndo() }
-        return became
-    }
-
-    override open func resignFirstResponder() -> Bool {
-        let resigned = super.resignFirstResponder()
-        if resigned { stopObservingUndo() }
-        return resigned
-    }
 
     /// Typed text comes here; a paste, a drop, a deletion or undo do not.
     override open func insertText(_ string: Any, replacementRange: NSRange) {
-        inline?.strip(in: self)
+        inline?.retract(in: self)
         isTyping = true
         defer { isTyping = false }
         super.insertText(string, replacementRange: replacementRange)
     }
 
-    /// Marked text replaces the completion as typing does.
     override open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        inline?.strip(in: self)
+        inline?.retract(in: self)
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
-    }
-
-    override open func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
-        commitUnlessOwn()
-        return super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
-    }
-
-    override open func setSelectedRanges(
-        _ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting stillSelectingFlag: Bool
-    ) {
-        if ranges != selectedRanges { commitUnlessOwn() }
-        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelectingFlag)
-    }
-
-    /// Makes a completion shown recorded text, unless the change under way is the completion's own or typing's,
-    /// which took it out first.
-    private func commitUnlessOwn() {
-        guard let inline, !inline.isChanging else { return }
-        inline.commit(in: self)
-    }
-
-    /// Starts watching undo and redo, which must meet the text without the completion, as every edit they replay
-    /// was made. A first responder calls it itself.
-    public func observeUndo() {
-        stopObservingUndo()
-        guard let undoManager else { return }
-        undoObservers = [NSNotification.Name.NSUndoManagerWillUndoChange, .NSUndoManagerWillRedoChange].map {
-            NotificationCenter.default.addObserver(forName: $0, object: undoManager, queue: nil) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.inline?.strip(in: self)
-                }
-            }
-        }
-    }
-
-    private func stopObservingUndo() {
-        for observer in undoObservers { NotificationCenter.default.removeObserver(observer) }
-        undoObservers = []
     }
 }
