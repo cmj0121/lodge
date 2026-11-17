@@ -49,6 +49,7 @@
             checkExternalLinks()
             checkLodgePages()
             checkWorkHolds()
+            checkResting()
             renderSettings(in: directory)
             renderHistory(in: directory)
             renderDownloads(in: directory)
@@ -1077,6 +1078,73 @@
             }
             coordinator.switchTo(Workspace.defaultID)
             model.close(tab.id)
+            settle()
+        }
+
+        /// Resting (#23), with the rest time shortened to a fraction of a second: a background tab of the shown
+        /// workspace rests and shows as resting, while the selected tab and a background tab with typed text stay;
+        /// selecting the rested tab builds its page again from its kept state. The pages are `data:` URLs, so no
+        /// request goes out.
+        private static func checkResting() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            func waitUntil(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(5)
+                while !done(), Date.now < deadline { settle(0.05) }
+                return done()
+            }
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, restDefaults: nil)
+            coordinator.bringForwardHook = { _ in }
+            let window = coordinator.windows[0]
+            let hostWindow = host(root(coordinator, window), size: NSSize(width: 900, height: 600))
+            defer { hostWindow.close() }
+            let pane = coordinator.pane(for: window)
+            let model = pane.model
+            /// Opens a new tab showing `body`, titled `name`.
+            func open(_ name: String, _ body: String) -> (TabID, LodgeWebView)? {
+                window.locationPrompt = .newTab
+                pane.submitLocation("about:blank")
+                let html = "<!doctype html><title>\(name)</title><body>\(body)</body>"
+                guard let id = pane.selectedID,
+                    let page = html.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+                        .flatMap({ URL(string: "data:text/html,\($0)") }),
+                    model.load(page, in: id), let view = coordinator.registry.webView(for: id)
+                else { return nil }
+                guard waitUntil({ view.title == name && !view.isLoading }) else { return nil }
+                settle()
+                return (id, view)
+            }
+            guard let (resting, _) = open("rest-plain", "<p>plain</p>"),
+                let (typed, typedView) = open("rest-typed", "<input id=f>")
+            else { return report("A background tab rests after the rest time", false) }
+            hostWindow.makeFirstResponder(typedView)
+            typedView.evaluateJavaScript("document.getElementById('f').focus()")
+            settle()
+            typedView.insertText("draft")
+            guard waitUntil({ model.hasUnsentWork(typed) }), let (shown, shownView) = open("rest-shown", "<p>shown</p>")
+            else { return report("A background tab rests after the rest time", false) }
+
+            coordinator.restIntervalOverride = .milliseconds(300)
+            defer { coordinator.restIntervalOverride = nil }
+            let rested = waitUntil { coordinator.registry.webView(for: resting) == nil }
+            report(
+                "A background tab rests after the rest time and shows as resting",
+                rested && model.tabs[resting]?.isResting == true)
+            settle(1)
+            report(
+                "The selected tab stays awake past the rest time",
+                coordinator.registry.webView(for: shown) === shownView && model.tabs[shown]?.isResting == false)
+            report(
+                "A background tab with typed text stays awake past the rest time",
+                coordinator.registry.webView(for: typed) === typedView && model.tabs[typed]?.isResting == false)
+
+            pane.select(resting)
+            let woke = waitUntil {
+                coordinator.registry.webView(for: resting)?.title == "rest-plain" && model.tabs[resting]?.isLive == true
+            }
+            report("Selecting a resting tab builds its page again", woke && model.tabs[resting]?.isResting == false)
+            for id in [resting, typed, shown] { model.close(id) }
             settle()
         }
 
