@@ -1,3 +1,5 @@
+import Foundation
+
 /// What keeps one tab's page awake beyond today's holds (playback, capture, fullscreen, popup pair).
 public struct PageWork: Equatable, Sendable {
     /// From the isolated-world script; `document` is the script's own per-document `crypto.randomUUID()`.
@@ -40,7 +42,8 @@ public struct PageWork: Equatable, Sendable {
 }
 
 /// The isolated-world script behind `PageWork`, and how its messages read. The script sends no field values: it keeps,
-/// inside the page, which fields it saw edited and reports only whether any of them still holds text.
+/// inside the page, which fields it saw edited and reports only whether any of them still holds text. The main frame
+/// also reports its scroll position, for the tab's place (`Place`).
 public enum PageWorkScript {
     /// `WKContentWorld.world(name:)`: the page cannot see or tamper with the script, nor post to its handler.
     public static let worldName = "lodge.work"
@@ -55,8 +58,9 @@ public enum PageWorkScript {
           const doc = (typeof crypto !== 'undefined' && crypto.randomUUID)
             ? crypto.randomUUID()
             : Math.random().toString(36).slice(2) + Date.now().toString(36);
-          const post = (kind) => {
-            try { handler.postMessage({ doc: doc, kind: kind }); } catch (_) {}
+          const post = (kind, y) => {
+            try { handler.postMessage(y === undefined ? { doc: doc, kind: kind } : { doc: doc, kind: kind, y: y }); }
+            catch (_) {}
           };
           const unwatched = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range',
             'reset', 'submit']);
@@ -99,6 +103,33 @@ public enum PageWorkScript {
           }, options);
           window.addEventListener('pagehide', () => { if (holding) { post('gone'); } }, options);
           window.addEventListener('pageshow', (e) => { if (e.persisted && holding) { post('typed'); } }, options);
+          // The main frame's scroll position, for a tab's place (D5): a number, never anything the page holds.
+          if (window.top === window) {
+            let left = false;
+            let waiting = false;
+            const report = () => {
+              if (left) { return; }
+              const y = Number(window.scrollY);
+              post('scroll', isFinite(y) && y > 0 ? y : 0);
+            };
+            window.addEventListener('scroll', () => {
+              if (waiting) { return; }
+              waiting = true;
+              setTimeout(() => { waiting = false; report(); }, 500);
+            }, options);
+            window.addEventListener('visibilitychange', () => {
+              if (document.visibilityState === 'hidden') { report(); }
+            }, options);
+            window.addEventListener('pagehide', () => {
+              left = true;
+              post('left');
+            }, options);
+            window.addEventListener('pageshow', (e) => {
+              if (!e.persisted) { return; }
+              left = false;
+              report();
+            }, options);
+          }
         })();
         """
 
@@ -114,6 +145,30 @@ public enum PageWorkScript {
         case "sent": return .sent(document: document)
         case "gone": return .gone(document: document)
         default: return nil
+        }
+    }
+
+    /// What the main frame reports for its tab's place (D5).
+    public enum Place: Equatable, Sendable {
+        /// The document's `scrollY`, after a scroll settles and whenever the page is hidden.
+        case scrolled(document: String, y: Double)
+        /// `pagehide` of that document: its position no longer stands for the tab's page.
+        case left(document: String)
+    }
+
+    /// Decodes `{doc: String, kind: "scroll", y: Number}` or `{doc: String, kind: "left"}`; anything else is nil.
+    public static func place(from body: Any) -> Place? {
+        guard let body = body as? [String: Any], let document = body["doc"] as? String,
+            (1...64).contains(document.count), let kind = body["kind"] as? String
+        else { return nil }
+        switch (kind, body.count) {
+        case ("scroll", 3):
+            guard let y = (body["y"] as? NSNumber)?.doubleValue, y.isFinite, y >= 0 else { return nil }
+            return .scrolled(document: document, y: y)
+        case ("left", 2):
+            return .left(document: document)
+        default:
+            return nil
         }
     }
 

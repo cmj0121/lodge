@@ -53,6 +53,7 @@
             checkMemoryPressure()
             checkPressureKeepsSessionStore()
             checkReleasedViewGoes()
+            checkPlaces()
             renderSettings(in: directory)
             renderHistory(in: directory)
             renderDownloads(in: directory)
@@ -1440,6 +1441,391 @@
             settle()
         }
 
+        /// Places on disk (#26), in a temporary app directory: a tab that never sent a form rests with WebKit's state on
+        /// disk, and a relaunched coordinator wakes it into a fresh view with its history and scroll; a tab that sent a
+        /// form from its page, and one that sent it from an iframe, hold the posted body (a text and a password field)
+        /// in WebKit's state in memory, yet write only their record, holding no part of the form, and wake to their
+        /// address without history and without sending it again; closing a tab removes its place; a move carries the
+        /// place, but not into Anonymous; Anonymous writes no file; deleting a workspace removes its places. Pages are
+        /// `data:` URLs or served by `PlacesCheckScheme`, so no request goes out.
+        private static func checkPlaces() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) {
+                autoreleasepool { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            }
+            func waitUntil(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(5)
+                while !autoreleasepool(invoking: done), Date.now < deadline { settle(0.05) }
+                return autoreleasepool(invoking: done)
+            }
+            func pageValue(_ view: WKWebView, _ script: String) -> Any? {
+                var answer: Any?
+                var done = false
+                view.evaluateJavaScript(script) { value, _ in
+                    answer = value
+                    done = true
+                }
+                _ = waitUntil { done }
+                return answer
+            }
+            func page(_ name: String, _ body: String) -> URL? {
+                let html = "<!doctype html><title>\(name)</title><body style='height:5000px'>\(body)</body>"
+                return html.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+                    .flatMap { URL(string: "data:text/html,\($0)") }
+            }
+            func files(in directory: URL) -> [URL] {
+                let enumerator = FileManager.default.enumerator(
+                    at: directory, includingPropertiesForKeys: [.isRegularFileKey])
+                return (enumerator?.allObjects as? [URL] ?? []).filter {
+                    (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+                }
+            }
+            /// Rests every unshown tab with a view of every built workspace.
+            func rest(_ coordinator: WorkspaceCoordinator) {
+                var done = false
+                autoreleasepool {
+                    Task {
+                        await coordinator.relieve(.warning)
+                        done = true
+                    }
+                }
+                _ = waitUntil { done }
+            }
+            func makeCoordinator(_ app: URL, restoring snapshot: SessionSnapshot? = nil) -> WorkspaceCoordinator {
+                autoreleasepool {
+                    let coordinator = WorkspaceCoordinator(
+                        restoring: snapshot, session: nil, appDirectory: app, downloads: nil, restDefaults: nil)
+                    coordinator.bringForwardHook = { _ in }
+                    coordinator.restAfter = .never
+                    return coordinator
+                }
+            }
+            let temporary = FileManager.default.temporaryDirectory.appending(
+                path: "LodgePlaces-\(UUID().uuidString)", directoryHint: .isDirectory)
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            let app = temporary.appending(path: "app", directoryHint: .isDirectory)
+            let defaultPlaces = PlaceStore(directory: WorkspaceFiles.placesDirectory(for: .default, in: app)!)
+            let cleanName = "A tab that never sent a form keeps WebKit's state on disk"
+            let cleanWakeName = "After a relaunch it wakes from disk with its history and scroll"
+            let formName = "A tab that sent a form writes only its record, without the form"
+            // Served to every view made during this check, the relaunched coordinator's included.
+            let scheme = PlacesCheckScheme()
+            WebViewRegistry.selfCheckScheme = (PlacesCheckScheme.name, scheme)
+            defer { WebViewRegistry.selfCheckScheme = nil }
+            let markers = ["FIELDMARK7Q", "MARKERPW3X"]
+            func checkURL(_ path: String) -> URL? { URL(string: "\(PlacesCheckScheme.name)://local/\(path)") }
+            /// Every marker is in `data`.
+            func holdsMarkers(_ data: Data?) -> Bool {
+                guard let data else { return false }
+                return (markers + ["pw="]).allSatisfy { data.range(of: Data($0.utf8)) != nil }
+            }
+            /// `data` is a file holding no part of the posted body.
+            func holdsNoForm(_ data: Data) -> Bool {
+                !data.isEmpty
+                    && (markers + ["pw=", "field=", "FIELD", "MARK7Q", "MARKER", "PW3X"]).allSatisfy {
+                        data.range(of: Data($0.utf8)) == nil
+                    }
+            }
+
+            let first = makeCoordinator(app)
+            let window = first.windows[0]
+            var hostWindow: NSWindow? = autoreleasepool { host(root(first, window), size: NSSize(width: 900, height: 600)) }
+            /// Opens a new tab of the shown workspace on `url`, waiting until it is titled `name`.
+            func open(_ coordinator: WorkspaceCoordinator, _ name: String, _ url: URL?) -> TabID? {
+                let window = coordinator.windows[0]
+                let id: TabID? = autoreleasepool {
+                    let pane = coordinator.pane(for: window)
+                    window.locationPrompt = .newTab
+                    pane.submitLocation("about:blank")
+                    guard let id = pane.selectedID, let url, pane.model.load(url, in: id) else { return nil }
+                    return id
+                }
+                guard let id,
+                    waitUntil({
+                        coordinator.registry.webView(for: id).map { $0.title == name && !$0.isLoading } == true
+                    })
+                else { return nil }
+                settle()
+                return id
+            }
+            /// Scrolls the tab's page to `y` and waits for the page to report it.
+            func scroll(_ coordinator: WorkspaceCoordinator, _ id: TabID, to y: Double) -> Bool {
+                guard let view = coordinator.registry.webView(for: id) else { return false }
+                view.evaluateJavaScript("window.scrollTo(0, \(y))")
+                return waitUntil { coordinator.active.reportedScroll(id).map { abs($0 - y) < 2 } == true }
+            }
+
+            // A clean tab: two pages, so it has a back entry, scrolled on the second.
+            let model = first.active
+            guard let clean = open(first, "place-1", page("place-1", "<p>one</p>")),
+                let second = page("place-2", "<p>two</p>"), model.load(second, in: clean),
+                waitUntil({ first.registry.webView(for: clean).map { $0.title == "place-2" && !$0.isLoading } == true }),
+                scroll(first, clean, to: 1500)
+            else { return report(cleanName, false) }
+
+            // Two tabs fill a text field and a password field by script (so no address holds the markers) and send them
+            // to the local scheme: one from its page, one from an iframe. WebKit's state of each holds the posted body,
+            // which makes the check below meaningful.
+            /// Opens `path`, titled `name`, and sends its form; the tab once the scheme has the post and loading ended.
+            let fill = "f.value = ['FIELD', 'MARK7Q'].join(''); p.value = ['MARKER', 'PW3X'].join(''); form.requestSubmit()"
+            func sendForm(_ coordinator: WorkspaceCoordinator, _ path: String, titled name: String) -> TabID? {
+                guard let id = open(coordinator, name, checkURL(path)), let view = coordinator.registry.webView(for: id)
+                else { return nil }
+                let posted = scheme.postCount
+                view.evaluateJavaScript(fill)
+                guard waitUntil({
+                    coordinator.active.hasSentForm(id) && scheme.postCount > posted && !view.isLoading
+                })
+                else { return nil }
+                settle(0.5)
+                return id
+            }
+            /// The tab's place in `store` is a record holding no part of the form.
+            func writesOnlyRecord(_ store: PlaceStore, _ id: TabID) -> Bool {
+                let bytes = (try? Data(contentsOf: store.url(for: id))) ?? Data()
+                return store.read(id)?.isRecord == true && holdsNoForm(bytes)
+            }
+            guard let formPage = sendForm(first, "form-page", titled: "place-form-page"),
+                waitUntil({ first.registry.webView(for: formPage)?.title == "place-sent-page" }),
+                let formFrame = sendForm(first, "form-frame", titled: "place-form-frame"),
+                scroll(first, formFrame, to: 900)
+            else { return report(formName, false) }
+            let sentPage = checkURL("sent-page")
+            report(
+                "The local scheme received both forms with their fields",
+                scheme.postCount == 2 && scheme.posts.values.allSatisfy { body in markers.allSatisfy { body.contains($0) } })
+            for (id, label) in [(formPage, "page"), (formFrame, "frame")] {
+                report(
+                    "A tab whose \(label) sent a form holds the posted body in WebKit's state in memory",
+                    holdsMarkers(first.registry.webView(for: id)?.interactionState as? Data))
+            }
+            guard open(first, "place-shown", page("place-shown", "<p>shown</p>")) != nil else {
+                return report(cleanName, false)
+            }
+            rest(first)
+            let cleanRested = waitUntil { first.registry.webView(for: clean) == nil }
+            let formsRested = waitUntil {
+                first.registry.webView(for: formPage) == nil && first.registry.webView(for: formFrame) == nil
+            }
+            let cleanPlace = defaultPlaces.read(clean)
+            report(cleanName, cleanRested && cleanPlace?.isRecord == false && cleanPlace?.url == second)
+            for (id, label) in [(formPage, "page"), (formFrame, "frame")] {
+                let bytes = (try? Data(contentsOf: defaultPlaces.url(for: id))) ?? Data()
+                let place = defaultPlaces.read(id)
+                let placed =
+                    id == formPage
+                    ? place?.url == sentPage : place.flatMap(\.scrollY).map { abs($0 - 900) < 2 } == true
+                report(
+                    "A tab whose \(label) sent a form writes only its record, holding no part of the form",
+                    formsRested && place?.isRecord == true && holdsNoForm(bytes) && placed)
+            }
+
+            // A relaunch: a new coordinator from the session, its tabs with no state in memory.
+            let snapshot = first.snapshot
+            autoreleasepool {
+                hostWindow?.close()
+                hostWindow = nil
+            }
+            let relaunched = makeCoordinator(app, restoring: snapshot)
+            let relaunchedWindow = relaunched.windows[0]
+            let relaunchedHost = autoreleasepool {
+                host(root(relaunched, relaunchedWindow), size: NSSize(width: 900, height: 600))
+            }
+            defer { relaunchedHost.close() }
+            let pane = relaunched.pane(for: relaunchedWindow)
+            func wake(_ id: TabID, titled name: String) -> WKWebView? {
+                autoreleasepool { pane.select(id) }
+                guard waitUntil({
+                    relaunched.registry.webView(for: id).map { $0.title == name && !$0.isLoading } == true
+                })
+                else { return nil }
+                settle(1)
+                return relaunched.registry.webView(for: id)
+            }
+            if let view = wake(clean, titled: "place-2") {
+                let y = pageValue(view, "window.scrollY") as? Double
+                report(
+                    cleanWakeName,
+                    view.url == second && view.canGoBack && view.backForwardList.backItem?.title == "place-1"
+                        && y.map { abs($0 - 1500) < 2 } == true)
+            } else {
+                report(cleanWakeName, false)
+            }
+            let pageWakeName = "After a relaunch the page's form tab wakes to its address without history, sending nothing"
+            if let view = wake(formPage, titled: "place-sent-page") {
+                report(
+                    pageWakeName,
+                    view.url == sentPage && !view.canGoBack && !relaunched.active.hasSentForm(formPage)
+                        && scheme.postCount == 2 && scheme.gets["sent-page"] == 1)
+            } else {
+                report(pageWakeName, false)
+            }
+            let frameWakeName = "After a relaunch the frame's form tab wakes to its address and scroll without history"
+            if let view = wake(formFrame, titled: "place-form-frame") {
+                let y = pageValue(view, "window.scrollY") as? Double
+                report(
+                    frameWakeName,
+                    !view.canGoBack && !relaunched.active.hasSentForm(formFrame) && scheme.postCount == 2
+                        && y.map { abs($0 - 900) < 2 } == true)
+            } else {
+                report(frameWakeName, false)
+            }
+            autoreleasepool {
+                relaunched.active.close(formPage)
+                relaunched.active.close(formFrame)
+            }
+            report(
+                "Closing a tab removes its place",
+                defaultPlaces.read(formPage) == nil && defaultPlaces.read(formFrame) == nil)
+
+            // A tab that sent a form, rested and woken from memory, still counts as having sent it: WebKit's state
+            // came back with the body, so its next rest writes a record again.
+            let rewokenName = "A tab that sent a form, woken from memory, stays marked and rests to a record again"
+            if let again = sendForm(relaunched, "form-frame", titled: "place-form-frame"),
+                open(relaunched, "place-again-shown", page("place-again-shown", "<p>shown</p>")) != nil
+            {
+                rest(relaunched)
+                let firstRest = waitUntil { relaunched.registry.webView(for: again) == nil }
+                    && writesOnlyRecord(defaultPlaces, again)
+                defaultPlaces.remove(again)
+                let woken = wake(again, titled: "place-form-frame")
+                let stillMarked =
+                    woken != nil && relaunched.active.hasSentForm(again)
+                    && holdsMarkers(woken?.interactionState as? Data)
+                _ = open(relaunched, "place-again-shown-2", page("place-again-shown-2", "<p>shown</p>"))
+                rest(relaunched)
+                let secondRest = waitUntil { relaunched.registry.webView(for: again) == nil }
+                report(rewokenName, firstRest && stillMarked && secondRest && writesOnlyRecord(defaultPlaces, again))
+                autoreleasepool { relaunched.active.close(again) }
+            } else {
+                report(rewokenName, false)
+            }
+
+            // A form sent into a new window: the popup it opens counts as having sent it.
+            let popupName = "A popup opened by a sent form is marked and keeps only a record"
+            let tabsBefore = Set(relaunched.active.tabs.tabs.map(\.id))
+            if let opener = open(relaunched, "place-form-popup", checkURL("form-popup")) {
+                relaunched.registry.webView(for: opener)?.evaluateJavaScript(fill)
+                let popup: () -> TabID? = {
+                    relaunched.active.tabs.tabs.first {
+                        !tabsBefore.contains($0.id) && $0.id != opener
+                            && relaunched.registry.webView(for: $0.id)?.title == "place-sent-popup"
+                    }?.id
+                }
+                if waitUntil({ popup() != nil }), let popup = popup() {
+                    settle(0.5)
+                    let marked = relaunched.active.hasSentForm(popup) && !relaunched.active.hasSentForm(opener)
+                    let inMemory = holdsMarkers(relaunched.registry.webView(for: popup)?.interactionState as? Data)
+                    autoreleasepool { relaunched.keepLivePlaces() }
+                    report(popupName, marked && inMemory && writesOnlyRecord(defaultPlaces, popup))
+                } else {
+                    report(popupName, false)
+                }
+                autoreleasepool { relaunched.active.close(opener) }
+                settle()
+            } else {
+                report(popupName, false)
+            }
+
+            // Quitting with a tab still awake that sent a form: its place is a record too.
+            let quitName = "Quitting with a live Default tab that sent a form writes only its record"
+            if let live = sendForm(relaunched, "form-page", titled: "place-form-page") {
+                autoreleasepool { relaunched.keepLivePlaces() }
+                report(quitName, relaunched.registry.webView(for: live) != nil && writesOnlyRecord(defaultPlaces, live))
+                autoreleasepool { relaunched.active.close(live) }
+            } else {
+                report(quitName, false)
+            }
+
+            // Moves: into a custom workspace the place goes along; into Anonymous it does not.
+            let moveName = "A moved tab carries its place, and its old place goes"
+            let made = autoreleasepool { try? relaunched.create(name: "Places", symbol: "briefcase") }
+            guard let made, let customDirectory = WorkspaceFiles.placesDirectory(for: made, in: app) else {
+                return report(moveName, false)
+            }
+            let customPlaces = PlaceStore(directory: customDirectory)
+            let moved = autoreleasepool { relaunched.move(tab: clean, to: made.id) }
+            let carried = relaunched.model(for: made.id)?.tabs.tabs.first { $0.url == second }
+            report(
+                moveName,
+                moved && defaultPlaces.read(clean) == nil
+                    && carried.flatMap { customPlaces.read($0.id) }.map { !$0.isRecord && $0.url == second } == true)
+            if let carried {
+                let movedAgain = autoreleasepool { relaunched.move(tab: carried.id, to: Workspace.anonymousID) }
+                let arrived = relaunched.model(for: Workspace.anonymousID)?.tabs.tabs.first { $0.url == second }
+                report(
+                    "A tab moved into Anonymous drops its place",
+                    movedAgain && customPlaces.read(carried.id) == nil && arrived != nil
+                        && relaunched.model(for: Workspace.anonymousID)?.places == nil
+                        && files(in: temporary).allSatisfy { !$0.lastPathComponent.contains(arrived!.id.uuidString) })
+                if let arrived { autoreleasepool { relaunched.model(for: Workspace.anonymousID)?.close(arrived.id) } }
+            }
+            let movedFormName = "A moved tab that sent a form carries only its record"
+            // Creating the workspace switched to it: the sender opens in Default.
+            autoreleasepool { relaunched.switchTo(Workspace.defaultID) }
+            if let sender = sendForm(relaunched, "form-page", titled: "place-form-page") {
+                let tabsThere = Set(relaunched.model(for: made.id)?.tabs.tabs.map(\.id) ?? [])
+                let movedForm = autoreleasepool { relaunched.move(tab: sender, to: made.id) }
+                let arrived = relaunched.model(for: made.id)?.tabs.tabs.first { !tabsThere.contains($0.id) }
+                report(
+                    movedFormName,
+                    movedForm && defaultPlaces.read(sender) == nil
+                        && arrived.map { writesOnlyRecord(customPlaces, $0.id) } == true)
+                if let arrived { autoreleasepool { relaunched.model(for: made.id)?.close(arrived.id) } }
+            } else {
+                report(movedFormName, false)
+            }
+
+            // Deleting the workspace removes its places.
+            let deleteName = "Deleting a workspace removes its places"
+            autoreleasepool { relaunched.switchTo(made.id) }
+            let customQuitName = "Quitting with a live custom workspace tab that sent a form writes only its record"
+            if let live = sendForm(relaunched, "form-page", titled: "place-form-page") {
+                autoreleasepool { relaunched.keepLivePlaces() }
+                report(
+                    customQuitName,
+                    relaunched.registry.webView(for: live) != nil && writesOnlyRecord(customPlaces, live))
+            } else {
+                report(customQuitName, false)
+            }
+            guard let kept = open(relaunched, "place-doomed", page("place-doomed", "<p>doomed</p>")),
+                open(relaunched, "place-doomed-shown", page("place-doomed-shown", "<p>shown</p>")) != nil
+            else { return report(deleteName, false) }
+            rest(relaunched)
+            guard waitUntil({ customPlaces.read(kept) != nil }) else { return report(deleteName, false) }
+            autoreleasepool { relaunched.switchTo(Workspace.defaultID) }
+            settle()
+            var deleted: Bool?
+            autoreleasepool { Task { deleted = await relaunched.delete(made.id) } }
+            _ = waitUntil { deleted != nil }
+            report(
+                deleteName,
+                deleted == true
+                    && !FileManager.default.fileExists(
+                        atPath: WorkspaceFiles.directory(for: made.id, in: app).path(percentEncoded: false)))
+
+            // Anonymous, in an app directory of its own: resting and quitting write nothing at all.
+            let anonymousApp = temporary.appending(path: "anonymous", directoryHint: .isDirectory)
+            let anonymous = makeCoordinator(anonymousApp)
+            let anonymousHost = autoreleasepool {
+                host(root(anonymous, anonymous.windows[0]), size: NSSize(width: 900, height: 600))
+            }
+            defer { anonymousHost.close() }
+            autoreleasepool { anonymous.switchTo(Workspace.anonymousID) }
+            let anonymousName = "Anonymous writes no place, resting or quitting"
+            guard let resting = open(anonymous, "place-anon", page("place-anon", "<p>anon</p>")),
+                open(anonymous, "place-anon-shown", page("place-anon-shown", "<p>shown</p>")) != nil,
+                scroll(anonymous, resting, to: 300)
+            else { return report(anonymousName, false) }
+            rest(anonymous)
+            let anonymousRested = waitUntil { anonymous.registry.webView(for: resting) == nil }
+            autoreleasepool { anonymous.keepLivePlaces() }
+            report(anonymousName, anonymousRested && files(in: anonymousApp).isEmpty)
+            for id in anonymous.active.tabs.tabs.map(\.id) { autoreleasepool { anonymous.active.close(id) } }
+            autoreleasepool { anonymous.switchTo(Workspace.defaultID) }
+            settle()
+        }
+
         /// Workspace colours and Anonymous's look: an Anonymous window drawn in a light system appearance (it stays
         /// dark) and in a dark one (checked against a plain dark window's ground), a strip of Default's sidebar in each
         /// palette swatch in light and in dark, the Change Icon sheet with a colour chosen in both appearances, and the
@@ -2014,6 +2400,64 @@
             else { return nil }
             content.cacheDisplay(in: content.bounds, to: rep)
             return rep
+        }
+    }
+    /// Layout self-checks only: a local `lodge-check:` scheme serving the form pages of `checkPlaces` and recording what
+    /// is posted to it, so a form is sent with no network.
+    @MainActor
+    final class PlacesCheckScheme: NSObject, WKURLSchemeHandler {
+        static let name = "lodge-check"
+        /// Each POST's urlencoded body, by the path it was last sent to.
+        private(set) var posts: [String: String] = [:]
+        /// How many POSTs arrived in all.
+        private(set) var postCount = 0
+        /// How many GETs each path had.
+        private(set) var gets: [String: Int] = [:]
+
+        func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
+            guard let url = task.request.url else { return }
+            let path = url.lastPathComponent
+            if task.request.httpMethod == "POST" {
+                posts[path] = String(decoding: Self.body(of: task.request), as: UTF8.self)
+                postCount += 1
+            } else {
+                gets[path, default: 0] += 1
+            }
+            let fields = "<input id=f name=field><input id=p type=password name=pw>"
+            let body: String =
+                switch path {
+                case "form-page":
+                    "<form id=form method=post action='sent-page'>\(fields)</form>"
+                case "form-popup":
+                    "<form id=form method=post target=_blank action='sent-popup'>\(fields)</form>"
+                case "form-frame":
+                    "<iframe name=sink src='blank'></iframe>"
+                        + "<form id=form method=post target=sink action='sent-frame'>\(fields)</form>"
+                default: ""
+                }
+            let html = "<!doctype html><title>place-\(path)</title><body style='height:5000px'>\(body)</body>"
+            let data = Data(html.utf8)
+            task.didReceive(
+                URLResponse(url: url, mimeType: "text/html", expectedContentLength: data.count, textEncodingName: "utf-8"))
+            task.didReceive(data)
+            task.didFinish()
+        }
+
+        func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
+
+        private static func body(of request: URLRequest) -> Data {
+            if let body = request.httpBody { return body }
+            guard let stream = request.httpBodyStream else { return Data() }
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let read = stream.read(&buffer, maxLength: buffer.count)
+                guard read > 0 else { break }
+                data.append(buffer, count: read)
+            }
+            return data
         }
     }
 #endif

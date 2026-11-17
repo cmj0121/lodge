@@ -1511,6 +1511,16 @@
         }
       }
     },
+    "Resting tabs keep their place on this Mac: the address, scroll position and, for tabs that never sent a form, their back and forward history. Text in form fields and posted form data are never kept, and Anonymous keeps nothing." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "休眠中的分頁會把位置存在這台 Mac 上：網址、捲動位置，以及（未曾送出表單的分頁）上一頁與下一頁紀錄。表單欄位中的文字與以 POST 送出的表單資料一律不保存，Anonymous 則什麼都不保存。"
+          }
+        }
+      }
+    },
     "Resting; selecting it wakes it" : {
       "localizations" : {
         "zh-Hant" : {

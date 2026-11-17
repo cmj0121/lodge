@@ -23,6 +23,8 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var nextLoadIsBrowserInitiated = false
     /// A main-frame form submission is loading; it holds the page (`PageWork`) until that load ends.
     private var isFormPostLoading = false
+    /// The scroll-restoring script (`PlaceScript`), until the load it was added for ends.
+    private var scrollRestore: WKUserScript?
     #if DEBUG
         /// Layout self-checks: how many `lodge:` navigations and popups every tab has refused.
         static var lodgeRefusals = 0
@@ -122,6 +124,26 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         nextLoadIsBrowserInitiated = true
     }
 
+    /// The tab wakes from a record (D5): the next load of `url` in `view` scrolls its main frame back to `y`, from a
+    /// user script removed once that load ends.
+    func restoreScroll(to y: Double, at url: URL, in view: WKWebView) {
+        let script = WKUserScript(
+            source: PlaceScript.restoreScroll(to: y, at: url), injectionTime: .atDocumentEnd, forMainFrameOnly: true,
+            in: .world(name: PlaceScript.worldName))
+        view.configuration.userContentController.addUserScript(script)
+        scrollRestore = script
+    }
+
+    /// The load the scroll-restoring script was added for has ended: it goes, the work script stays.
+    private func endScrollRestore(in view: WKWebView) {
+        guard let script = scrollRestore else { return }
+        scrollRestore = nil
+        let controller = view.configuration.userContentController
+        let kept = controller.userScripts.filter { $0.source != script.source }
+        controller.removeAllUserScripts()
+        kept.forEach(controller.addUserScript)
+    }
+
     /// Called when another tab is selected: ends this tab's open sheet.
     func didDeselect() {
         dismissSheet?()
@@ -145,6 +167,12 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         gestures.record(
             Self.gestureRecord(of: navigationAction, browserInitiated: browserInitiated),
             url: navigationAction.request.url, isMainFrame: isMainFrame)
+        // A sent form in any frame puts its body in the view's history (S0), so its place on disk is a record only.
+        if navigationAction.targetFrame != nil,
+            [.formSubmitted, .formResubmitted].contains(navigationAction.navigationType)
+        {
+            model?.didSendForm(tab)
+        }
         if navigationAction.shouldPerformDownload { return (.download, preferences) }
         if navigationAction.navigationType == .linkActivated, navigationAction.modifierFlags.contains(.command),
             let url = navigationAction.request.url, NewTabPolicy.allows(url)
@@ -235,16 +263,19 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         favicons.pageFinished(in: webView)
         setFormPostLoading(false)
+        endScrollRestore(in: webView)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
         setFormPostLoading(false)
+        endScrollRestore(in: webView)
     }
 
     func webView(
         _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error
     ) {
         setFormPostLoading(false)
+        endScrollRestore(in: webView)
     }
 
     /// Tells the model when a main-frame form submission starts or stops loading.
@@ -275,7 +306,9 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             #endif
             return nil
         }
-        return model?.openPopup(from: tab, configuration: configuration)
+        return model?.openPopup(
+            from: tab, configuration: configuration,
+            sendsForm: [.formSubmitted, .formResubmitted].contains(navigationAction.navigationType))
     }
 
     func webViewDidClose(_ webView: WKWebView) {
