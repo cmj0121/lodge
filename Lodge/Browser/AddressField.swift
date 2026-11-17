@@ -70,16 +70,17 @@ struct AddressField: NSViewRepresentable {
         if let editor = field.currentEditor() as? NSTextView {
             if editor.string != text {
                 editor.string = text
-                context.coordinator.inline.restart(from: text)
+                context.coordinator.inline.restart()
             }
             // These edit the text, and so the binding, which must wait until this update is over.
             let coordinator = context.coordinator
-            let drops = dropCompletionRequest != coordinator.dropCompletionRequest
-            DispatchQueue.main.async { [weak editor] in
-                guard let editor, editor.window?.firstResponder === editor else { return }
-                if drops { coordinator.inline.drop(in: editor) }
-                coordinator.inline.complete(to: coordinator.parent.suggestions?.completion, in: editor)
+            if dropCompletionRequest != coordinator.dropCompletionRequest {
+                DispatchQueue.main.async { [weak editor] in
+                    guard let editor, editor.window?.firstResponder === editor else { return }
+                    coordinator.inline.drop(in: editor)
+                }
             }
+            coordinator.completeLater(in: editor)
         } else if field.stringValue != text {
             field.stringValue = text
         }
@@ -117,7 +118,7 @@ struct AddressField: NSViewRepresentable {
 
         /// The field editor took or gave up the keys, typed into or not.
         func focusChanged(_ isFocused: Bool) {
-            inline.restart(from: parent.text)
+            inline.restart()
             if parent.isEditing != isFocused { parent.isEditing = isFocused }
         }
 
@@ -129,7 +130,17 @@ struct AddressField: NSViewRepresentable {
             guard !inline.isChanging, let editor = field.currentEditor() as? AddressFieldEditor else { return }
             inline.didEdit(in: editor, wasTyped: editor.isTyping)
             parent.suggestions?.update(field.stringValue)
-            inline.complete(to: parent.suggestions?.completion, in: editor)
+            completeLater(in: editor)
+        }
+
+        /// Completes to the suggestions' completion as it is on the next run-loop pass, while the editor still has
+        /// the keys.
+        func completeLater(in editor: NSTextView) {
+            inline.completeLater(
+                to: { [weak self, weak editor] in
+                    guard let editor, editor.window?.firstResponder === editor else { return nil }
+                    return self?.parent.suggestions?.completion
+                }, in: editor)
         }
 
         /// The row picked, then the field stops editing as after Return.
@@ -140,19 +151,15 @@ struct AddressField: NSViewRepresentable {
 
         /// While the list shows rows, ↑ / ↓ move its highlight and Esc closes it (and drops a completion shown);
         /// Return opens the highlighted row, else submits the text, a completion shown included; Esc with no list
-        /// gives up the edit. Return and that Esc stop the editing. While a completion shows, → accepts it, any
-        /// deletion (⌫ among them) removes just the completion; the field editor makes it text before anything else.
+        /// gives up the edit. Return and that Esc stop the editing. While a completion shows, → accepts it; a
+        /// deletion (⌫ among them) removes the selected completion as it would any selection.
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             let list = parent.suggestions.flatMap { $0.rows.isEmpty ? nil : $0 }
-            let showsCompletion = inline.shown(in: textView) != nil
             switch selector {
             case #selector(NSResponder.moveRight(_:)), #selector(NSResponder.moveToEndOfLine(_:)),
                 #selector(NSResponder.moveToRightEndOfLine(_:)), #selector(NSResponder.moveToEndOfDocument(_:)):
                 guard inline.accept(in: textView) else { return false }
                 parent.suggestions?.update(textView.string)
-                return true
-            case _ where showsCompletion && NSStringFromSelector(selector).hasPrefix("delete"):
-                inline.drop(in: textView)
                 return true
             case #selector(NSResponder.moveDown(_:)):
                 guard let list else { return false }
