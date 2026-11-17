@@ -120,12 +120,21 @@ final class WebViewRegistry {
         try await WKWebsiteDataStore.remove(forIdentifier: id)
     }
 
+    #if DEBUG
+        /// Layout self-checks only: a local scheme every new configuration serves, so a check can send a form with no
+        /// network. Never set outside a self-check, and absent from release builds.
+        static var selfCheckScheme: (name: String, handler: any WKURLSchemeHandler)?
+    #endif
+
     /// A configuration on the store's data store, with the work script (D3) in its own content world in every frame
     /// and one handler sending what it reports to `model`.
     private func newConfiguration(for ref: StoreRef, model: BrowserModel) -> WKWebViewConfiguration {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = dataStore(for: ref)
         config.preferences.isElementFullscreenEnabled = true
+        #if DEBUG
+            if let check = Self.selfCheckScheme { config.setURLSchemeHandler(check.handler, forURLScheme: check.name) }
+        #endif
         let world = WKContentWorld.world(name: PageWorkScript.worldName)
         config.userContentController.addUserScript(
             WKUserScript(
@@ -149,7 +158,8 @@ final class WebViewRegistry {
     }
 }
 
-/// Hands the work script's messages to the model of the tab whose view sent them. The content controller keeps its
+/// Hands the work script's messages to the model of the tab whose view sent them, its place messages only from the
+/// main frame. The content controller keeps its
 /// handlers alive as long as the configuration, so the model is held weakly.
 @MainActor
 private final class PageWorkHandler: NSObject, WKScriptMessageHandler {
@@ -160,7 +170,11 @@ private final class PageWorkHandler: NSObject, WKScriptMessageHandler {
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let view = message.webView, let signal = PageWorkScript.signal(from: message.body) else { return }
-        model?.didReceiveWork(signal, from: view)
+        guard let view = message.webView else { return }
+        if let signal = PageWorkScript.signal(from: message.body) {
+            model?.didReceiveWork(signal, from: view)
+        } else if message.frameInfo.isMainFrame, let place = PageWorkScript.place(from: message.body) {
+            model?.didReceivePlace(place, from: view)
+        }
     }
 }

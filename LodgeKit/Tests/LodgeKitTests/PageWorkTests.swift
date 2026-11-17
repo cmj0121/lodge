@@ -99,10 +99,12 @@ import Testing
 
     // MARK: The script
 
-    @Test func theScriptPostsOnlyTheDocumentAndKind() {
+    @Test func theScriptPostsOnlyTheDocumentKindAndScroll() {
         let source = PageWorkScript.source
         #expect(source.components(separatedBy: "postMessage(").count == 2)
-        #expect(source.contains("postMessage({ doc: doc, kind: kind })"))
+        #expect(
+            source.contains("postMessage(y === undefined ? { doc: doc, kind: kind } : { doc: doc, kind: kind, y: y })"))
+        #expect(source.components(separatedBy: "post('scroll', ").count == 2)
         #expect(source.contains("handlers.\(PageWorkScript.handlerName);"))
     }
 
@@ -205,6 +207,43 @@ import Testing
         #expect(page.listenerCount == 0)
     }
 
+    // MARK: Main-frame scroll (D5)
+
+    @Test func theMainFrameReportsItsScrollOnceAScrollSettles() throws {
+        let page = try ScriptPage(topFrame: true)
+        page.run("window.scrollY = 300; fire('scroll', {}); fire('scroll', {});")
+        #expect(page.posted.isEmpty)
+        page.run("runTimers();")
+        #expect(page.places == [.scrolled(document: "doc-1", y: 300)])
+        page.run("window.scrollY = 500; fire('scroll', {}); runTimers();")
+        #expect(page.places.last == .scrolled(document: "doc-1", y: 500))
+    }
+
+    @Test func theMainFrameReportsItsScrollWhenHiddenAndNotOnceLeft() throws {
+        let page = try ScriptPage(topFrame: true)
+        page.run("window.scrollY = 120; document.visibilityState = 'hidden'; fire('visibilitychange', {});")
+        #expect(page.places == [.scrolled(document: "doc-1", y: 120)])
+        page.run("fire('pagehide', {}); fire('visibilitychange', {}); fire('scroll', {}); runTimers();")
+        #expect(page.places == [.scrolled(document: "doc-1", y: 120), .left(document: "doc-1")])
+        page.run("fire('pageshow', { persisted: true });")
+        #expect(page.places.last == .scrolled(document: "doc-1", y: 120))
+    }
+
+    @Test func aSubframeReportsNoScroll() throws {
+        let page = try ScriptPage()
+        page.run("window.scrollY = 300; fire('scroll', {}); runTimers(); fire('pagehide', {});")
+        #expect(page.posted.isEmpty)
+    }
+
+    @Test func scrollReportsCarryNoFieldValues() throws {
+        let page = try ScriptPage(topFrame: true)
+        page.run("var f = field({ value: 'secret' }); fire('input', { target: f }); fire('scroll', {}); runTimers();")
+        for message in page.posted {
+            #expect(!message.values.contains { ($0 as? String) == "secret" })
+            #expect(PageWorkScript.signal(from: message) != nil || PageWorkScript.place(from: message) != nil)
+        }
+    }
+
     // MARK: beforeunload probe
 
     @Test func theProbeSeesAPreventedOrReturnValuedEvent() throws {
@@ -227,7 +266,8 @@ import Testing
 private final class ScriptPage {
     private let context: JSContext
 
-    init(withHandler: Bool = true) throws {
+    /// `topFrame`: the page is the main frame (`window.top === window`), at `window.scrollY` 0.
+    init(withHandler: Bool = true, topFrame: Bool = false) throws {
         context = try #require(JSContext())
         context.exceptionHandler = { _, exception in
             Issue.record("JavaScript threw: \(exception?.toString() ?? "?")")
@@ -267,6 +307,7 @@ private final class ScriptPage {
               var e = Object.assign({ type: type, isTrusted: true, target: null }, props || {});
               (listeners[type] || []).slice().forEach(function (fn) { fn(e); });
             }
+            \(topFrame ? "window.top = window; window.scrollY = 0; document.visibilityState = 'visible';" : "")
             """)
         context.evaluateScript(PageWorkScript.source)
     }
@@ -278,6 +319,8 @@ private final class ScriptPage {
     }
 
     var kinds: [String] { posted.compactMap { $0["kind"] as? String } }
+
+    var places: [PageWorkScript.Place] { posted.compactMap(PageWorkScript.place(from:)) }
 
     var listenerCount: Int {
         Int(context.evaluateScript("Object.keys(listeners).length").toInt32())

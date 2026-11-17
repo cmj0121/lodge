@@ -175,7 +175,9 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         let model = BrowserModel(
             workspace: workspace.id, store: workspace.store, restoring: dormant.removeValue(forKey: workspace.id),
             registry: registry,
-            defaultLibrary: workspace.id == Workspace.defaultID ? defaultLibrary : LinkLibrary())
+            defaultLibrary: workspace.id == Workspace.defaultID ? defaultLibrary : LinkLibrary(),
+            places: appDirectory.flatMap { WorkspaceFiles.placesDirectory(for: workspace, in: $0) }
+                .map { PlaceStore(directory: $0) })
         model.downloads = downloads
         model.placement = self
         if let store = historyStores[workspace.id] { model.historyRecorder = HistoryRecorder(store: store) }
@@ -474,6 +476,12 @@ extension WorkspaceCoordinator: WindowPlacement {
         isQuitting = true
     }
 
+    /// The app is quitting: every built workspace's tabs still awake keep their place on disk (D5), as resting ones
+    /// already do; Anonymous keeps none.
+    func keepLivePlaces() {
+        for model in models.values { model.keepLivePlaces() }
+    }
+
     /// The window is on screen in `nsWindow`: it takes its saved frame (on the next main turn, after SwiftUI's first
     /// sizing), from now on it becoming key makes it the key browser window (and the first in `selections`), any other
     /// window becoming key leaves no key browser window, moving or resizing it saves the session, and closing it
@@ -751,11 +759,17 @@ extension WorkspaceCoordinator {
     /// a tab with no address, an unknown tab, or a destination that is the tab's own workspace or not listed.
     @discardableResult
     func open(tab id: TabID, in destination: UUID) -> Bool {
+        open(tab: id, in: destination, carrying: false)
+    }
+
+    /// `carrying`: the tab's place (D5) goes along, unless either workspace is Anonymous, which keeps none.
+    private func open(tab id: TabID, in destination: UUID, carrying: Bool) -> Bool {
         guard let source = model(holding: id), let tab = source.tabs[id], let url = tab.url,
             destination != source.workspaceID, let target = model(for: destination)
         else { return false }
+        let place = carrying ? source.place(of: id) : nil
         guard let window = lastActiveBrowserWindow else {
-            _ = target.receive(url: url, title: tab.title)
+            _ = target.receive(url: url, title: tab.title, place: place)
             return true
         }
         // The tab the window shows there, or would show on switching there, gives way to the page when blank, so no
@@ -763,7 +777,7 @@ extension WorkspaceCoordinator {
         let replaced =
             selections.windows.first { $0.id == window.id }?.remembered[destination]
             ?? (selections.remembered(in: destination) == nil ? entryTab(of: target) : nil)
-        let received = target.receive(url: url, title: tab.title)
+        let received = target.receive(url: url, title: tab.title, place: place)
         opened(received, in: destination, window: window)
         if let replaced, let blank = target.tabs[replaced], blank.url == nil, !blank.isLoading {
             target.close(replaced)
@@ -771,10 +785,11 @@ extension WorkspaceCoordinator {
         return true
     }
 
-    /// `open(tab:in:)`, then closes the tab with every popup it opened.
+    /// `open(tab:in:)` carrying the tab's place, back and forward history included (none into or out of Anonymous),
+    /// then closes the tab with every popup it opened, and its place with it.
     @discardableResult
     func move(tab id: TabID, to destination: UUID) -> Bool {
-        guard let source = model(holding: id), open(tab: id, in: destination) else { return false }
+        guard let source = model(holding: id), open(tab: id, in: destination, carrying: true) else { return false }
         source.close(id)
         return true
     }
@@ -1000,6 +1015,8 @@ extension WorkspaceCoordinator {
         guard let model = models.removeValue(forKey: id) else { return }
         model.onContentChange = nil
         model.placement = nil
+        // removeFiles deletes its places; nothing may write one again meanwhile.
+        model.places = nil
         if let recorder = model.historyRecorder { deletingRecorders[id] = recorder }
         model.historyRecorder = nil
         registry.detach(tabs: model.tabs.tabs.map(\.id))

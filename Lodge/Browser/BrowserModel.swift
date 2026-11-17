@@ -1,6 +1,7 @@
 import AppKit
 import LodgeKit
 import Observation
+import os
 import WebKit
 
 /// State and actions of one workspace: its saved links, its open tabs and their web views. Which tab a window shows,
@@ -42,6 +43,16 @@ final class BrowserModel {
     @ObservationIgnored private var storedIcons: [UUID: (data: Data, image: NSImage)] = [:]
     /// Released tabs' `interactionState`, in memory only, put back when the view is rebuilt.
     @ObservationIgnored private var savedStates: [TabID: Any] = [:]
+    /// Where this workspace's resting tabs keep their place on disk (D5); nil for Anonymous, which keeps none, in
+    /// layout renders, and once the workspace is being deleted.
+    @ObservationIgnored var places: PlaceStore?
+    /// Tabs whose view sent a form, in its page or a frame: their `interactionState` holds the sent body, so their
+    /// place on disk is a record only. Kept while the tab rests in memory, since that state comes back with it; a view
+    /// built afresh, or from a place on disk, starts clean.
+    @ObservationIgnored private var sentForm: Set<TabID> = []
+    /// Each live tab's main-frame scroll position, as its page reports it, for a record's place.
+    @ObservationIgnored private var scrolls: [TabID: MainScroll] = [:]
+    private static let placesLogger = Logger(subsystem: "dev.lodge", category: "places")
     /// Each popup tab's opener, so neither of a live pair is released while the other has a view.
     @ObservationIgnored private var popupOpeners: [TabID: TabID] = [:]
     /// Each tab's unsent work (typed text, a form POST in flight) as its page reports it; gone with the tab or its view.
@@ -101,11 +112,13 @@ final class BrowserModel {
     init(
         workspace: UUID = Workspace.defaultID, store: StoreRef? = .global,
         restoring content: SessionSnapshot.WorkspaceContent? = nil,
-        registry: WebViewRegistry = WebViewRegistry(), defaultLibrary: LinkLibrary = LinkLibrary()
+        registry: WebViewRegistry = WebViewRegistry(), defaultLibrary: LinkLibrary = LinkLibrary(),
+        places: PlaceStore? = nil
     ) {
         workspaceID = workspace
         self.store = store
         self.registry = registry
+        self.places = workspace == Workspace.anonymousID ? nil : places
         if let content {
             let restored = content.restored(store: store)
             library = restored.library
@@ -119,6 +132,7 @@ final class BrowserModel {
         refreshSidebar()
         if tabs.tabs.isEmpty { appendBlanks([TabID()]) }
         lastContent = storedContent
+        self.places?.prune(keeping: Set(tabs.tabs.map(\.id)))
     }
 
     /// The store a new tab runs on: the workspace's own; in Anonymous a new browser of its own, except a WebKit popup,
@@ -286,7 +300,7 @@ final class BrowserModel {
     }
 
     /// Destroys the tab's web view; the tab keeps its URL and title, and its page's interaction state waits in
-    /// memory for the view to be rebuilt.
+    /// memory for the view to be rebuilt, and on disk (`places`) for a relaunch.
     private func release(_ id: TabID) {
         guard let tab = tabs[id], registry.webView(for: id) != nil else { return }
         controllers[id]?.didDeselect()
@@ -295,6 +309,7 @@ final class BrowserModel {
         work[id] = nil
         forgetBeforeUnload(id)
         if tab.url != nil, let state { savedStates[id] = state }
+        keepPlace(of: tab, state: state as? Data, scrollY: scrolls.removeValue(forKey: id)?.y)
         restoredTabs.insert(id)
         if loadProgress[id] != nil { loadProgress[id] = nil }
         update(id) {
@@ -342,12 +357,19 @@ final class BrowserModel {
     }
 
     /// A tab moved or opened here from another workspace: a loose tab on this workspace's store (in Anonymous a new
-    /// browser) with only the address and title, its web view built when a window shows it. A Lodge page already open
-    /// here is that tab instead.
-    func receive(url: URL, title: String) -> TabID {
+    /// browser) with the address and title, and the `place` a move carries when this workspace keeps places, its web
+    /// view built when a window shows it. A Lodge page already open here is that tab instead.
+    func receive(url: URL, title: String, place: TabPlace? = nil) -> TabID {
         if let page = LodgePage(url: url), let shown = tab(showing: page) { return shown.id }
         let tab = BrowserTab(store: newTabStore(), url: url, title: title, isLive: false)
         changeTabs { $0.open(tab) }
+        if let places, let place {
+            do {
+                try places.write(place, for: tab.id)
+            } catch {
+                Self.placesLogger.error("Cannot keep a moved tab's place: \(error.localizedDescription, privacy: .public)")
+            }
+        }
         return tab.id
     }
 
@@ -388,11 +410,13 @@ final class BrowserModel {
 
     /// Called by WebKit for popups and `target=_blank`: the new tab runs on the configuration it hands over and is
     /// shown in the window showing `source`; WebKit loads it.
-    func openPopup(from source: TabID, configuration: WKWebViewConfiguration) -> WKWebView? {
+    /// `sendsForm`: the popup opens for a sent form (`target=_blank`), so its view counts as having sent one.
+    func openPopup(from source: TabID, configuration: WKWebViewConfiguration, sendsForm: Bool = false) -> WKWebView? {
         guard tabs[source] != nil else { return nil }
         let popup = BrowserTab(store: newTabStore(popupOf: source))
         popupOpeners[popup.id] = source
         let view = append(popup, configuration: configuration, load: false)
+        if sendsForm { didSendForm(popup.id) }
         placement?.didOpen(popup.id, in: workspaceID, from: source)
         return view
     }
@@ -430,6 +454,9 @@ final class BrowserModel {
         if let view = registry.webView(for: id) { return view }
         let isRestoring = restoredTabs.remove(id) != nil
         let saved = savedStates.removeValue(forKey: id)
+        // Only WebKit's own state from memory carries a sent form along; every other view starts clean.
+        if !(load && saved != nil) { sentForm.remove(id) }
+        let onDisk = load && saved == nil ? places?.read(id)?.wake(at: tab.url) : nil
         let view = registry.make(
             for: id, store: tab.store, configuration: configuration, zoom: zoom[id] ?? PageZoom.actual, model: self)
         update(id) { $0.isLive = true }
@@ -441,13 +468,81 @@ final class BrowserModel {
             controller.browserWillLoad()
             controller.expectsRestoreCommit = true
             view.interactionState = saved
+        } else if load, case .state(let state) = onDisk {
+            controller.browserWillLoad()
+            controller.expectsRestoreCommit = isRestoring
+            view.interactionState = state
         } else if load, let url = tab.url {
+            if case .load(_, let y?) = onDisk { controller.restoreScroll(to: y, at: url, in: view) }
             controller.browserWillLoad()
             let navigation = view.load(URLRequest(url: url))
             if isRestoring { controller.restoreNavigation = navigation }
         }
         return view
     }
+
+    // MARK: Places on disk
+
+    /// Writes the tab's place (D5) when the workspace keeps places and the tab has a page: WebKit's `state` when its
+    /// view never sent a form, else only the address, title and scroll position. Failures are logged.
+    private func keepPlace(of tab: BrowserTab, state: Data?, scrollY: Double?, seen: Date = .now) {
+        guard let places, let url = tab.url, !LodgePage.isLodge(url) else { return }
+        let place = TabPlace(
+            url: url, title: tab.title, scrollY: scrollY, state: state, sentForm: sentForm.contains(tab.id))
+        do {
+            try places.write(place, for: tab.id, seen: seen)
+        } catch {
+            Self.placesLogger.error("Cannot keep a tab's place: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Quitting: every tab still awake keeps its place too, least recently seen first so the caps evict in that
+    /// order; resting tabs already did when they rested.
+    func keepLivePlaces() {
+        guard places != nil else { return }
+        let live = liveTabs
+        let oldest = rest.oldestFirst(live)
+        let start = Date.now
+        for (index, id) in (oldest + live.filter { !oldest.contains($0) }).enumerated() {
+            guard let tab = tabs[id], let view = registry.webView(for: id) else { continue }
+            keepPlace(
+                of: tab, state: view.interactionState as? Data, scrollY: scrolls[id]?.y,
+                seen: start.addingTimeInterval(Double(index) / 1_000))
+        }
+    }
+
+    /// The tab's place as it would be kept on disk, for a move to another workspace; nil when this workspace keeps
+    /// no places (Anonymous) or the tab has no page.
+    func place(of id: TabID) -> TabPlace? {
+        guard let places, let tab = tabs[id], let url = tab.url, !LodgePage.isLodge(url) else { return nil }
+        let sent = sentForm.contains(id)
+        if let view = registry.webView(for: id) {
+            return TabPlace(
+                url: url, title: tab.title, scrollY: scrolls[id]?.y, state: view.interactionState as? Data,
+                sentForm: sent)
+        }
+        if let kept = places.read(id), kept.url == url { return kept }
+        guard let saved = savedStates[id] as? Data else { return nil }
+        return TabPlace(url: url, title: tab.title, scrollY: nil, state: saved, sentForm: sent)
+    }
+
+    /// The tab's view navigated for a sent form, in its page or a frame (`.formSubmitted`/`.formResubmitted`).
+    func didSendForm(_ id: TabID) {
+        guard tabs[id] != nil else { return }
+        sentForm.insert(id)
+    }
+
+    /// The main frame of the tab showing `view` reported its scroll position.
+    func didReceivePlace(_ place: PageWorkScript.Place, from view: WKWebView) {
+        guard let id = tabs.tabs.first(where: { registry.webView(for: $0.id) === view })?.id else { return }
+        scrolls[id, default: MainScroll()].apply(place)
+    }
+
+    #if DEBUG
+        /// Layout self-checks: whether the tab's view counts as having sent a form, and its reported scroll.
+        func hasSentForm(_ id: TabID) -> Bool { sentForm.contains(id) }
+        func reportedScroll(_ id: TabID) -> Double? { scrolls[id]?.y }
+    #endif
 
     /// Every change to `tabs` goes through here: a tab that closes loses everything kept for it. A new tab holds its
     /// store; a closed one lets go of it, and its web view goes, on the next main-actor turn, so a WebKit callback
@@ -467,6 +562,9 @@ final class BrowserModel {
             controllers[id] = nil
             restoredTabs.remove(id)
             savedStates[id] = nil
+            sentForm.remove(id)
+            scrolls[id] = nil
+            places?.remove(id)
             popupOpeners[id] = nil
             work[id] = nil
             rest.forget(id)
