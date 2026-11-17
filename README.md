@@ -35,8 +35,10 @@ one you are in uses resources.
 | Own history           | Each browser keeps its visits; Show All History lists them in a tab; Anonymous none      |
 | One page, one browser | A page stays in its browser; opening it in another workspace carries the address there   |
 | Clear ownership       | Every page shows which browser it belongs to                                             |
-| Resources for now     | Release first, then suspend, then hibernate; coming back wakes only the page on screen   |
-| Work in progress      | Forms, playback and downloads finish or are saved before their resources are handed back |
+| Resources for now     | Leaving a workspace gives its idle pages back; coming back wakes only the page on screen |
+| Work in progress      | Unsent text, form uploads, playback, camera or mic, fullscreen, popups keep a page awake |
+| Asks before leaving   | A page that would ask before you leave is kept too, best effort; downloads always finish |
+| Nothing leaves        | Telling a page has unsent work reads no field contents and sends nothing out of the page |
 | Light to use          | Idle workspaces stay quiet, switching is quick, and you pick up where you left off       |
 | Several windows       | ⌘N opens a window on the same workspaces; each shows its own tab and returns on relaunch |
 | Lodge pages           | `lodge://settings` and `lodge://history` open in a tab, one per workspace; sites can't   |

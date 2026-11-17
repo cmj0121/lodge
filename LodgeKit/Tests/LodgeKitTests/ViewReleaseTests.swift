@@ -3,10 +3,10 @@ import Testing
 @testable import LodgeKit
 
 @Suite struct ViewReleaseTests {
-    @Test func stepStopsWhenShownWhateverTheTab() {
+    @Test func stepSkipsAShownTabWhateverItsState() {
         for hasView in [false, true] {
             for isHeld in [false, true] {
-                #expect(ViewRelease.step(isShown: true, hasView: hasView, isHeld: isHeld) == .stop)
+                #expect(ViewRelease.step(isShown: true, hasView: hasView, isHeld: isHeld) == .skip)
             }
         }
     }
@@ -15,6 +15,14 @@ import Testing
         #expect(ViewRelease.step(isShown: false, hasView: false, isHeld: false) == .skip)
         #expect(ViewRelease.step(isShown: false, hasView: true, isHeld: true) == .hold)
         #expect(ViewRelease.step(isShown: false, hasView: true, isHeld: false) == .release)
+    }
+
+    @Test func aShownTabIsSkippedWhileTheOthersRelease() {
+        let shown: Set<String> = ["t1"]
+        let steps = ["t0", "t1", "t2"].map {
+            ViewRelease.step(isShown: shown.contains($0), hasView: true, isHeld: $0 == "t2")
+        }
+        #expect(steps == [.release, .skip, .hold])
     }
 
     @Test func retryOnlyForAHeldTabStillInTheBackground() {
