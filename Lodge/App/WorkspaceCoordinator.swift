@@ -712,6 +712,37 @@ extension WorkspaceCoordinator {
     }
 }
 
+// MARK: Memory pressure
+
+extension WorkspaceCoordinator {
+    /// The system is low on memory (D4): every built workspace's tabs with a view, Anonymous's and background ones
+    /// too, go through their workspace's one release path least recently seen first, so a tab any window shows and a
+    /// held tab stay. On critical, then the decoded bookmark icons go. No data store is dropped: WebKit keeps a
+    /// store's session cookies only while the store object lives, so dropping one would sign its sites out, and an
+    /// Anonymous store already goes once nothing holds it. Nothing wakes afterwards.
+    func relieve(_ level: MemoryPressureLevel) async {
+        let built = workspaces.workspaces.compactMap { models[$0.id] }
+        let live = built.map { ($0, $0.liveTabs) }
+        var owners: [TabID: BrowserModel] = [:]
+        for (model, tabs) in live {
+            for tab in tabs { owners[tab] = model }
+        }
+        let order = TabRest.oldestFirst(live.map { ($0.0.rest, $0.1) }, shown: selections.shownTabs)
+        // Consecutive tabs of one workspace go in one call, so the order holds across workspaces.
+        var run: [TabID] = []
+        for (index, tab) in order.enumerated() {
+            run.append(tab)
+            guard let model = owners[tab], index + 1 == order.count || owners[order[index + 1]] !== model else {
+                continue
+            }
+            await model.release(candidates: run) { self.isShown($0) }
+            run = []
+        }
+        guard level == .critical else { return }
+        for model in built { model.dropRebuildableCaches() }
+    }
+}
+
 // MARK: Moving tabs
 
 extension WorkspaceCoordinator {

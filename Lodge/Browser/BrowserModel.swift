@@ -519,6 +519,12 @@ final class BrowserModel {
         return image
     }
 
+    /// Memory pressure (D4): the decoded bookmark icons go; each is decoded again from its stored bytes when next
+    /// drawn.
+    func dropRebuildableCaches() {
+        storedIcons.removeAll()
+    }
+
     /// A suggestion row's icon from what is already at hand, never fetched: the open tab's favicon, else that of a
     /// tab open on the row's page, else the stored icon of a pin or bookmark on it; nil for the search row.
     func suggestionIcon(for suggestion: Suggestion) -> NSImage? {
