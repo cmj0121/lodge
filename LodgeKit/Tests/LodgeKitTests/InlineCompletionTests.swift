@@ -63,9 +63,17 @@ import Testing
         view.inline = inline
     }
 
-    /// Ends the event and lets the run loop sleep briefly, as between key presses: the undo manager closes the group
-    /// it opened, and a completion waiting for the next pass goes in.
-    private func pass() { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.001)) }
+    /// Ends the event as between key presses: turns the main run loop, without sleeping, until no undo group is
+    /// open. The undo manager closes the event's group as a turn starts; a completion waiting for the next turn goes
+    /// in during it and opens a group of its own, which only the turn after closes. A fixed wait did not always reach
+    /// that second turn under load, so the next action joined the completion's group (#27).
+    private func pass() {
+        var turns = 0
+        repeat {
+            _ = CFRunLoopRunInMode(.defaultMode, 0, false)
+            turns += 1
+        } while host.undo.groupingLevel > 0 && turns < 100
+    }
 
     /// One key press or menu command, in an event of its own.
     private func step(_ action: () -> Void) {
