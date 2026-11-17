@@ -48,6 +48,11 @@
             checkStepSkipsShownElsewhere()
             checkExternalLinks()
             checkLodgePages()
+            checkWorkHolds()
+            checkResting()
+            checkMemoryPressure()
+            checkPressureKeepsSessionStore()
+            checkReleasedViewGoes()
             renderSettings(in: directory)
             renderHistory(in: directory)
             renderDownloads(in: directory)
@@ -944,6 +949,494 @@
             report(
                 "Its bookmark still opens the Lodge page",
                 model.tab(showing: .history).map { $0.id != history.id && $0.link == bookmark.id } == true)
+            settle()
+        }
+
+        /// Checks in the background, printing ok or FAILED, that unsent work keeps a hidden workspace's tab: text
+        /// inserted into a field of an offscreen page (`insertText`, no keyboard) keeps the tab's web view when its
+        /// workspace is left, and the page sending the form, or emptying the field, lets it go at once. A form posted
+        /// into a new window does not hold its opener. A page whose `beforeunload` handler cancels is kept (best
+        /// effort) and asked only once however often the release is retried within the re-ask interval, then released
+        /// on a retry after it once the handler is gone; one whose handler stalls is released
+        /// after the probe's deadline. The pages are HTML strings, so no request goes out.
+        private static func checkWorkHolds() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            func waitUntil(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(5)
+                while !done(), Date.now < deadline { settle(0.05) }
+                return done()
+            }
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            coordinator.bringForwardHook = { _ in }
+            let window = coordinator.windows[0]
+            window.locationPrompt = .newTab
+            let hostWindow = host(root(coordinator, window), size: NSSize(width: 900, height: 600))
+            defer { hostWindow.close() }
+            let pane = coordinator.pane(for: window)
+            let model = pane.model
+            pane.submitLocation("about:blank")
+            guard let tab = pane.selected, let made = try? coordinator.create(name: "Work", symbol: "briefcase") else {
+                return report("Typed text keeps a hidden workspace's tab", false)
+            }
+            /// Shows the tab on a fresh page, with "draft" typed into its field `f` when `typing`.
+            func show(_ name: String, _ body: String, typing: Bool = false) -> LodgeWebView? {
+                coordinator.switchTo(Workspace.defaultID)
+                coordinator.pane(for: window).select(tab.id)
+                guard let view = model.view(for: tab.id, load: false) else { return nil }
+                view.loadHTMLString("<!doctype html><title>\(name)</title><body>\(body)</body>", baseURL: nil)
+                guard waitUntil({ view.title == name && !view.isLoading }) else { return nil }
+                settle()
+                if typing {
+                    hostWindow.makeFirstResponder(view)
+                    view.evaluateJavaScript("document.getElementById('f').focus()")
+                    settle()
+                    view.insertText("draft")
+                    guard waitUntil({ model.hasUnsentWork(tab.id) }) else { return nil }
+                }
+                return view
+            }
+            /// Leaves the workspace and says whether the view is still there a moment later.
+            func keptAfterLeaving(_ view: LodgeWebView) -> Bool {
+                coordinator.switchTo(made.id)
+                settle(1.5)
+                return coordinator.registry.webView(for: tab.id) === view
+            }
+            func pageValue(_ view: LodgeWebView, _ script: String) -> Any? {
+                var answer: Any?
+                var done = false
+                view.evaluateJavaScript(script) { value, _ in
+                    answer = value
+                    done = true
+                }
+                _ = waitUntil { done }
+                return answer
+            }
+
+            let form = "<form id=form onsubmit='return false'><input id=f></form>"
+            let endings = [
+                ("Typed text keeps a hidden workspace's tab until the form is sent", "form.requestSubmit()"),
+                (
+                    "Typed text keeps a hidden workspace's tab until the field is emptied",
+                    "f.value = ''; f.dispatchEvent(new Event('input', {bubbles: true}))"
+                ),
+            ]
+            for (index, (name, ending)) in endings.enumerated() {
+                guard let view = show("work-\(index)", form, typing: true), keptAfterLeaving(view) else {
+                    report(name, false)
+                    continue
+                }
+                view.evaluateJavaScript(ending)
+                report(name, waitUntil { coordinator.registry.webView(for: tab.id) == nil })
+            }
+
+            let blankForm = "<form id=form method=post target=_blank action='about:blank'><input name=q value=x></form>"
+            let before = Set(model.tabs.tabs.map(\.id))
+            if let view = show("blank-form", blankForm) {
+                view.evaluateJavaScript("form.requestSubmit()")
+                let opened = waitUntil { model.tabs.tabs.count > before.count }
+                settle(0.5)
+                report("A form posted into a new window does not hold its opener", opened && !model.hasUnsentWork(tab.id))
+                for popup in model.tabs.tabs where !before.contains(popup.id) { model.close(popup.id) }
+                settle()
+            } else {
+                report("A form posted into a new window does not hold its opener", false)
+            }
+
+            let asks = """
+                <script>
+                window.probes = 0;
+                window.onbeforeunload = (e) => { window.probes += 1; e.preventDefault(); return 'leave?'; };
+                </script>
+                """
+            if let view = show("asks", asks), keptAfterLeaving(view) {
+                for _ in 0..<3 {
+                    model.holdStateChanged(tab.id)
+                    settle(0.5)
+                }
+                let probes = pageValue(view, "window.probes") as? Int
+                report(
+                    "A page that asks before leaving keeps a hidden workspace's tab, asked once",
+                    coordinator.registry.webView(for: tab.id) === view && probes == 1 && !model.hasUnsentWork(tab.id))
+                // The editor saved and dropped its handler: once the (shortened) re-ask interval passes, a retry
+                // asks again and lets the tab go.
+                let reprobe = BrowserModel.beforeUnloadReprobe
+                BrowserModel.beforeUnloadReprobe = .milliseconds(300)
+                defer { BrowserModel.beforeUnloadReprobe = reprobe }
+                view.evaluateJavaScript("window.onbeforeunload = null")
+                settle(0.4)
+                model.holdStateChanged(tab.id)
+                report(
+                    "A page that stops asking is released on a later retry",
+                    waitUntil { coordinator.registry.webView(for: tab.id) == nil })
+            } else {
+                report("A page that asks before leaving keeps a hidden workspace's tab, asked once", false)
+            }
+
+            let stalls = "<script>window.onbeforeunload = () => { const end = Date.now() + 3000; while (Date.now() < end) {} };</script>"
+            if let view = show("stalls", stalls) {
+                report("A page whose beforeunload stalls is released after the deadline", !keptAfterLeaving(view))
+            } else {
+                report("A page whose beforeunload stalls is released after the deadline", false)
+            }
+            coordinator.switchTo(Workspace.defaultID)
+            model.close(tab.id)
+            settle()
+        }
+
+        /// Resting (#23), with the rest time shortened to a fraction of a second: a background tab of the shown
+        /// workspace rests and shows as resting, while the selected tab and a background tab with typed text stay;
+        /// selecting the rested tab builds its page again from its kept state. The pages are `data:` URLs, so no
+        /// request goes out.
+        private static func checkResting() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            func waitUntil(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(5)
+                while !done(), Date.now < deadline { settle(0.05) }
+                return done()
+            }
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, restDefaults: nil)
+            coordinator.bringForwardHook = { _ in }
+            let window = coordinator.windows[0]
+            let hostWindow = host(root(coordinator, window), size: NSSize(width: 900, height: 600))
+            defer { hostWindow.close() }
+            let pane = coordinator.pane(for: window)
+            let model = pane.model
+            /// Opens a new tab showing `body`, titled `name`.
+            func open(_ name: String, _ body: String) -> (TabID, LodgeWebView)? {
+                window.locationPrompt = .newTab
+                pane.submitLocation("about:blank")
+                let html = "<!doctype html><title>\(name)</title><body>\(body)</body>"
+                guard let id = pane.selectedID,
+                    let page = html.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+                        .flatMap({ URL(string: "data:text/html,\($0)") }),
+                    model.load(page, in: id), let view = coordinator.registry.webView(for: id)
+                else { return nil }
+                guard waitUntil({ view.title == name && !view.isLoading }) else { return nil }
+                settle()
+                return (id, view)
+            }
+            guard let (resting, _) = open("rest-plain", "<p>plain</p>"),
+                let (typed, typedView) = open("rest-typed", "<input id=f>")
+            else { return report("A background tab rests after the rest time", false) }
+            hostWindow.makeFirstResponder(typedView)
+            typedView.evaluateJavaScript("document.getElementById('f').focus()")
+            settle()
+            typedView.insertText("draft")
+            guard waitUntil({ model.hasUnsentWork(typed) }), let (shown, shownView) = open("rest-shown", "<p>shown</p>")
+            else { return report("A background tab rests after the rest time", false) }
+
+            coordinator.restIntervalOverride = .milliseconds(300)
+            defer { coordinator.restIntervalOverride = nil }
+            let rested = waitUntil { coordinator.registry.webView(for: resting) == nil }
+            report(
+                "A background tab rests after the rest time and shows as resting",
+                rested && model.tabs[resting]?.isResting == true)
+            settle(1)
+            report(
+                "The selected tab stays awake past the rest time",
+                coordinator.registry.webView(for: shown) === shownView && model.tabs[shown]?.isResting == false)
+            report(
+                "A background tab with typed text stays awake past the rest time",
+                coordinator.registry.webView(for: typed) === typedView && model.tabs[typed]?.isResting == false)
+
+            pane.select(resting)
+            let woke = waitUntil {
+                coordinator.registry.webView(for: resting)?.title == "rest-plain" && model.tabs[resting]?.isLive == true
+            }
+            report("Selecting a resting tab builds its page again", woke && model.tabs[resting]?.isResting == false)
+            for id in [resting, typed, shown] { model.close(id) }
+            settle()
+        }
+
+        /// Memory pressure (#25), with `relieve` called directly, never by using memory: a warning rests an unshown,
+        /// unheld tab of the shown workspace and of a background workspace that keeps a tab with typed text, and keeps
+        /// the selected tab and both tabs with typed text; critical then keeps the Anonymous store a resting tab holds
+        /// and the one a download holds. The pages are `data:` URLs, so no request goes out.
+        private static func checkMemoryPressure() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            func waitUntil(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(5)
+                while !done(), Date.now < deadline { settle(0.05) }
+                return done()
+            }
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, restDefaults: nil)
+            coordinator.bringForwardHook = { _ in }
+            coordinator.restAfter = .never
+            let registry = coordinator.registry
+            let window = coordinator.windows[0]
+            let hostWindow = host(root(coordinator, window), size: NSSize(width: 900, height: 600))
+            defer { hostWindow.close() }
+            func relieve(_ level: MemoryPressureLevel) {
+                var done = false
+                Task {
+                    await coordinator.relieve(level)
+                    done = true
+                }
+                _ = waitUntil { done }
+            }
+            /// Opens a new tab in the shown workspace showing `body`, titled `name`, with "draft" typed into its field
+            /// `f` when `typing`.
+            func open(_ name: String, _ body: String, typing: Bool = false) -> (TabID, LodgeWebView)? {
+                let pane = coordinator.pane(for: window)
+                window.locationPrompt = .newTab
+                pane.submitLocation("about:blank")
+                let html = "<!doctype html><title>\(name)</title><body>\(body)</body>"
+                guard let id = pane.selectedID,
+                    let page = html.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+                        .flatMap({ URL(string: "data:text/html,\($0)") }),
+                    pane.model.load(page, in: id), let view = registry.webView(for: id)
+                else { return nil }
+                guard waitUntil({ view.title == name && !view.isLoading }) else { return nil }
+                settle()
+                if typing {
+                    hostWindow.makeFirstResponder(view)
+                    view.evaluateJavaScript("document.getElementById('f').focus()")
+                    settle()
+                    view.insertText("draft")
+                    guard waitUntil({ pane.model.hasUnsentWork(id) }) else { return nil }
+                }
+                return (id, view)
+            }
+            let failed = "Low memory rests an unshown tab of the shown and of a background workspace"
+            coordinator.switchTo(Workspace.anonymousID)
+            guard let (anonymous, _) = open("pressure-anonymous", "<p>anonymous</p>"),
+                let anonymousStore = coordinator.active.tabs[anonymous]?.store,
+                let made = try? coordinator.create(name: "Pressure", symbol: "briefcase")
+            else { return report(failed, false) }
+            coordinator.switchTo(made.id)
+            let work = coordinator.active
+            guard let (backgroundPlain, _) = open("pressure-bg-plain", "<p>plain</p>"),
+                let (backgroundTyped, backgroundTypedView) = open("pressure-bg-typed", "<input id=f>", typing: true)
+            else { return report(failed, false) }
+            coordinator.switchTo(Workspace.defaultID)
+            let model = coordinator.active
+            let leftBehind = [backgroundPlain, anonymous]
+            guard waitUntil({ leftBehind.allSatisfy { registry.webView(for: $0) == nil } }),
+                let (plain, _) = open("pressure-plain", "<p>plain</p>"),
+                let (typed, typedView) = open("pressure-typed", "<input id=f>", typing: true),
+                let (shown, shownView) = open("pressure-shown", "<p>shown</p>")
+            else { return report(failed, false) }
+            // Built again while its workspace is hidden, it stands in for a tab the leave pass has not reached; the
+            // held tab's retry is 30 s off, so only `relieve` can let it go.
+            guard work.view(for: backgroundPlain) != nil, registry.webView(for: backgroundTyped) === backgroundTypedView
+            else { return report(failed, false) }
+            settle()
+
+            relieve(.warning)
+            report(
+                failed,
+                registry.webView(for: plain) == nil && registry.webView(for: backgroundPlain) == nil
+                    && model.tabs[plain]?.isResting == true)
+            report("Low memory keeps the selected tab", registry.webView(for: shown) === shownView)
+            report(
+                "Low memory keeps tabs with typed text, shown workspace and background",
+                registry.webView(for: typed) === typedView
+                    && registry.webView(for: backgroundTyped) === backgroundTypedView)
+
+            let download = UUID()
+            let downloadStore = StoreRef.ephemeral(UUID())
+            _ = registry.dataStore(for: downloadStore)
+            registry.hold(download: download, on: downloadStore)
+            // An Anonymous bookmark's stored icon, decoded once before the pressure and again after it.
+            let bitmap = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16, bitsPerSample: 8, samplesPerPixel: 4,
+                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+            let bookmark = SavedLink(
+                url: URL(string: "https://pressure.example/")!, title: "Pressure",
+                icon: bitmap?.representation(using: .png, properties: [:]))
+            let item = SidebarItem.link(bookmark, .bookmarks, nil)
+            let anonymousModel = coordinator.model(for: Workspace.anonymousID)
+            let iconBefore = anonymousModel?.favicon(for: item)
+            relieve(.critical)
+            let iconAfter = anonymousModel?.favicon(for: item)
+            report(
+                "Critical low memory drops a decoded bookmark icon and the sidebar decodes it again",
+                iconBefore != nil && iconAfter != nil && iconAfter !== iconBefore
+                    && anonymousModel?.favicon(for: item) === iconAfter)
+            report(
+                "Critical low memory keeps Anonymous stores a resting tab or a download holds",
+                registry.existingDataStore(for: anonymousStore) != nil
+                    && registry.existingDataStore(for: downloadStore) != nil)
+            report(
+                "Critical low memory still keeps the selected tab and tabs with typed text",
+                registry.webView(for: shown) === shownView && registry.webView(for: typed) === typedView
+                    && registry.webView(for: backgroundTyped) === backgroundTypedView)
+            report(
+                "Nothing wakes after low memory",
+                registry.webView(for: plain) == nil && registry.webView(for: backgroundPlain) == nil)
+            registry.releaseHold(download: download)
+            for id in [plain, typed, shown] { model.close(id) }
+            settle()
+        }
+
+        /// Critical memory pressure (#25) keeps a hidden custom workspace's data store, though all its tabs rest:
+        /// WebKit keeps a store's session cookies (no expiry, in memory only) only while the store object lives, so
+        /// dropping it would sign the user out. A session cookie set on that store is still there after `relieve`
+        /// and after a tab wakes. The cookie is set directly and the page is a `data:` URL, so no request goes out.
+        private static func checkPressureKeepsSessionStore() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            func waitUntil(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(5)
+                while !done(), Date.now < deadline { settle(0.05) }
+                return done()
+            }
+            func wait<T>(_ work: @escaping @MainActor () async -> T) -> T? {
+                var result: T?
+                Task { result = await work() }
+                _ = waitUntil { result != nil }
+                return result
+            }
+            let domain = "pressure-cookies.example"
+            func names(in store: WKWebsiteDataStore) async -> Set<String> {
+                Set(await store.httpCookieStore.allCookies().filter { $0.domain.contains(domain) }.map(\.name))
+            }
+            let name = "Critical low memory keeps a hidden workspace's store and its session cookie"
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, restDefaults: nil)
+            coordinator.bringForwardHook = { _ in }
+            coordinator.restAfter = .never
+            let registry = coordinator.registry
+            let window = coordinator.windows[0]
+            let hostWindow = host(root(coordinator, window), size: NSSize(width: 900, height: 600))
+            defer { hostWindow.close() }
+            guard let made = try? coordinator.create(name: "Pressure Cookies", symbol: "briefcase"),
+                let store = made.store
+            else { return report(name, false) }
+            coordinator.switchTo(made.id)
+            let pane = coordinator.pane(for: window)
+            window.locationPrompt = .newTab
+            pane.submitLocation("about:blank")
+            let html = "<!doctype html><title>pressure-cookie</title><p>cookie</p>"
+            guard let tab = pane.selectedID,
+                let page = html.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+                    .flatMap({ URL(string: "data:text/html,\($0)") }),
+                pane.model.load(page, in: tab),
+                waitUntil({
+                    registry.webView(for: tab).map { $0.title == "pressure-cookie" && !$0.isLoading } == true
+                }),
+                let first = registry.existingDataStore(for: store)
+            else { return report(name, false) }
+            let session = HTTPCookie(properties: [.domain: domain, .path: "/", .name: "pressure-session", .value: "1"])!
+            guard wait({ await first.httpCookieStore.setCookie(session) }) != nil else { return report(name, false) }
+
+            coordinator.switchTo(Workspace.defaultID)
+            guard waitUntil({ !registry.hasViews(on: store) }) else { return report(name, false) }
+            var done = false
+            Task {
+                await coordinator.relieve(.critical)
+                done = true
+            }
+            _ = waitUntil { done }
+            report(name, registry.existingDataStore(for: store) === first)
+
+            coordinator.switchTo(made.id)
+            let woke = waitUntil { registry.webView(for: tab)?.title == "pressure-cookie" }
+            report(
+                "A tab woken after critical low memory still has its session cookie",
+                woke && registry.webView(for: tab)?.configuration.websiteDataStore === first
+                    && wait({ await names(in: first) }) == ["pressure-session"])
+            _ = wait { await first.httpCookieStore.deleteCookie(session) }
+            coordinator.switchTo(Workspace.defaultID)
+            settle()
+        }
+
+        /// A released web view and the data store of a closed Anonymous tab are freed, not only dropped from the
+        /// registry: a tab left by a workspace switch and a tab resting under low memory each let their `LodgeWebView`
+        /// go, and closing the last Anonymous tab lets its store go. They are watched only through `weak` references.
+        /// This runs before `NSApplication.run`, so no event loop drains the outermost autorelease pool: every step
+        /// runs in a pool of its own, as each event does in the app, or an autoreleased reference would keep the
+        /// view alive until exit. The left custom workspace's store stays cached on purpose: WebKit keeps a store's
+        /// session cookies only while the store object lives.
+        private static func checkReleasedViewGoes() {
+            func report(_ name: String, _ passed: Bool) { print("\(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.3) {
+                autoreleasepool { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            }
+            func waitUntil(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(5)
+                while !autoreleasepool(invoking: done), Date.now < deadline { settle(0.05) }
+                return autoreleasepool(invoking: done)
+            }
+            final class Watch<Object: AnyObject> {
+                weak var object: Object?
+                var isGone: Bool { object == nil }
+            }
+            let left = Watch<LodgeWebView>()
+            let rested = Watch<LodgeWebView>()
+            let anonymousStore = Watch<WKWebsiteDataStore>()
+            let switchName = "A tab left by a workspace switch frees its web view"
+            let restName = "A tab resting under low memory frees its web view"
+            let anonymousName = "Closing the last Anonymous tab frees its data store"
+            let coordinator = autoreleasepool {
+                let coordinator = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, restDefaults: nil)
+                coordinator.bringForwardHook = { _ in }
+                coordinator.restAfter = .never
+                return coordinator
+            }
+            let registry = coordinator.registry
+            let window = coordinator.windows[0]
+            let hostWindow = autoreleasepool { host(root(coordinator, window), size: NSSize(width: 900, height: 600)) }
+            defer { hostWindow.close() }
+            /// Opens a new tab in the shown workspace titled `name`, its view watched by `watch`.
+            func open(_ name: String, into watch: Watch<LodgeWebView> = Watch()) -> TabID? {
+                let id: TabID? = autoreleasepool {
+                    let pane = coordinator.pane(for: window)
+                    window.locationPrompt = .newTab
+                    pane.submitLocation("about:blank")
+                    let html = "<!doctype html><title>\(name)</title><p>\(name)</p>"
+                    guard let id = pane.selectedID,
+                        let page = html.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+                            .flatMap({ URL(string: "data:text/html,\($0)") }),
+                        pane.model.load(page, in: id)
+                    else { return nil }
+                    watch.object = registry.webView(for: id)
+                    return id
+                }
+                guard let id, waitUntil({ watch.object.map { $0.title == name && !$0.isLoading } == true }) else {
+                    return nil
+                }
+                return id
+            }
+
+            let made = autoreleasepool { try? coordinator.create(name: "Released", symbol: "briefcase") }
+            guard let made, let store = made.store, open("released-left", into: left) != nil,
+                open("released-left-shown") != nil
+            else { return report(switchName, false) }
+            let leftStore = autoreleasepool { registry.existingDataStore(for: store) }
+            autoreleasepool { coordinator.switchTo(Workspace.defaultID) }
+            report(switchName, waitUntil { left.isGone })
+            report(
+                "The left workspace's data store stays cached for its session cookies",
+                leftStore != nil && autoreleasepool { registry.existingDataStore(for: store) } === leftStore)
+
+            guard open("released-rest", into: rested) != nil, open("released-shown") != nil else {
+                return report(restName, false)
+            }
+            var done = false
+            autoreleasepool {
+                Task {
+                    await coordinator.relieve(.warning)
+                    done = true
+                }
+            }
+            report(restName, waitUntil { done } && waitUntil { rested.isGone })
+
+            autoreleasepool { coordinator.switchTo(Workspace.anonymousID) }
+            guard let anonymous = open("released-anonymous"),
+                let ref = autoreleasepool(invoking: { coordinator.active.tabs[anonymous]?.store })
+            else { return report(anonymousName, false) }
+            autoreleasepool { anonymousStore.object = registry.existingDataStore(for: ref) }
+            guard !anonymousStore.isGone else { return report(anonymousName, false) }
+            autoreleasepool { coordinator.active.close(anonymous) }
+            report(anonymousName, waitUntil { anonymousStore.isGone && registry.existingDataStore(for: ref) == nil })
+            autoreleasepool { coordinator.switchTo(Workspace.defaultID) }
             settle()
         }
 

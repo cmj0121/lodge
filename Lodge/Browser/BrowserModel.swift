@@ -13,8 +13,8 @@ final class BrowserModel {
     let store: StoreRef?
     /// The Anonymous workspace: each tab is its own browser, its bookmarks keep their icons, nothing is recorded.
     var isAnonymous: Bool { workspaceID == Workspace.anonymousID }
-    /// Every open tab. A tab keeps its web view, built when it is first selected, until it closes or the workspace
-    /// is released (`releaseViews()`).
+    /// Every open tab. A tab keeps its web view, built when it is first selected, until it closes, the workspace
+    /// is released (`releaseViews()`) or it rests unseen (the coordinator's rest timer).
     private(set) var tabs = TabList() {
         didSet { didChangeSession() }
     }
@@ -44,11 +44,25 @@ final class BrowserModel {
     @ObservationIgnored private var savedStates: [TabID: Any] = [:]
     /// Each popup tab's opener, so neither of a live pair is released while the other has a view.
     @ObservationIgnored private var popupOpeners: [TabID: TabID] = [:]
+    /// Each tab's unsent work (typed text, a form POST in flight) as its page reports it; gone with the tab or its view.
+    @ObservationIgnored private var work: [TabID: PageWork] = [:]
+    /// Whether each tab's current document would ask before it is left: "no" stands for the document, "yes" only for
+    /// `beforeUnloadReprobe` (the probe runs the page's handlers and counts as user activation, so it is not run on
+    /// every retry). Gone with the document, the view or the tab.
+    @ObservationIgnored private var beforeUnloadAnswers = BeforeUnloadSchedule()
+    /// Tabs whose probe is under way; a new document drops the tab, so a late answer is not kept for it.
+    @ObservationIgnored private var beforeUnloadProbing: Set<TabID> = []
     /// Retries `releaseViews()` for tabs that were held; nil when no retry waits.
     @ObservationIgnored private var releaseRetryTask: Task<Void, Never>?
     @ObservationIgnored private var viewRelease = ViewRelease()
+    /// When each tab was last on screen, stamped by the coordinator while the workspace is shown; gone with the tab.
+    @ObservationIgnored var rest = TabRest()
     /// How long a held tab waits before its release is tried again.
     static let releaseRetry: Duration = .seconds(30)
+    /// How long a release waits for a page's `beforeunload` handlers before taking it as not asking.
+    static let beforeUnloadDeadline: Duration = .milliseconds(500)
+    /// How long a page that asks before it is left is believed before it is asked again; layout self-checks shorten it.
+    static var beforeUnloadReprobe: Duration = .seconds(300)
     /// Where this workspace's tabs record their visits, into its own history store; nil until that store opens,
     /// when the workspace keeps no history, and in layout renders. The store opens after the restored tab may have
     /// committed, so the recorder arrives knowing every tab's page as already seen, and a restored page's load
@@ -142,17 +156,10 @@ final class BrowserModel {
         guard !isShown, viewRelease.begin() else { return }
         var isAnyHeld: Bool
         repeat {
-            isAnyHeld = false
-            for id in tabs.tabs.map(\.id) {
-                let held = registry.webView(for: id) != nil ? await isHeld(id) : false
-                switch ViewRelease.step(isShown: isShown, hasView: registry.webView(for: id) != nil, isHeld: held) {
-                case .stop:
-                    viewRelease.stop()
-                    return
-                case .skip: continue
-                case .hold: isAnyHeld = true
-                case .release: release(id)
-                }
+            isAnyHeld = await release(candidates: tabs.tabs.map(\.id)) { _ in self.isShown }
+            if isShown {
+                viewRelease.stop()
+                return
             }
         } while viewRelease.finishScan()
         guard ViewRelease.needsRetry(isShown: isShown, isAnyHeld: isAnyHeld) else { return }
@@ -164,21 +171,118 @@ final class BrowserModel {
         }
     }
 
-    /// A tab's capture or fullscreen state changed: a held background workspace tries its release again now.
+    /// The one release path (workspace leave, rest, memory pressure): each candidate not shown and with a view is
+    /// released unless held. Shown and the view are checked again after every await, so a tab shown or rebuilt
+    /// meanwhile is left alone. Returns whether any candidate was held.
+    @discardableResult
+    func release(candidates: [TabID], isShown: (TabID) -> Bool) async -> Bool {
+        var isAnyHeld = false
+        for id in candidates {
+            let before = registry.webView(for: id)
+            guard ViewRelease.step(isShown: isShown(id), hasView: before != nil, isHeld: false) != .skip,
+                let view = before
+            else { continue }
+            let held = await isHeld(id)
+            let step = ViewRelease.step(
+                isShown: isShown(id), hasView: registry.webView(for: id) === view, isHeld: held || isHeldNow(id))
+            switch step {
+            case .skip: continue
+            case .hold: isAnyHeld = true
+            case .release: release(id)
+            }
+        }
+        return isAnyHeld
+    }
+
+    /// The tabs that have a web view, in tab order.
+    var liveTabs: [TabID] { tabs.tabs.compactMap { registry.webView(for: $0.id) != nil ? $0.id : nil } }
+
+    /// A tab's capture, fullscreen or unsent work changed: a held background workspace tries its release again now, or
+    /// once the pass running now ends.
     func holdStateChanged(_ id: TabID) {
-        guard !isShown, releaseRetryTask != nil else { return }
+        guard !isShown, releaseRetryTask != nil || viewRelease.isRunning else { return }
         Task { await releaseViews() }
     }
 
-    /// The tab plays media, captures camera or microphone, is in fullscreen, or is one of a popup and its opener that
-    /// both still have a view.
+    /// The tab captures camera or microphone, is in fullscreen, is one of a popup and its opener that both still have
+    /// a view, or has unsent work; then, only when none of that holds it, it plays media or (best effort) its page
+    /// would ask before it is left.
     private func isHeld(_ id: TabID) async -> Bool {
+        guard let view = registry.webView(for: id) else { return false }
+        if isHeldNow(id) { return true }
+        if await view.requestMediaPlaybackState() == .playing { return true }
+        return await asksBeforeLeaving(id, view)
+    }
+
+    /// The holds known without asking the page.
+    private func isHeldNow(_ id: TabID) -> Bool {
         guard let view = registry.webView(for: id) else { return false }
         if view.cameraCaptureState != .none || view.microphoneCaptureState != .none { return true }
         if view.fullscreenState != .notInFullscreen { return true }
         if let opener = popupOpeners[id], registry.webView(for: opener) != nil { return true }
         if popupOpeners.contains(where: { $0.value == id && registry.webView(for: $0.key) != nil }) { return true }
-        return await view.requestMediaPlaybackState() == .playing
+        return work[id]?.isHeld == true
+    }
+
+    /// Best effort: the main frame's `beforeunload` handlers cancel a synthetic event (`PageWorkScript`), asked as
+    /// `beforeUnloadAnswers` allows. A page that checks `isTrusted` is not caught; one that cannot be asked, does not
+    /// answer within `beforeUnloadDeadline`, or a view with no page counts as not asking.
+    private func asksBeforeLeaving(_ id: TabID, _ view: WKWebView) async -> Bool {
+        if let known = beforeUnloadAnswers.known(id, now: .now, every: Self.beforeUnloadReprobe) { return known }
+        guard view.url != nil else { return false }
+        beforeUnloadProbing.insert(id)
+        let answer = await BoundedAnswer.first(within: Self.beforeUnloadDeadline, fallback: false) { reply in
+            view.callAsyncJavaScript(
+                PageWorkScript.beforeUnloadProbe, arguments: [:], in: nil,
+                in: .world(name: PageWorkScript.worldName)
+            ) { result in
+                MainActor.assumeIsolated { reply((try? result.get()) as? Bool == true) }
+            }
+        }
+        if beforeUnloadProbing.remove(id) != nil, registry.webView(for: id) === view {
+            beforeUnloadAnswers.record(id, asks: answer, at: .now)
+        }
+        return answer
+    }
+
+    /// Whatever was learnt about the tab's document goes: a new one is asked afresh.
+    private func forgetBeforeUnload(_ id: TabID) {
+        beforeUnloadAnswers.forget(id)
+        beforeUnloadProbing.remove(id)
+    }
+
+    // MARK: Unsent work
+
+    /// A frame of the tab showing `view` reported its unsent work.
+    func didReceiveWork(_ signal: PageWork.Signal, from view: WKWebView) {
+        guard let id = tabs.tabs.first(where: { registry.webView(for: $0.id) === view })?.id else { return }
+        changeWork(id) { $0.apply(signal) }
+    }
+
+    /// The tab's main frame began (true) or ended (false) loading a form submission.
+    func formPost(inFlight: Bool, in id: TabID) {
+        changeWork(id) { $0.formPost(inFlight: inFlight) }
+    }
+
+    /// The tab's main frame committed a new document, or its web content process ended: its documents' work drops.
+    func resetWork(_ id: TabID) {
+        forgetBeforeUnload(id)
+        changeWork(id) { $0.reset() }
+    }
+
+    #if DEBUG
+        /// Layout self-checks: whether the tab's page reports unsent work.
+        func hasUnsentWork(_ id: TabID) -> Bool { work[id]?.isHeld == true }
+    #endif
+
+    /// Changes the tab's work, telling `holdStateChanged` when whether it holds changes.
+    private func changeWork(_ id: TabID, _ change: (inout PageWork) -> Void) {
+        guard tabs[id] != nil else { return }
+        let old = work[id] ?? PageWork()
+        var new = old
+        change(&new)
+        work[id] = new == PageWork() ? nil : new
+        if new.isHeld != old.isHeld { holdStateChanged(id) }
     }
 
     /// Destroys the tab's web view; the tab keeps its URL and title, and its page's interaction state waits in
@@ -188,6 +292,8 @@ final class BrowserModel {
         controllers[id]?.didDeselect()
         controllers[id] = nil
         let state = registry.release(id)
+        work[id] = nil
+        forgetBeforeUnload(id)
         if tab.url != nil, let state { savedStates[id] = state }
         restoredTabs.insert(id)
         if loadProgress[id] != nil { loadProgress[id] = nil }
@@ -325,7 +431,7 @@ final class BrowserModel {
         let isRestoring = restoredTabs.remove(id) != nil
         let saved = savedStates.removeValue(forKey: id)
         let view = registry.make(
-            for: id, store: tab.store, configuration: configuration, zoom: zoom[id] ?? PageZoom.actual)
+            for: id, store: tab.store, configuration: configuration, zoom: zoom[id] ?? PageZoom.actual, model: self)
         update(id) { $0.isLive = true }
         // Built once the tab is listed, so the controller's initial KVO values reach it.
         let controller = TabController(
@@ -362,6 +468,9 @@ final class BrowserModel {
             restoredTabs.remove(id)
             savedStates[id] = nil
             popupOpeners[id] = nil
+            work[id] = nil
+            rest.forget(id)
+            forgetBeforeUnload(id)
             popupOpeners = popupOpeners.filter { $0.value != id }
             historyRecorder?.send(.closed(tab: id))
             if loadProgress[id] != nil { loadProgress[id] = nil }
@@ -408,6 +517,12 @@ final class BrowserModel {
         let image = NSImage(cgImage: cgImage, size: .zero)
         storedIcons[link.id] = (data, image)
         return image
+    }
+
+    /// Memory pressure (D4): the decoded bookmark icons go; each is decoded again from its stored bytes when next
+    /// drawn.
+    func dropRebuildableCaches() {
+        storedIcons.removeAll()
     }
 
     /// A suggestion row's icon from what is already at hand, never fetched: the open tab's favicon, else that of a
