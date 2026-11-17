@@ -38,6 +38,7 @@ one you are in uses resources.
 | Resources for now     | Unseen tabs and workspaces you left give their pages back; only the page on screen wakes |
 | Resting tabs          | Dimmed in the sidebar, noted resting; selecting it brings back its page, history, scroll |
 | Rest tabs after       | Settings › General: 5, 15, 30, 60 minutes or Never; 5 minutes by default, all workspaces |
+| Low memory            | When macOS runs low, unseen tabs rest at once, oldest first; you stay signed in to sites |
 | Work in progress      | Unsent text, form uploads, playback, camera or mic, fullscreen, popups keep a page awake |
 | Asks before leaving   | A page that would ask before you leave is kept too, best effort; downloads always finish |
 | Nothing leaves        | Telling a page has unsent work reads no field contents and sends nothing out of the page |
