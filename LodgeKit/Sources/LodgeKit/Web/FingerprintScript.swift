@@ -61,15 +61,55 @@ public enum FingerprintScript {
         """
 
     /// Page world, `.atDocumentStart`, `forMainFrameOnly: false`, before any page script. `seed` is the view's hex
-    /// seed (D1), used as a literal; anything but hex digits is dropped. Runs without throwing where canvas, WebGL or
-    /// audio are missing.
-    public static func pageSource(seed: String) -> String {
+    /// seed (D1) and `site` the registrable domain it was made for, both used as literals: anything but hex digits is
+    /// dropped from the seed, anything but lower-case letters, digits, `.`, `-`, `:`, `[` and `]` from the site. A
+    /// document whose top frame's host is not `site`, nor below it unless `exactHost` (the site is a host with no
+    /// registrable domain of its own: a public suffix, a host with no suffix, an IP), as an old page still live after
+    /// the response decision for the next site re-seeded the view (D7), gets a throwaway random seed instead; a child
+    /// realm the patch reaches shares its verdict. A frame under a sandboxed top document, whose last ancestor origin
+    /// is "null", takes `top.location`'s host, and when that cannot be read accepts `site` so it stays stable: such a
+    /// frame created by an old sandboxed page in the re-seed window reads the next site's seed, an accepted gap. Runs
+    /// without throwing where canvas, WebGL or audio are missing.
+    public static func pageSource(seed: String, site: String, exactHost: Bool) -> String {
         """
         (() => {
-          const noise = \(noiseSource(seed: seed));
+          const SEED = '\(hex(seed))';
+          const SITE = '\(siteLiteral(site))';
+          const EXACT = \(exactHost);
+          const home = globalThis;
+          const bare = (host) => String(host).toLowerCase().replace(/^\\[|\\]$/g, '').replace(/\\.$/, '');
+          // The top frame's host: the last ancestor origin's in a frame, the document's origin's at the top, which a
+          // blank popup inherits from its opener.
+          const topHost = () => {
+            try {
+              if (home.parent !== home) {
+                const ancestors = home.location.ancestorOrigins;
+                if (!ancestors || !ancestors.length) { return ''; }
+                const last = ancestors[ancestors.length - 1];
+                if (last !== 'null') { return new URL(last).hostname; }
+                try { return home.top.location.hostname; } catch (_) { return SITE; }
+              }
+              const origin = home.origin;
+              return typeof origin === 'string' && origin !== 'null' ? new URL(origin).hostname : home.location.hostname;
+            } catch (_) { return ''; }
+          };
+          const fits = (host) => {
+            const h = bare(host);
+            const s = bare(SITE);
+            return s !== '' && (h === s || (!EXACT && h.endsWith('.' + s)));
+          };
+          const throwaway = () => {
+            const bytes = new Uint8Array(32);
+            try {
+              home.crypto.getRandomValues(bytes);
+            } catch (_) {
+              for (let i = 0; i < bytes.length; i++) { bytes[i] = Math.floor(Math.random() * 256); }
+            }
+            return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+          };
+          const noise = (\(noiseFactory))(fits(topHost()) ? SEED : throwaway());
           const MARK = Symbol.for('lodge.fingerprint');
           const TOLD = Symbol.for('lodge.fingerprint.told');
-          const home = globalThis;
           const own = (o, k) => (o ? Object.getOwnPropertyDescriptor(o, k) : undefined);
           const keep = (wrapper, original) => {
             Object.defineProperty(wrapper, 'name', { value: original.name, configurable: true });
@@ -307,10 +347,21 @@ public enum FingerprintScript {
     /// position in a table hashed from the seed once, so applying one twice is the same as once: pixels by
     /// `(x & 63, y & 63, channel)`, samples and other elements by `(position + salt) & 65535`.
     static func noiseSource(seed: String) -> String {
-        let hex = String(seed.unicodeScalars.filter { "0123456789abcdefABCDEF".unicodeScalars.contains($0) })
-        return """
-            (() => {
-              const SEED = '\(hex)';
+        "(\(noiseFactory))('\(hex(seed))')"
+    }
+
+    private static func hex(_ seed: String) -> String {
+        String(seed.unicodeScalars.filter { "0123456789abcdefABCDEF".unicodeScalars.contains($0) })
+    }
+
+    private static func siteLiteral(_ site: String) -> String {
+        let allowed = "abcdefghijklmnopqrstuvwxyz0123456789.-:[]".unicodeScalars
+        return String(site.lowercased().unicodeScalars.filter { allowed.contains($0) })
+    }
+
+    /// A JS function of the hex seed that returns the noise helpers `noiseSource` describes.
+    private static let noiseFactory = """
+            (SEED) => {
               const fold = (basis) => {
                 let h = basis | 0;
                 for (let i = 0; i < SEED.length; i++) { h = Math.imul(h ^ SEED.charCodeAt(i), 0x01000193); }
@@ -422,9 +473,8 @@ public enum FingerprintScript {
                 }
               };
               return { pixels: pixels, ints: ints, floats: floats, halves: halves, read: read };
-            })()
+            }
             """
-    }
 
     /// Decodes a relay message body `{api: "canvas"|"webgl"|"audio"}`; anything else is nil.
     public static func api(from body: Any) -> FingerprintAPI? {

@@ -230,6 +230,20 @@
                 settle(1)
                 return reached && stayed(tab, on: "stop")
             }
+            onPage(
+                "a frame the old page adds once the next site's response re-seeded reads neither its seed nor real",
+                "held"
+            ) { tab in
+                let hits = server.hits("/held")
+                _ = defaultModel.load(server.url(other, "/held"), in: tab.id)
+                let reseeded = waitUntil { server.hits("/held") > hits && defaultModel.fingerprintSite(tab.id) == other }
+                let framed = reseeded ? both(tab.view, frameRead) : nil
+                let still = js(tab.view, "return document.title;") == "held"
+                tab.view.stopLoading()
+                settle()
+                guard let framed, let away = awayRead?.first, framed.page.count == 1 else { return false }
+                return still && framed.page[0] != away && noised(framed) && framed.page[0] != homeCanvas
+            }
 
             // Frames (D1, D6): every frame of the view reads with its main frame's seed; reaching a cross-origin one
             // stays harmless.
@@ -484,7 +498,8 @@
     /// Fingerprint self-check only: an HTTP server on the loopback interface, so pages load from two registrable
     /// domains (`localhost`, `127.0.0.1`), which a custom scheme cannot give. `/p/<name>` is a page titled `name`
     /// (`frame-read` posts its canvas read to its parent), `/r?to=<url>` redirects there with a 302, `/download` is a
-    /// file WebKit cannot show, `/hang` never answers, `/img.png` is a small image. Nothing is cached.
+    /// file WebKit cannot show, `/hang` never answers, `/held` sends a page's headers but never its body, `/img.png` is a
+    /// small image. Nothing is cached.
     @MainActor
     final class FingerprintCheckServer {
         private let script: String
@@ -581,6 +596,11 @@
             var body = Data()
             switch path {
             case "/hang":
+                return
+            case "/held":
+                let head = ["HTTP/1.1 200 OK", "Content-Type: text/html; charset=utf-8", "Content-Length: 4096",
+                    "Cache-Control: no-cache"].joined(separator: "\r\n") + "\r\n\r\n"
+                connection.send(content: Data(head.utf8), completion: .contentProcessed { _ in })
                 return
             case "/r":
                 status = "302 Found"

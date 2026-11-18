@@ -30,7 +30,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// navigation action instead, before its relay re-reports them on `pageshow`, whichever of that and the commit
     /// comes first.
     private var commitsNewDocument = false
-    /// The view whose user scripts this controller alone installs (`installScripts(seed:)`).
+    /// The view whose user scripts this controller alone installs (`installScripts(seed:site:)`).
     private weak var webView: WKWebView?
     /// The registrable domain of the view's main frame that its scripts are seeded for (D1); nil without one.
     private(set) var topSite: String?
@@ -166,21 +166,22 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// Installs the scripts again for `topSite` with the tab's current fingerprint settings, as after its site's
     /// exception changes; documents loaded from then on see the change.
     func reinstallScripts() {
-        installScripts(seed: model?.fingerprintSettings(for: tab)?.pageSeed(for: topSite))
+        installScripts(seed: model?.fingerprintSettings(for: tab)?.pageSeed(for: topSite), site: topSite)
     }
 
     /// The one place the view's user scripts are set (D7), since removing any drops every world's: the fingerprint
-    /// patch seeded with `seed` in the page world (none for nil: the site is excepted or has no registrable domain),
-    /// the fingerprint relay (D4) and the work script (D3) in their own worlds in every frame, and the
-    /// scroll-restoring script while one is pending.
-    func installScripts(seed: String?) {
+    /// patch seeded with `seed` for `site` in the page world (none for nil: the site is excepted or has no registrable
+    /// domain; a document whose top frame is on another site gets a throwaway seed), the fingerprint relay (D4) and
+    /// the work script (D3) in their own worlds in every frame, and the scroll-restoring script while one is pending.
+    func installScripts(seed: String?, site: String?) {
         guard let controller = webView?.configuration.userContentController else { return }
         controller.removeAllUserScripts()
-        if let seed {
+        if let seed, let site {
             controller.addUserScript(
                 WKUserScript(
-                    source: FingerprintScript.pageSource(seed: seed), injectionTime: .atDocumentStart,
-                    forMainFrameOnly: false, in: .page))
+                    source: FingerprintScript.pageSource(
+                        seed: seed, site: site, exactHost: RegistrableDomain.isWholeHost(site)),
+                    injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
         }
         controller.addUserScript(
             WKUserScript(

@@ -14,4 +14,11 @@ public enum RegistrableDomain {
         if IPHost(host) != nil { return host }
         return extractor.parse(host)?.rootDomain?.lowercased() ?? host
     }
+
+    /// Whether `site`, as `of` gives it, is a whole host rather than an eTLD+1: an IP, a public suffix (`github.io`)
+    /// or a host with no public suffix (`localhost`). Hosts below such a site are other sites.
+    public static func isWholeHost(_ site: String) -> Bool {
+        let host = site.lowercased()
+        return IPHost(host) != nil || extractor.parse(host)?.rootDomain == nil
+    }
 }
