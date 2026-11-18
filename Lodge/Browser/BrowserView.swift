@@ -126,6 +126,7 @@ private struct PageArea: View {
                 switch tab.lodgePage {
                 case .settings: SettingsView(coordinator: coordinator)
                 case .history: HistoryView(model: coordinator.history)
+                case .protection: ProtectionPageView(model: pane.model, page: tab.id)
                 case nil: EmptyView()
                 }
             } else {

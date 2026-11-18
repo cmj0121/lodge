@@ -53,6 +53,9 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     @ObservationIgnored let registry: WebViewRegistry
     @ObservationIgnored private var models: [UUID: BrowserModel] = [:]
     @ObservationIgnored private var dormant: [UUID: SessionSnapshot.WorkspaceContent]
+    /// Every non-Anonymous workspace's fingerprint key and exceptions, read from the session and written back with
+    /// it unchanged; a workspace without any (a new one, Default on a first launch) gets `.fresh()` once (D3).
+    @ObservationIgnored private var fingerprints: FingerprintKeys
     @ObservationIgnored private(set) var pendingDeletions: [UUID]
     @ObservationIgnored private let session: SessionStore?
     @ObservationIgnored private let appDirectory: URL?
@@ -123,6 +126,11 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         dormant = Dictionary(
             (snapshot?.workspaces ?? []).map { ($0.workspace.id, $0.content) }, uniquingKeysWith: { first, _ in first })
         search = SearchSettings(dormant.mapValues(\.search))
+        fingerprints = FingerprintKeys(
+            list.workspaces,
+            restored: Dictionary(
+                (snapshot?.workspaces ?? []).compactMap { entry in entry.fingerprint.map { (entry.workspace.id, $0) } },
+                uniquingKeysWith: { first, _ in first }))
         pendingDeletions = snapshot?.pendingDeletions ?? []
         self.session = session
         self.appDirectory = appDirectory
@@ -199,7 +207,8 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         restTask?.cancel()
     }
 
-    /// What the session store keeps: the workspaces in bar order with each one's content, the windows (key first)
+    /// What the session store keeps: the workspaces in bar order with each one's content and fingerprint settings,
+    /// the windows (key first)
     /// with the tab each shows and its frame, and the deletions still under way. A built workspace's selected tab is
     /// the first window's (key first) remembering one there, else the one it was restored with, while open (D8).
     /// At most `SessionSnapshot.maxWindows` windows are kept, key first: the rest are not restored, though their
@@ -214,7 +223,8 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
                 }
                 var stored = content ?? dormant[workspace.id] ?? .empty
                 stored.search = search[workspace.id]
-                return SessionSnapshot.WorkspaceSnapshot(workspace: workspace, content: stored)
+                return SessionSnapshot.WorkspaceSnapshot(
+                    workspace: workspace, content: stored, fingerprint: fingerprints[workspace.id])
             },
             windows: windows.isEmpty
                 ? [SessionSnapshot.WindowSnapshot(activeWorkspace: active)]
@@ -292,6 +302,19 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         if let workspace = workspaces.workspace(forSlot: slot) { switchTo(workspace.id) }
     }
 
+    /// The workspace's fingerprint key and exceptions; nil for Anonymous, whose settings live with its store (D3).
+    func fingerprint(for workspaceID: UUID) -> FingerprintSettings? {
+        fingerprints[workspaceID]
+    }
+
+    /// Turns the workspace's protection off (or back on) for `site` and saves the session (D7); Anonymous's live
+    /// with its tabs' stores, so it changes nothing here.
+    func setFingerprint(off: Bool, _ site: String, for workspaceID: UUID) {
+        guard fingerprints[workspaceID]?.isOff(site) != off else { return }
+        fingerprints.setOff(off, site, in: workspaceID)
+        didChange()
+    }
+
     // MARK: Editing
 
     /// Adds an empty workspace just before Anonymous and switches to it.
@@ -300,6 +323,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         -> Workspace
     {
         let workspace = try workspaces.create(name: name, symbol: symbol, color: color)
+        fingerprints.add(workspace)
         Task { await openHistoryStore(for: workspace.id) }
         switchTo(workspace.id)
         return workspace
@@ -1003,6 +1027,7 @@ extension WorkspaceCoordinator {
         if let store = workspace.store { deletingStores[id] = store }
         _ = try? workspaces.remove(id)
         search.drop(id)
+        fingerprints.drop(id)
         if !pendingDeletions.contains(id) { pendingDeletions.append(id) }
     }
 

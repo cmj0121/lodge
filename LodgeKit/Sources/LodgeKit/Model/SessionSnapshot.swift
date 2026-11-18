@@ -1,10 +1,10 @@
 import Foundation
 
 /// What Lodge keeps across launches: the workspaces in bar order, each with its tabs, selected tab, pins,
-/// bookmarks and search settings; the windows and the workspace each shows; and the workspaces still being deleted.
-/// Anonymous keeps only its bookmarks and search settings, and pins live only in Default. Search words are never
-/// stored. Runtime state (loading, history buttons, crashes, progress,
-/// favicons, security) is not stored.
+/// bookmarks, search settings and fingerprint settings; the windows and the workspace each shows; and the workspaces
+/// still being deleted. Anonymous keeps only its bookmarks and search settings, and pins live only in Default. Search
+/// words are never stored. Runtime state (loading, history buttons, crashes, progress, favicons, security) is not
+/// stored.
 public struct SessionSnapshot: Codable, Equatable, Sendable {
     public static let currentVersion = 4
     /// Each restored window opens an `NSWindow`, so a corrupt file cannot hang launch with thousands of them.
@@ -109,10 +109,35 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public struct WorkspaceSnapshot: Codable, Equatable, Sendable {
         public var workspace: Workspace
         public var content: WorkspaceContent
+        /// Default and custom workspaces always carry one; Anonymous never does, its settings live in memory (D3).
+        public var fingerprint: FingerprintSettings?
 
-        public init(workspace: Workspace, content: WorkspaceContent) {
+        /// A nil `fingerprint` gives a non-Anonymous workspace `.fresh()`; Anonymous drops any given (D3).
+        public init(workspace: Workspace, content: WorkspaceContent, fingerprint: FingerprintSettings? = nil) {
             self.workspace = workspace
             self.content = content
+            self.fingerprint = workspace.kind == .anonymous ? nil : fingerprint ?? .fresh()
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case workspace, content, fingerprint
+        }
+
+        /// A missing or malformed `fingerprint`, or a key not 32 bytes, reads as `.fresh()`, so an older session
+        /// file loads and gains one without a version bump (D3).
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.init(
+                workspace: try container.decode(Workspace.self, forKey: .workspace),
+                content: try container.decode(WorkspaceContent.self, forKey: .content),
+                fingerprint: try? container.decodeIfPresent(FingerprintSettings.self, forKey: .fingerprint))
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(workspace, forKey: .workspace)
+            try container.encode(content, forKey: .content)
+            try container.encodeIfPresent(fingerprint, forKey: .fingerprint)
         }
     }
 
@@ -153,7 +178,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     /// window takes the first window's. A window keeps its `selectedTab` only when it is a tab of that workspace
     /// and no earlier window kept it, and its `frame` only when finite and at least 1×1. Only Anonymous bookmarks
     /// keep an icon, and only a `LinkIcon.isValid` one. Only the first `maxWindows` windows are kept, cut in file
-    /// order before the window rules above, so a window past the cap never takes a `selectedTab`.
+    /// order before the window rules above, so a window past the cap never takes a `selectedTab`. Each workspace keeps
+    /// its fingerprint settings; one missing gets `.fresh()`, and Anonymous has none (D3).
     public init(workspaces: [WorkspaceSnapshot], windows: [WindowSnapshot], pendingDeletions: [UUID]) {
         var seen: Set<UUID> = [Workspace.defaultID, Workspace.anonymousID]
         let pending = pendingDeletions.filter { seen.insert($0).inserted }
@@ -162,9 +188,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
                 && !pending.contains($0.workspace.id)
         }
         let list = WorkspaceList(workspaces: kept.map(\.workspace))
-        var contents = list.workspaces.map { workspace in
-            kept.first { $0.workspace.id == workspace.id }?.content ?? .empty
-        }
+        let entries = list.workspaces.map { workspace in kept.first { $0.workspace.id == workspace.id } }
+        var contents = entries.map { $0?.content ?? .empty }
         contents[contents.count - 1] = contents[contents.count - 1].anonymized()
         for index in contents.indices.dropFirst().dropLast() {
             let folded = Set(contents[index].pins.map(\.id))
@@ -176,8 +201,11 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
                 contents[index].tabs[tab].link = nil
             }
         }
-        let workspaces = zip(list.workspaces, contents).map {
-            WorkspaceSnapshot(workspace: $0, content: $1.checkingIcons(anonymous: $0.kind == .anonymous))
+        let workspaces = list.workspaces.indices.map { index in
+            let workspace = list.workspaces[index]
+            return WorkspaceSnapshot(
+                workspace: workspace, content: contents[index].checkingIcons(anonymous: workspace.kind == .anonymous),
+                fingerprint: entries[index]?.fingerprint)
         }
         let windows = windows.isEmpty
             ? [WindowSnapshot(activeWorkspace: Workspace.defaultID)] : Array(windows.prefix(Self.maxWindows))

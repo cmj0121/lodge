@@ -33,6 +33,14 @@ final class BrowserModel {
     private(set) var zoom: [TabID: Double] = [:]
     /// Each tab's decoded favicon, kept apart from `tabs` so an icon arriving redraws only its icon.
     private(set) var favicons: [TabID: NSImage] = [:]
+    /// Which fingerprint apis each tab's current page, in any frame, has read (D4); absent means none. Cleared when
+    /// the main frame commits a new document, and gone with the tab or its view.
+    private(set) var fingerprintReads: [TabID: Set<FingerprintAPI>] = [:]
+    /// What each protection page tab was opened for from the indicator (D5), by that page's tab, in memory only, so
+    /// absent after relaunch; gone with the page's tab, and when the page is reached any other way.
+    private var protectionTargets: [TabID: ProtectionTarget] = [:]
+    /// Bumped on every exception change, so views reading exceptions, which live outside the model, redraw.
+    private(set) var fingerprintExceptionsRevision = 0
 
     /// Shared by every workspace's model.
     @ObservationIgnored let registry: WebViewRegistry
@@ -307,6 +315,7 @@ final class BrowserModel {
         controllers[id] = nil
         let state = registry.release(id)
         work[id] = nil
+        resetFingerprintReads(id)
         forgetBeforeUnload(id)
         if tab.url != nil, let state { savedStates[id] = state }
         keepPlace(of: tab, state: state as? Data, scrollY: scrolls.removeValue(forKey: id)?.y)
@@ -400,6 +409,78 @@ final class BrowserModel {
         if tabs.tabs.isEmpty { appendBlanks([TabID()]) }
     }
 
+    // MARK: Fingerprint
+
+    /// The tab's fingerprint key and exceptions (D3): an anonymous tab's store's, else its workspace's from the
+    /// coordinator; nil for an unknown tab, and with no coordinator (previews).
+    func fingerprintSettings(for id: TabID) -> FingerprintSettings? {
+        tabs[id].flatMap { fingerprintSettings(on: $0.store) }
+    }
+
+    /// The key and exceptions tabs on `store` use: an anonymous tab's store's while something holds it, else the
+    /// workspace's. Reading them is observed through `fingerprintExceptionsRevision`.
+    func fingerprintSettings(on store: StoreRef) -> FingerprintSettings? {
+        _ = fingerprintExceptionsRevision
+        if case .ephemeral = store { return registry.isHeld(store) ? registry.fingerprint(for: store) : nil }
+        return placement?.fingerprint(for: workspaceID)
+    }
+
+    /// Turns protection on or off for `site` (D7): the workspace's exception, saved with the session, or for an
+    /// anonymous tab's `store` its own, in memory. Every tab on `store` whose view is at `site` gets its scripts again
+    /// and reloads. Never asks.
+    func setFingerprintProtection(_ on: Bool, for site: String, on store: StoreRef) {
+        if case .ephemeral = store {
+            guard registry.isHeld(store) else { return }
+            registry.setFingerprint(off: !on, site, for: store)
+        } else {
+            placement?.setFingerprint(off: !on, site, for: workspaceID)
+        }
+        fingerprintExceptionsRevision += 1
+        for tab in tabs.tabs where tab.store == store && controllers[tab.id] != nil && fingerprintSite(tab.id) == site {
+            reinstallFingerprint(tab.id)
+            reload(tab.id)
+        }
+    }
+
+    /// The protection page in `page` now shows `site`, as read in `tab` (D5); with no site, it shows none.
+    func setProtectionTarget(for page: TabID, site: String?, tab: TabID?) {
+        var target: ProtectionTarget?
+        if let site, let source = tab.flatMap({ tabs[$0] }) {
+            target = ProtectionTarget(site: site, tab: source.id, store: source.store)
+        }
+        if protectionTargets[page] != target { protectionTargets[page] = target }
+    }
+
+    /// What the protection page in `page` was opened for, while the tab it was read in is still open.
+    func protectionTarget(for page: TabID) -> ProtectionTarget? {
+        protectionTargets[page].flatMap { tabs[$0.tab] != nil ? $0 : nil }
+    }
+
+    /// The tab's site exception changed: its view's scripts are installed again for documents loaded from now on.
+    /// `setFingerprintProtection` calls it, then reloads the tab.
+    func reinstallFingerprint(_ id: TabID) {
+        controllers[id]?.reinstallScripts()
+    }
+
+    /// A frame of the tab showing `view` read `api`.
+    func didReadFingerprint(_ api: FingerprintAPI, from view: WKWebView) {
+        guard let id = tabs.tabs.first(where: { registry.webView(for: $0.id) === view })?.id,
+            fingerprintReads[id]?.contains(api) != true
+        else { return }
+        fingerprintReads[id, default: []].insert(api)
+    }
+
+    /// The tab's main frame committed a new document, or its web content process ended: nothing is read yet.
+    func resetFingerprintReads(_ id: TabID) {
+        if fingerprintReads[id] != nil { fingerprintReads[id] = nil }
+    }
+
+    /// The site the tab's view is seeded for (D1); a tab with no view, its address's site. Nil for none (blank,
+    /// `lodge:`).
+    func fingerprintSite(_ id: TabID) -> String? {
+        controllers[id]?.topSite ?? FingerprintSite.of(tabs[id]?.url, inheriting: nil)
+    }
+
     /// Appends blank tabs with these ids, without web views.
     func appendBlanks(_ ids: [TabID]) {
         guard !ids.isEmpty else { return }
@@ -410,25 +491,30 @@ final class BrowserModel {
 
     /// Called by WebKit for popups and `target=_blank`: the new tab runs on the configuration it hands over and is
     /// shown in the window showing `source`; WebKit loads it.
-    /// `sendsForm`: the popup opens for a sent form (`target=_blank`), so its view counts as having sent one.
-    func openPopup(from source: TabID, configuration: WKWebViewConfiguration, sendsForm: Bool = false) -> WKWebView? {
+    /// `topSite`: the site its scripts are first seeded for (D7). `sendsForm`: the popup opens for a sent form
+    /// (`target=_blank`), so its view counts as having sent one.
+    func openPopup(
+        from source: TabID, configuration: WKWebViewConfiguration, topSite: String? = nil, sendsForm: Bool = false
+    ) -> WKWebView? {
         guard tabs[source] != nil else { return nil }
         let popup = BrowserTab(store: newTabStore(popupOf: source))
         popupOpeners[popup.id] = source
-        let view = append(popup, configuration: configuration, load: false)
+        let view = append(popup, configuration: configuration, topSite: topSite, load: false)
         if sendsForm { didSendForm(popup.id) }
         placement?.didOpen(popup.id, in: workspaceID, from: source)
         return view
     }
 
     /// Appends `tab` and builds its web view, loading `tab.url` when `load` is true; which window shows it is the
-    /// caller's.
+    /// caller's. `topSite` is a popup's, with its `configuration` (`view(for:)`).
     @discardableResult
-    func append(_ tab: BrowserTab, configuration: WKWebViewConfiguration? = nil, load: Bool) -> LodgeWebView? {
+    func append(
+        _ tab: BrowserTab, configuration: WKWebViewConfiguration? = nil, topSite: String? = nil, load: Bool
+    ) -> LodgeWebView? {
         var tab = tab
         tab.isLive = false
         changeTabs { $0.open(tab) }
-        return view(for: tab.id, configuration: configuration, load: load)
+        return view(for: tab.id, configuration: configuration, topSite: topSite, load: load)
     }
 
     /// A window now shows `id` in place of `previous`: the previous tab's sheet ends and it stops taking focus when
@@ -447,9 +533,12 @@ final class BrowserModel {
     /// The tab's web view, building it (registry + TabController) when the tab has none, then marking the tab
     /// live. Loads `tab.url` when it built the view and `load` is true. Nil for an unknown tab, and for a tab on a
     /// `lodge:` address, which never has one: the single guard keeping web views off Lodge pages.
-    /// The ONLY place that sets `isLive = true`.
+    /// The ONLY place that sets `isLive = true`. The view's scripts are first seeded (D7) for `topSite` with a popup's
+    /// `configuration`, else for the tab's address, so a restored or resting tab's new view gets them too.
     @discardableResult
-    func view(for id: TabID, configuration: WKWebViewConfiguration? = nil, load: Bool = true) -> LodgeWebView? {
+    func view(
+        for id: TabID, configuration: WKWebViewConfiguration? = nil, topSite: String? = nil, load: Bool = true
+    ) -> LodgeWebView? {
         guard let tab = tabs[id], !LodgePage.isLodge(tab.url) else { return nil }
         if let view = registry.webView(for: id) { return view }
         let isRestoring = restoredTabs.remove(id) != nil
@@ -462,7 +551,8 @@ final class BrowserModel {
         update(id) { $0.isLive = true }
         // Built once the tab is listed, so the controller's initial KVO values reach it.
         let controller = TabController(
-            tab: id, webView: view, model: self, faviconSession: registry.faviconSession(for: tab.store))
+            tab: id, webView: view, model: self, faviconSession: registry.faviconSession(for: tab.store),
+            topSite: configuration == nil ? FingerprintSite.of(tab.url, inheriting: nil) : topSite)
         controllers[id] = controller
         if load, let saved {
             controller.browserWillLoad()
@@ -473,7 +563,7 @@ final class BrowserModel {
             controller.expectsRestoreCommit = isRestoring
             view.interactionState = state
         } else if load, let url = tab.url {
-            if case .load(_, let y?) = onDisk { controller.restoreScroll(to: y, at: url, in: view) }
+            if case .load(_, let y?) = onDisk { controller.restoreScroll(to: y, at: url) }
             controller.browserWillLoad()
             let navigation = view.load(URLRequest(url: url))
             if isRestoring { controller.restoreNavigation = navigation }
@@ -569,12 +659,14 @@ final class BrowserModel {
             work[id] = nil
             rest.forget(id)
             forgetBeforeUnload(id)
+            if protectionTargets[id] != nil { protectionTargets[id] = nil }
             popupOpeners = popupOpeners.filter { $0.value != id }
             historyRecorder?.send(.closed(tab: id))
             if loadProgress[id] != nil { loadProgress[id] = nil }
             if favicons[id] != nil { favicons[id] = nil }
             if security[id] != nil { security[id] = nil }
             if zoom[id] != nil { zoom[id] = nil }
+            resetFingerprintReads(id)
         }
         Task { @MainActor [registry] in
             registry.detach(tabs: dropped)
@@ -827,4 +919,16 @@ protocol WindowPlacement: AnyObject {
     func didOpen(_ tab: TabID, in workspace: UUID, from source: TabID?)
     /// The tabs are about to close in `model`: each window showing one moves on (D3).
     func willClose(_ tabs: Set<TabID>, of model: BrowserModel)
+    /// The workspace's fingerprint key and exceptions; nil for Anonymous (D3).
+    func fingerprint(for workspaceID: UUID) -> FingerprintSettings?
+    /// Turns the workspace's protection off (or back on) for `site`, saved with the session (D7).
+    func setFingerprint(off: Bool, _ site: String, for workspaceID: UUID)
+}
+
+/// What the protection page is opened for (D5): the site, the tab it was read in, and that tab's store, whose
+/// exceptions an Anonymous page shows.
+struct ProtectionTarget: Equatable {
+    let site: String
+    let tab: TabID
+    let store: StoreRef
 }

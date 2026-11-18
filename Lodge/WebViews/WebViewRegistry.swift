@@ -13,19 +13,31 @@ final class WebViewRegistry {
     private var holders = StoreHolders()
     /// Each anonymous tab's store's favicon session, invalidated when the store is dropped.
     private var faviconSessions: [StoreRef: URLSession] = [:]
+    /// Each anonymous tab's store's fingerprint key and exceptions (D3), in memory only, shared with its popups and
+    /// dropped with the store.
+    private var fingerprints: [StoreRef: FingerprintSettings] = [:]
     /// Called with an anonymous tab's store once it is dropped, so what was kept for it goes too.
     var storeDropped: @MainActor (StoreRef) -> Void = { _ in }
 
     func webView(for tab: TabID) -> LodgeWebView? { views[tab] }
 
     /// A new web view for `tab` on `store`, or on `configuration` when WebKit hands one over in
-    /// `createWebViewWith` (the popup keeps its opener's store, D3, and its work handler), shown at the tab's page
-    /// `zoom`. The page's work signals go to `model`.
+    /// `createWebViewWith` (the popup keeps its opener's store, D3), shown at the tab's page `zoom`. Every view owns
+    /// its content controller (D7): a handed-over configuration gets a fresh one, with handlers of its own, before the
+    /// view is made, so the opener's scripts stay the opener's. Its user scripts are its `TabController`'s; what the
+    /// page reports goes to `model`.
     func make(
         for tab: TabID, store: StoreRef, configuration: WKWebViewConfiguration? = nil, zoom: Double = PageZoom.actual,
         model: BrowserModel
     ) -> LodgeWebView {
-        let config = configuration ?? newConfiguration(for: store, model: model)
+        let config: WKWebViewConfiguration
+        if let configuration {
+            configuration.userContentController = WKUserContentController()
+            Self.addHandlers(to: configuration.userContentController, model: model)
+            config = configuration
+        } else {
+            config = newConfiguration(for: store, model: model)
+        }
         let view = LodgeWebView(frame: .zero, configuration: config)
         view.allowsBackForwardNavigationGestures = true
         view.allowsMagnification = true
@@ -81,6 +93,7 @@ final class WebViewRegistry {
     private func dropIfEphemeral(_ ref: StoreRef) {
         guard case .ephemeral = ref else { return }
         faviconSessions.removeValue(forKey: ref)?.invalidateAndCancel()
+        fingerprints[ref] = nil
         if let store = stores.removeValue(forKey: ref) {
             Task {
                 await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
@@ -126,8 +139,25 @@ final class WebViewRegistry {
         static var selfCheckScheme: (name: String, handler: any WKURLSchemeHandler)?
     #endif
 
-    /// A configuration on the store's data store, with the work script (D3) in its own content world in every frame
-    /// and one handler sending what it reports to `model`.
+    /// An anonymous tab's store's fingerprint settings, made fresh the first time they are asked for and kept until
+    /// the store is dropped; nil for every other store, whose settings are its workspace's (D3).
+    func fingerprint(for ref: StoreRef) -> FingerprintSettings? {
+        guard case .ephemeral = ref else { return nil }
+        if let settings = fingerprints[ref] { return settings }
+        let settings = FingerprintSettings.fresh()
+        fingerprints[ref] = settings
+        return settings
+    }
+
+    /// Turns an anonymous tab's store's protection off (or back on) for `site` (D7), in memory only, for the tab and
+    /// its popups; every other store changes nothing, its exceptions being its workspace's.
+    func setFingerprint(off: Bool, _ site: String, for ref: StoreRef) {
+        guard case .ephemeral = ref, var settings = fingerprint(for: ref) else { return }
+        settings.setOff(off, site)
+        fingerprints[ref] = settings
+    }
+
+    /// A configuration on the store's data store, with the work and fingerprint handlers (`addHandlers`).
     private func newConfiguration(for ref: StoreRef, model: BrowserModel) -> WKWebViewConfiguration {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = dataStore(for: ref)
@@ -135,13 +165,19 @@ final class WebViewRegistry {
         #if DEBUG
             if let check = Self.selfCheckScheme { config.setURLSchemeHandler(check.handler, forURLScheme: check.name) }
         #endif
-        let world = WKContentWorld.world(name: PageWorkScript.worldName)
-        config.userContentController.addUserScript(
-            WKUserScript(
-                source: PageWorkScript.source, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: world))
-        config.userContentController.add(
-            PageWorkHandler(model: model), contentWorld: world, name: PageWorkScript.handlerName)
+        Self.addHandlers(to: config.userContentController, model: model)
         return config
+    }
+
+    /// Registers, once per content controller, the work script's handler (D3) and the fingerprint relay's (D4), each in
+    /// its script's content world, both reporting to `model`. Removing user scripts keeps them.
+    private static func addHandlers(to controller: WKUserContentController, model: BrowserModel) {
+        controller.add(
+            PageWorkHandler(model: model), contentWorld: .world(name: PageWorkScript.worldName),
+            name: PageWorkScript.handlerName)
+        controller.add(
+            FingerprintHandler(model: model), contentWorld: .world(name: FingerprintScript.worldName),
+            name: FingerprintScript.handlerName)
     }
 
     /// The store's data store, cached until `forget(store:)` or, for an anonymous tab's, until its last holder goes.
@@ -176,5 +212,21 @@ private final class PageWorkHandler: NSObject, WKScriptMessageHandler {
         } else if message.frameInfo.isMainFrame, let place = PageWorkScript.place(from: message.body) {
             model?.didReceivePlace(place, from: view)
         }
+    }
+}
+
+/// Hands the fingerprint relay's reports (D4), from any frame, to the model of the tab whose view sent them, held
+/// weakly like `PageWorkHandler`'s.
+@MainActor
+private final class FingerprintHandler: NSObject, WKScriptMessageHandler {
+    private weak var model: BrowserModel?
+
+    init(model: BrowserModel) {
+        self.model = model
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let view = message.webView, let api = FingerprintScript.api(from: message.body) else { return }
+        model?.didReadFingerprint(api, from: view)
     }
 }

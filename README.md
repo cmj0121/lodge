@@ -31,7 +31,9 @@ one you are in uses resources.
 | Workspace color       | Pick one of eight colors or none in the workspace sheet; it tints the sidebar and focus  |
 | Sidebar header        | Default and Anonymous show a one-line tagline under their name; custom ones show none    |
 | Own identity          | Sign-ins, cookies and site data stay in the workspace they were made in                  |
-| Own fingerprint       | Every workspace presents a distinct, stable fingerprint to each site                     |
+| Own fingerprint       | Per workspace and site, stable: canvas, WebGL and audio; each Anonymous tab its own      |
+| Fingerprint button    | Shows at the end of the address field when a site reads one; orange where it's off       |
+| Per-site switch       | `lodge://protection` turns it off or on per site in this workspace; Anonymous: this tab  |
 | Own history           | Each browser keeps its visits; Show All History lists them in a tab; Anonymous none      |
 | One page, one browser | A page stays in its browser; opening it in another workspace carries the address there   |
 | Clear ownership       | Every page shows which browser it belongs to                                             |
@@ -45,8 +47,8 @@ one you are in uses resources.
 | Nothing leaves        | Telling a page has unsent work reads no field contents and sends nothing out of the page |
 | Light to use          | Idle workspaces stay quiet, switching is quick, and you pick up where you left off       |
 | Several windows       | ⌘N opens a window on the same workspaces; each shows its own tab and returns on relaunch |
-| Lodge pages           | `lodge://settings` and `lodge://history` open in a tab, one per workspace; sites can't   |
-| Settings tab          | ⌘, or the gear opens it: General, Search, Downloads, About (version, macOS, data folder) |
+| Lodge pages           | `lodge://settings`, `history`, `protection` open as tabs, one per workspace; sites can't |
+| Settings tab          | ⌘, or the gear: General, Search, Fingerprint, Downloads, About (version, macOS, folder)  |
 | Search engine         | Each workspace searches with its own; pick it under Search Engine… in the workspace menu |
 | Default's engine      | Settings › Search picks it; custom ones follow it until they pick; Anonymous: DuckDuckGo |
 | Added engines         | Add Engine… in Settings › Search or the Search Engine… sheet: name, address `…?q=%s`     |
@@ -64,6 +66,24 @@ one you are in uses resources.
 | English and 繁體中文  | Follows macOS or Language & Region › Applications; workspace names stay English          |
 | Three platforms       | Mac, iPhone and iPad share one set of rules, each with the controls that suit it         |
 | Clear promise         | Each workspace keeps its own site data and sign-ins, and Lodge says exactly that         |
+
+## Fingerprint limits
+
+Each workspace gives every site its own fingerprint, the same on every visit; each Anonymous tab gets its own, gone with
+the tab. The protection is on everywhere until you switch it off for a site on `lodge://protection`.
+
+| Fingerprint | What it means                                                                                         |
+| ----------- | ----------------------------------------------------------------------------------------------------- |
+| Covered     | Images drawn on a canvas (2D, and OffscreenCanvas on the main thread), WebGL and audio                |
+| In detail   | WebGL `readPixels` and canvas encoding; rendered and decoded audio, `copyFromChannel`, `AnalyserNode` |
+| Not covered | Your IP address: Lodge does not change the network path, so a site can still link workspaces by it    |
+| Not covered | Code a site runs in web or service workers, which reads the real values                               |
+| Not covered | The TLS handshake and HTTP header order, which are WebKit's and the same in every workspace           |
+| Not covered | `createImageBitmap` read back through WebGL, `getBufferSubData` and `captureStream`                   |
+| Not covered | Methods a page took from a frame before Lodge reached it                                              |
+| Not yet     | Navigator, screen and font fingerprints, for a later milestone                                        |
+| Not done    | Changing the User-Agent, a proxy or VPN per workspace, blocking trackers                              |
+| Not done    | Picking or resetting a workspace's fingerprint by hand                                                |
 
 ## Why not an existing browser
 

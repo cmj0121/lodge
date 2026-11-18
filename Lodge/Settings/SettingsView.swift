@@ -8,7 +8,7 @@ import os
 /// Settings tab shows the one app-wide model, so a change shows at once in each. Search picks Default's engine and
 /// edits the engines added to Default, kept in the session with Default's content; they apply to the next search.
 /// "Rest tabs after" is the coordinator's, for every workspace, and applies at once; below it, what a resting tab keeps
-/// on this Mac (D5).
+/// on this Mac (D5). Fingerprint says what the protection covers and where it stops, and opens `lodge://protection`.
 struct SettingsView: View {
     let coordinator: WorkspaceCoordinator
     @Environment(\.downloadSettings) private var injected
@@ -65,6 +65,18 @@ struct SettingsView: View {
                     Text("Engines added here can be picked in every workspace, Anonymous included.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                }
+                Section("Fingerprint") {
+                    Text("Each workspace gives every site its own fingerprint, the same on every visit. Each Anonymous tab gets its own, gone with the tab. Lodge never asks: when a site reads one, a fingerprint button shows in the address field.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    FingerprintCoverageRow("Covered", "Images drawn on a canvas, WebGL and audio")
+                    FingerprintCoverageRow(
+                        "Not covered",
+                        "Your IP address, code a site runs in web or service workers, the TLS handshake and header order")
+                    LabeledContent("Sites turned off") {
+                        Button("Open Fingerprint Protection") { coordinator.open(.protection) }
+                    }
                 }
                 Section("Downloads") {
                     Picker("Save downloads to:", selection: option) {

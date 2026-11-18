@@ -60,7 +60,11 @@ struct AddressBar: View {
                 completion: suggestions?.completion, panelRows: suggestions?.rows.count ?? 0, icon: pane.icon(for:),
                 choose: { pane.open($0, words: suggestions?.words ?? text) },
                 submit: { pane.load(text) })
-            SiteSecurityButton(pane: pane)
+            HStack(spacing: 0) {
+                // A tab of its own each, so switching tabs shows the indicator at once and only a read fades it in.
+                FingerprintSlot(pane: pane).id(tab?.id)
+                SiteSecurityButton(pane: pane)
+            }
         }
         .padding(.leading, hasLeadingBadge ? 5 : 10)
         .padding(.trailing, 4)
@@ -173,6 +177,57 @@ private struct AnonymousBadge: View {
 
     private var label: Label<Text, Image> {
         Label(Workspace.anonymousName, systemImage: Workspace.anonymousSymbol)
+    }
+}
+
+/// Holds the fingerprint indicator just before the security button: it fades in over 0.2s when it first shows for
+/// the shown tab's document (none under Reduce Motion), and goes at once.
+private struct FingerprintSlot: View {
+    let pane: BrowserPane
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let state = pane.selectedFingerprint
+        ZStack {
+            if let state {
+                FingerprintIndicator(
+                    site: state.site, isOff: state.isOff, isAnonymous: pane.model.isAnonymous, open: pane.openProtection)
+                    .transition(.asymmetric(insertion: .opacity, removal: .identity))
+            }
+        }
+        .animation(reduceMotion ? nil : .easeIn(duration: 0.2), value: state != nil)
+    }
+}
+
+/// The page read a fingerprint (quiet, protected) or protection is off for its site (orange, the one loud state);
+/// a click opens the protection page for that site (D5). Never a prompt.
+private struct FingerprintIndicator: View {
+    let site: String
+    let isOff: Bool
+    /// Anonymous keeps a key and exceptions per tab, so the texts speak of the tab.
+    let isAnonymous: Bool
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            Image(systemName: LodgePage.protection.symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isOff ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                .frame(width: 18, height: 18)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.borderless)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        switch (isOff, isAnonymous) {
+        case (true, false): String(localized: "Fingerprint protection is off for \(site) in this workspace.")
+        case (true, true): String(localized: "Fingerprint protection is off for \(site) in this tab.")
+        case (false, false): String(localized: "\(site) read this page's fingerprint. Lodge gave it this workspace's own.")
+        case (false, true): String(localized: "\(site) read this page's fingerprint. Lodge gave it this tab's own.")
+        }
     }
 }
 

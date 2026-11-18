@@ -381,6 +381,16 @@
         }
       }
     },
+    "Fingerprint protection": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "指紋保護"
+          }
+        }
+      }
+    },
     "First aid": {
       "localizations": {
         "zh-Hant": {
