@@ -6,7 +6,8 @@ import Testing
 @Suite struct LodgePageTests {
     @Test(arguments: [
         ("lodge://settings", LodgePage.settings), ("lodge://history", .history), ("LODGE://SETTINGS", .settings),
-        ("Lodge://History/", .history), ("lodge://settings/", .settings),
+        ("Lodge://History/", .history), ("lodge://settings/", .settings), ("lodge://protection", .protection),
+        ("LODGE://Protection/", .protection),
     ])
     func parsesItsPagesIgnoringCase(text: String, page: LodgePage) throws {
         #expect(LodgePage(url: try #require(URL(string: text))) == page)
@@ -15,7 +16,8 @@ import Testing
     @Test(arguments: [
         "lodge:", "lodge:settings", "lodge://", "lodge://about", "lodge://settings/general", "lodge://settings?x=1",
         "lodge://settings#top", "lodge://user@settings", "lodge://user:pw@settings", "lodge://settings:8080",
-        "lodge://settings//", "https://settings", "settings", "about:blank",
+        "lodge://settings//", "https://settings", "settings", "about:blank", "lodge://protection?site=example.com",
+        "lodge://protection/example.com", "lodge://protection#example.com", "lodge://example.com@protection",
     ])
     func refusesEverythingElse(text: String) throws {
         #expect(LodgePage(url: try #require(URL(string: text))) == nil)
@@ -24,6 +26,7 @@ import Testing
     @Test func canonicalURLsAreLowerCaseWithNoTrailingSlash() {
         #expect(LodgePage.settings.url.absoluteString == "lodge://settings")
         #expect(LodgePage.history.url.absoluteString == "lodge://history")
+        #expect(LodgePage.protection.url.absoluteString == "lodge://protection")
         #expect(LodgePage.allCases.allSatisfy { LodgePage(url: $0.url) == $0 })
     }
 
@@ -42,6 +45,8 @@ import Testing
         #expect(LodgePage.history.title == "History")
         #expect(LodgePage.settings.symbol == "gearshape")
         #expect(LodgePage.history.symbol == "clock")
+        #expect(LodgePage.protection.title == "Fingerprint protection")
+        #expect(LodgePage.protection.symbol == "touchid")
     }
 
     @Test func titlesAreTranslatedToTraditionalChinese() throws {
@@ -49,11 +54,14 @@ import Testing
         let bundle = try #require(Bundle(path: path))
         #expect(bundle.localizedString(forKey: "Settings", value: nil, table: nil) == "設定")
         #expect(bundle.localizedString(forKey: "History", value: nil, table: nil) == "瀏覽紀錄")
+        #expect(bundle.localizedString(forKey: "Fingerprint protection", value: nil, table: nil) == "指紋保護")
     }
 
     @Test func aTabKnowsItsPage() throws {
         #expect(BrowserTab(url: LodgePage.history.url).lodgePage == .history)
         #expect(BrowserTab(url: try #require(URL(string: "LODGE://SETTINGS"))).lodgePage == .settings)
+        #expect(BrowserTab(url: LodgePage.protection.url).lodgePage == .protection)
+        #expect(BrowserTab(url: LodgePage.protection.url).displayTitle == "Fingerprint protection")
         #expect(BrowserTab(url: try #require(URL(string: "lodge://nowhere"))).lodgePage == nil)
         #expect(BrowserTab(url: try #require(URL(string: "https://example.com"))).lodgePage == nil)
         #expect(BrowserTab().lodgePage == nil)
