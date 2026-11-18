@@ -307,6 +307,14 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         fingerprints[workspaceID]
     }
 
+    /// Turns the workspace's protection off (or back on) for `site` and saves the session (D7); Anonymous's live
+    /// with its tabs' stores, so it changes nothing here.
+    func setFingerprint(off: Bool, _ site: String, for workspaceID: UUID) {
+        guard fingerprints[workspaceID]?.isOff(site) != off else { return }
+        fingerprints.setOff(off, site, in: workspaceID)
+        didChange()
+    }
+
     // MARK: Editing
 
     /// Adds an empty workspace just before Anonymous and switches to it.

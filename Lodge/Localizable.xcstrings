@@ -1,6 +1,26 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ read this page's fingerprint. Lodge gave it this tab's own." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 讀取了此網頁的指紋。Lodge 給它的是此分頁專屬的指紋。"
+          }
+        }
+      }
+    },
+    "%@ read this page's fingerprint. Lodge gave it this workspace's own." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 讀取了此網頁的指紋。Lodge 給它的是此工作空間專屬的指紋。"
+          }
+        }
+      }
+    },
     "%@ search with it." : {
       "localizations" : {
         "zh-Hant" : {
@@ -17,6 +37,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "移除後，%1$@ 會改用 %2$@ 搜尋。"
+          }
+        }
+      }
+    },
+    ", " : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "、"
           }
         }
       }
@@ -451,6 +481,16 @@
         }
       }
     },
+    "Covered" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "涵蓋"
+          }
+        }
+      }
+    },
     "Create" : {
       "localizations" : {
         "zh-Hant" : {
@@ -611,6 +651,26 @@
         }
       }
     },
+    "Every site is protected in this tab." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此分頁中的每個網站都受到保護。"
+          }
+        }
+      }
+    },
+    "Every site is protected in this workspace." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此工作空間中的每個網站都受到保護。"
+          }
+        }
+      }
+    },
     "Example" : {
       "localizations" : {
         "zh-Hant" : {
@@ -707,6 +767,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在網頁中尋找"
+          }
+        }
+      }
+    },
+    "Fingerprint protection" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "指紋保護"
+          }
+        }
+      }
+    },
+    "Fingerprint protection is off for %@ in this tab." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此分頁已關閉 %@ 的指紋保護。"
+          }
+        }
+      }
+    },
+    "Fingerprint protection is off for %@ in this workspace." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此工作空間已關閉 %@ 的指紋保護。"
           }
         }
       }
@@ -837,6 +927,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "圖像"
+          }
+        }
+      }
+    },
+    "Images drawn on a canvas, WebGL and audio" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以 canvas 繪製的圖像、WebGL 與音訊"
           }
         }
       }
@@ -1181,6 +1281,16 @@
         }
       }
     },
+    "Not covered" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不涵蓋"
+          }
+        }
+      }
+    },
     "Not found" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1377,6 +1487,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上一個符合項目"
+          }
+        }
+      }
+    },
+    "Protect" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保護"
+          }
+        }
+      }
+    },
+    "Read: %@" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已讀取：%@"
           }
         }
       }
@@ -1771,6 +1901,26 @@
         }
       }
     },
+    "Sites can tell devices apart by how they draw images and play sound. Each Anonymous tab gets its own answers, gone with the tab." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "網站能從裝置繪製圖像與播放聲音的方式分辨不同裝置。每個 Anonymous 分頁都有自己的一組答案，分頁關閉就隨之消失。"
+          }
+        }
+      }
+    },
+    "Sites can tell devices apart by how they draw images and play sound. In this workspace, Lodge gives each site its own answers, the same on every visit, so a site can't recognize you across workspaces." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "網站能從裝置繪製圖像與播放聲音的方式分辨不同裝置。在此工作空間中，Lodge 會給每個網站一組專屬的答案，每次造訪都相同，因此網站無法跨工作空間認出你。"
+          }
+        }
+      }
+    },
     "Some data will be removed when Lodge closes." : {
       "localizations" : {
         "zh-Hant" : {
@@ -1817,6 +1967,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "切換到分頁"
+          }
+        }
+      }
+    },
+    "Switching it reloads this site in this tab." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切換後，會在此分頁中重新載入這個網站。"
+          }
+        }
+      }
+    },
+    "Switching it reloads this site's tabs in this workspace." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切換後，會重新載入此工作空間中這個網站的分頁。"
           }
         }
       }
@@ -1931,6 +2101,16 @@
         }
       }
     },
+    "This site" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此網站"
+          }
+        }
+      }
+    },
     "Toggle Sidebar" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1957,6 +2137,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "再試一次"
+          }
+        }
+      }
+    },
+    "Turned off in this tab" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此分頁中已關閉"
+          }
+        }
+      }
+    },
+    "Turned off in this workspace" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此工作空間中已關閉"
           }
         }
       }
@@ -2021,6 +2221,26 @@
         }
       }
     },
+    "WebGL" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WebGL"
+          }
+        }
+      }
+    },
+    "What it covers" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保護範圍"
+          }
+        }
+      }
+    },
     "Work, Personal, Side project…" : {
       "localizations" : {
         "zh-Hant" : {
@@ -2047,6 +2267,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工作空間"
+          }
+        }
+      }
+    },
+    "Your IP address, code a site runs in web or service workers, the TLS handshake and header order" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的 IP 位址、網站在 Web Worker 或 Service Worker 中執行的程式碼、TLS 交握與標頭順序"
+          }
+        }
+      }
+    },
+    "audio" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "音訊"
+          }
+        }
+      }
+    },
+    "canvas" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "canvas"
           }
         }
       }

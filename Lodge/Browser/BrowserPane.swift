@@ -24,6 +24,26 @@ struct BrowserPane {
     /// The shown page's security; `.none` with no tab shown.
     var selectedSecurity: SiteSecurity { selectedID.flatMap { model.security[$0] } ?? .none }
 
+    /// What the fingerprint indicator shows for the shown page (D5): its site, and whether protection is off there.
+    /// Off whenever the site is excepted, read or not, since an excepted page gets no patch and never reports a read;
+    /// on only once the page read one. Nil on a page with no site or before a read.
+    var selectedFingerprint: (site: String, isOff: Bool)? {
+        guard let id = selectedID, let site = model.fingerprintSite(id),
+            let settings = model.fingerprintSettings(for: id)
+        else { return nil }
+        if settings.isOff(site) { return (site, true) }
+        return model.fingerprintReads[id]?.isEmpty == false ? (site, false) : nil
+    }
+
+    /// The indicator's click: the protection page, for the shown page's site when it has one.
+    func openProtection() {
+        let source = selectedID
+        open(.protection)
+        if let page = model.tab(showing: .protection) {
+            model.setProtectionTarget(for: page.id, site: source.flatMap(model.fingerprintSite), tab: source)
+        }
+    }
+
     // MARK: Tabs
 
     /// Whether another window shows the tab, so selecting it here brings that window forward (D4).
@@ -114,13 +134,17 @@ struct BrowserPane {
     }
 
     /// Selects this workspace's tab showing `page` (another window showing it comes forward, D4); else opens a new
-    /// tab on `page.url` (load: false) shown here, then closes the blank tab this window was showing.
+    /// tab on `page.url` (load: false) shown here, then closes the blank tab this window was showing. The protection
+    /// page reached this way is for no site (D5); `openProtection` gives it one after.
     func open(_ page: LodgePage) {
         let blank = selectedBlankTab?.id
         if let tab = model.tab(showing: page) {
             select(tab.id)
         } else {
             open(BrowserTab(store: model.newTabStore(), url: page.url), load: false)
+        }
+        if page == .protection, let tab = model.tab(showing: page) {
+            model.setProtectionTarget(for: tab.id, site: nil, tab: nil)
         }
         if let blank, selectedID != blank { close(blank) }
     }

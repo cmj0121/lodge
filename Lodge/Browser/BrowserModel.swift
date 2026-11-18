@@ -36,6 +36,11 @@ final class BrowserModel {
     /// Which fingerprint apis each tab's current page, in any frame, has read (D4); absent means none. Cleared when
     /// the main frame commits a new document, and gone with the tab or its view.
     private(set) var fingerprintReads: [TabID: Set<FingerprintAPI>] = [:]
+    /// What each protection page tab was opened for from the indicator (D5), by that page's tab, in memory only, so
+    /// absent after relaunch; gone with the page's tab, and when the page is reached any other way.
+    private var protectionTargets: [TabID: ProtectionTarget] = [:]
+    /// Bumped on every exception change, so views reading exceptions, which live outside the model, redraw.
+    private(set) var fingerprintExceptionsRevision = 0
 
     /// Shared by every workspace's model.
     @ObservationIgnored let registry: WebViewRegistry
@@ -407,15 +412,52 @@ final class BrowserModel {
     // MARK: Fingerprint
 
     /// The tab's fingerprint key and exceptions (D3): an anonymous tab's store's, else its workspace's from the
-    /// coordinator; nil for an unknown tab, and with no coordinator (previews, layout renders).
+    /// coordinator; nil for an unknown tab, and with no coordinator (previews).
     func fingerprintSettings(for id: TabID) -> FingerprintSettings? {
-        guard let tab = tabs[id] else { return nil }
-        if case .ephemeral = tab.store { return registry.fingerprint(for: tab.store) }
+        tabs[id].flatMap { fingerprintSettings(on: $0.store) }
+    }
+
+    /// The key and exceptions tabs on `store` use: an anonymous tab's store's while something holds it, else the
+    /// workspace's. Reading them is observed through `fingerprintExceptionsRevision`.
+    func fingerprintSettings(on store: StoreRef) -> FingerprintSettings? {
+        _ = fingerprintExceptionsRevision
+        if case .ephemeral = store { return registry.isHeld(store) ? registry.fingerprint(for: store) : nil }
         return placement?.fingerprint(for: workspaceID)
     }
 
+    /// Turns protection on or off for `site` (D7): the workspace's exception, saved with the session, or for an
+    /// anonymous tab's `store` its own, in memory. Every tab on `store` whose view is at `site` gets its scripts again
+    /// and reloads. Never asks.
+    func setFingerprintProtection(_ on: Bool, for site: String, on store: StoreRef) {
+        if case .ephemeral = store {
+            guard registry.isHeld(store) else { return }
+            registry.setFingerprint(off: !on, site, for: store)
+        } else {
+            placement?.setFingerprint(off: !on, site, for: workspaceID)
+        }
+        fingerprintExceptionsRevision += 1
+        for tab in tabs.tabs where tab.store == store && controllers[tab.id] != nil && fingerprintSite(tab.id) == site {
+            reinstallFingerprint(tab.id)
+            reload(tab.id)
+        }
+    }
+
+    /// The protection page in `page` now shows `site`, as read in `tab` (D5); with no site, it shows none.
+    func setProtectionTarget(for page: TabID, site: String?, tab: TabID?) {
+        var target: ProtectionTarget?
+        if let site, let source = tab.flatMap({ tabs[$0] }) {
+            target = ProtectionTarget(site: site, tab: source.id, store: source.store)
+        }
+        if protectionTargets[page] != target { protectionTargets[page] = target }
+    }
+
+    /// What the protection page in `page` was opened for, while the tab it was read in is still open.
+    func protectionTarget(for page: TabID) -> ProtectionTarget? {
+        protectionTargets[page].flatMap { tabs[$0.tab] != nil ? $0 : nil }
+    }
+
     /// The tab's site exception changed: its view's scripts are installed again for documents loaded from now on.
-    /// U6's exception toggle calls it, then reloads the tab.
+    /// `setFingerprintProtection` calls it, then reloads the tab.
     func reinstallFingerprint(_ id: TabID) {
         controllers[id]?.reinstallScripts()
     }
@@ -433,10 +475,11 @@ final class BrowserModel {
         if fingerprintReads[id] != nil { fingerprintReads[id] = nil }
     }
 
-    #if DEBUG
-        /// Layout self-checks: the site the tab's view is seeded for (D1).
-        func fingerprintSite(_ id: TabID) -> String? { controllers[id]?.topSite }
-    #endif
+    /// The site the tab's view is seeded for (D1); a tab with no view, its address's site. Nil for none (blank,
+    /// `lodge:`).
+    func fingerprintSite(_ id: TabID) -> String? {
+        controllers[id]?.topSite ?? FingerprintSite.of(tabs[id]?.url, inheriting: nil)
+    }
 
     /// Appends blank tabs with these ids, without web views.
     func appendBlanks(_ ids: [TabID]) {
@@ -616,6 +659,7 @@ final class BrowserModel {
             work[id] = nil
             rest.forget(id)
             forgetBeforeUnload(id)
+            if protectionTargets[id] != nil { protectionTargets[id] = nil }
             popupOpeners = popupOpeners.filter { $0.value != id }
             historyRecorder?.send(.closed(tab: id))
             if loadProgress[id] != nil { loadProgress[id] = nil }
@@ -877,4 +921,14 @@ protocol WindowPlacement: AnyObject {
     func willClose(_ tabs: Set<TabID>, of model: BrowserModel)
     /// The workspace's fingerprint key and exceptions; nil for Anonymous (D3).
     func fingerprint(for workspaceID: UUID) -> FingerprintSettings?
+    /// Turns the workspace's protection off (or back on) for `site`, saved with the session (D7).
+    func setFingerprint(off: Bool, _ site: String, for workspaceID: UUID)
+}
+
+/// What the protection page is opened for (D5): the site, the tab it was read in, and that tab's store, whose
+/// exceptions an Anonymous page shows.
+struct ProtectionTarget: Equatable {
+    let site: String
+    let tab: TabID
+    let store: StoreRef
 }

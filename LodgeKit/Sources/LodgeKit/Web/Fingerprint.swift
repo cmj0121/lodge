@@ -76,6 +76,12 @@ public struct FingerprintKeys: Equatable, Sendable {
         byWorkspace[workspace.id] = settings ?? .fresh()
     }
 
+    /// Turns the workspace's protection off (or back on) for `site` (D7), keeping its key; a workspace not added and
+    /// Anonymous change nothing.
+    public mutating func setOff(_ off: Bool, _ site: String, in workspace: UUID) {
+        byWorkspace[workspace]?.setOff(off, site)
+    }
+
     /// Forgets the workspace's key and exceptions, as when it is deleted.
     public mutating func drop(_ workspace: UUID) {
         byWorkspace[workspace] = nil

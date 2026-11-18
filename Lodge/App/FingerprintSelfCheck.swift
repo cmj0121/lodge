@@ -332,6 +332,139 @@
                 return readBefore == [.canvas] && left && restored
                     && reads(defaultModel, tab.id, [.canvas]) == [.canvas] && stayed(tab, on: "cached")
             }
+
+            // The indicator and the protection page (D5, D7), through a coordinator and its window's pane as the app
+            // runs them. An excepted page gets no patch, so reads nothing that reports; its reads equal an isolated
+            // world's, the real value.
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: LinkLibrary())
+            coordinator.bringForwardHook = { _ in }
+            coordinator.windows[0].locationPrompt = nil
+            func pane() -> BrowserPane { coordinator.pane(for: coordinator.windows[0]) }
+            defer {
+                for workspace in [Workspace.defaultID, Workspace.anonymousID] {
+                    guard let model = coordinator.model(for: workspace) else { continue }
+                    for id in model.tabs.tabs.map(\.id) { autoreleasepool { model.close(id) } }
+                }
+                settle()
+            }
+            /// The window's shown tab, its blank one the first time, once it loaded the page `name` at `host`.
+            func shown(_ host: String, _ name: String) -> Tab? {
+                pane().load(url(host, name).absoluteString)
+                guard let id = pane().selectedID, let view = pane().model.registry.webView(for: id), loaded(view, name)
+                else { return nil }
+                return (id, view)
+            }
+            /// Whether each view's document was loaded again while `change` ran: a mark left in it is gone.
+            func reloaded(_ views: [WKWebView], by change: () -> Void) -> [Bool] {
+                for view in views { _ = js(view, "window.kept = 'kept'; return 'kept';") }
+                change()
+                return views.map { view in
+                    waitUntil(4) { !view.isLoading && js(view, "return String(window.kept);") == "undefined" }
+                }
+            }
+            func real(_ view: WKWebView) -> Bool { same(read(view), read(view, in: .defaultClient)) }
+            func indicator(_ id: TabID) -> (site: String, isOff: Bool)? {
+                pane().select(id)
+                return pane().selectedFingerprint
+            }
+            func exception(_ workspace: UUID) -> Set<String>? {
+                coordinator.snapshot.workspaces.first { $0.workspace.id == workspace }?.fingerprint?.offSites
+            }
+
+            let workModel = coordinator.active
+            guard let web = shown(one, "indicator"), let webStore = workModel.tabs[web.id]?.store else {
+                return report("a coordinator's window loads a page", false)
+            }
+            let unread = pane().selectedFingerprint == nil
+            let firstRead = noisedRead(web.view)
+            report(
+                "the indicator shows only after the page on screen read a fingerprint, in the on look",
+                unread && firstRead != nil && reads(workModel, web.id, [.canvas, .webgl, .audio]).count == 3
+                    && indicator(web.id).map { $0.site == one && !$0.isOff } == true)
+            pane().openProtection()
+            let page = workModel.tab(showing: .protection)
+            report(
+                "the indicator opens the one protection page at lodge://protection for its site and tab",
+                page != nil && pane().selectedID == page?.id && page?.url?.absoluteString == "lodge://protection"
+                    && page.flatMap { workModel.protectionTarget(for: $0.id) }
+                        == ProtectionTarget(site: one, tab: web.id, store: webStore)
+                    && pane().selectedFingerprint == nil)
+            pane().select(web.id)
+            pane().load("lodge://protection")
+            let typed = workModel.tab(showing: .protection)
+            report(
+                "a typed lodge://protection shows the same page with no site, until the indicator opens it again",
+                typed?.id == page?.id && pane().selectedID == typed?.id
+                    && typed.flatMap { workModel.protectionTarget(for: $0.id) } == nil
+                    && {
+                        pane().select(web.id)
+                        pane().openProtection()
+                        return typed.flatMap { workModel.protectionTarget(for: $0.id) }?.site == one
+                    }())
+            let sibling = open(workModel, one, "sibling")
+            let elsewhere = open(workModel, other, "elsewhere")
+            let offReloads = reloaded([web.view] + [sibling, elsewhere].compactMap { $0?.view }) {
+                workModel.setFingerprintProtection(false, for: one, on: webStore)
+            }
+            report(
+                "switching off saves the workspace's exception with the session and reloads its tabs on that site only",
+                exception(Workspace.defaultID) == [one] && sibling != nil && elsewhere != nil
+                    && offReloads == [true, true, false])
+            report(
+                "an excepted site reads the real value, as an isolated world does, and reports no read",
+                real(web.view) && sibling.map { real($0.view) } == true && reads(workModel, web.id, []).isEmpty
+                    && elsewhere.flatMap { noisedRead($0.view) } != nil)
+            report(
+                "the indicator shows the off look on an excepted site, read or not",
+                indicator(web.id).map { $0.site == one && $0.isOff } == true)
+            let onReloads = reloaded([web.view]) { workModel.setFingerprintProtection(true, for: one, on: webStore) }
+            report(
+                "switching on drops the exception, reloads and restores the same noise",
+                exception(Workspace.defaultID) == [] && onReloads == [true] && same(noisedRead(web.view), firstRead)
+                    && reads(workModel, web.id, [.canvas]).contains(.canvas)
+                    && indicator(web.id).map { $0.site == one && !$0.isOff } == true)
+
+            if let gone = open(workModel, one, "gone"), let protection = workModel.tab(showing: .protection) {
+                pane().select(gone.id)
+                pane().openProtection()
+                let had = workModel.protectionTarget(for: protection.id)?.tab == gone.id
+                workModel.close(gone.id)
+                report(
+                    "the page shows no site once the tab it was opened from has closed",
+                    had && workModel.protectionTarget(for: protection.id) == nil)
+            } else {
+                report("the page shows no site once the tab it was opened from has closed", false)
+            }
+
+            coordinator.switchTo(Workspace.anonymousID)
+            let anonymousWork = coordinator.active
+            if let tab = shown(one, "anonymous-protect"), let store = anonymousWork.tabs[tab.id]?.store,
+                let twin = open(anonymousWork, one, "anonymous-twin")
+            {
+                _ = noisedRead(tab.view)
+                pane().openProtection()
+                let targeted =
+                    anonymousWork.tab(showing: .protection).flatMap { anonymousWork.protectionTarget(for: $0.id) }?
+                    .store == store
+                let anonymousReloads = reloaded([tab.view, twin.view]) {
+                    anonymousWork.setFingerprintProtection(false, for: one, on: store)
+                }
+                report(
+                    "in Anonymous an exception stays with the tab's store in memory and reloads that tab only",
+                    targeted && anonymousReloads == [true, false]
+                        && anonymousWork.fingerprintSettings(on: store)?.isOff(one) == true
+                        && exception(Workspace.anonymousID) == nil && exception(Workspace.defaultID) == [])
+                report(
+                    "an Anonymous exception reads the real value in its tab and leaves another tab noised",
+                    real(tab.view) && noisedRead(twin.view) != nil
+                        && indicator(tab.id).map { $0.site == one && $0.isOff } == true)
+            } else {
+                report("an Anonymous window loads a page", false)
+            }
+            report(
+                "no switch puts up a prompt, alert or sheet",
+                NSApp.modalWindow == nil && coordinator.windows.allSatisfy { $0.nsWindow?.attachedSheet == nil })
         }
     }
 
@@ -343,6 +476,9 @@
         func didOpen(_ tab: TabID, in workspace: UUID, from source: TabID?) {}
         func willClose(_ tabs: Set<TabID>, of model: BrowserModel) {}
         func fingerprint(for workspaceID: UUID) -> FingerprintSettings? { settings[workspaceID] }
+        func setFingerprint(off: Bool, _ site: String, for workspaceID: UUID) {
+            settings[workspaceID]?.setOff(off, site)
+        }
     }
 
     /// Fingerprint self-check only: an HTTP server on the loopback interface, so pages load from two registrable

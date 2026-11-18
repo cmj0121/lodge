@@ -149,6 +149,14 @@ final class WebViewRegistry {
         return settings
     }
 
+    /// Turns an anonymous tab's store's protection off (or back on) for `site` (D7), in memory only, for the tab and
+    /// its popups; every other store changes nothing, its exceptions being its workspace's.
+    func setFingerprint(off: Bool, _ site: String, for ref: StoreRef) {
+        guard case .ephemeral = ref, var settings = fingerprint(for: ref) else { return }
+        settings.setOff(off, site)
+        fingerprints[ref] = settings
+    }
+
     /// A configuration on the store's data store, with the work and fingerprint handlers (`addHandlers`).
     private func newConfiguration(for ref: StoreRef, model: BrowserModel) -> WKWebViewConfiguration {
         let config = WKWebViewConfiguration()

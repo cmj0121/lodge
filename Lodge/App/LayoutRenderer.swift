@@ -57,6 +57,7 @@
             checkPlaces()
             checkFingerprint()
             renderSettings(in: directory)
+            renderProtection(in: directory)
             renderHistory(in: directory)
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -2108,6 +2109,60 @@
             report(
                 "The Settings page follows the window's look, Anonymous included",
                 (grounds["light"] ?? 0) > 0.8 && (grounds["dark"] ?? 1) < 0.3 && (grounds["anonymous"] ?? 1) < 0.3)
+        }
+
+        /// The fingerprint indicator in the address bar, on (the page read a fingerprint) and off (its site excepted),
+        /// and the protection page opened from it with one more site turned off, each in light and dark; then the page
+        /// in Anonymous, in its dark look. No page loads: the tab's view is built without loading and its reads are
+        /// reported by hand.
+        private static func renderProtection(in directory: URL) {
+            let suiteName = "dev.lodge.selfcheck.\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            let size = NSSize(width: 1100, height: 700)
+            let site = "example.com"
+            /// A coordinator whose window shows a tab at `site` that read canvas and audio, in `workspace`.
+            func scene(_ workspace: UUID = Workspace.defaultID) -> (WorkspaceCoordinator, BrowserPane, BrowserTab) {
+                let coordinator = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+                coordinator.bringForwardHook = { _ in }
+                if workspace != Workspace.defaultID { coordinator.switchTo(workspace) }
+                coordinator.windows[0].locationPrompt = nil
+                let pane = firstPane(coordinator)
+                let model = pane.model
+                let tab = BrowserTab(store: model.newTabStore(), url: URL(string: "https://www.\(site)/"), title: "Example")
+                model.append(tab, load: false)
+                coordinator.opened(tab.id, in: model, window: coordinator.windows[0])
+                if let view = model.registry.webView(for: tab.id) {
+                    model.didReadFingerprint(.canvas, from: view)
+                    model.didReadFingerprint(.audio, from: view)
+                }
+                return (coordinator, pane, tab)
+            }
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                let name = appearance == .aqua ? "light" : "dark"
+                for isOff in [false, true] {
+                    let (coordinator, _, _) = scene()
+                    if isOff { coordinator.setFingerprint(off: true, site, for: Workspace.defaultID) }
+                    snapshot(
+                        root(coordinator).defaultAppStorage(defaults), size: size,
+                        appearance: NSAppearance(named: appearance),
+                        to: directory.appending(path: "layout-fingerprint-\(isOff ? "off" : "on")-\(name).png"))
+                }
+                let (coordinator, pane, _) = scene()
+                coordinator.setFingerprint(off: true, "tracker.example", for: Workspace.defaultID)
+                pane.openProtection()
+                snapshot(
+                    root(coordinator).defaultAppStorage(defaults), size: size, appearance: NSAppearance(named: appearance),
+                    to: directory.appending(path: "layout-protection-\(name).png"))
+            }
+            let (coordinator, pane, tab) = scene(Workspace.anonymousID)
+            pane.model.setFingerprintProtection(false, for: "tracker.example", on: tab.store)
+            pane.openProtection()
+            snapshot(
+                root(coordinator).defaultAppStorage(defaults), size: size, appearance: NSAppearance(named: .darkAqua),
+                to: directory.appending(path: "layout-protection-anonymous.png"))
         }
 
         /// An off-screen window hosting `view`, never shown; it is not freed on closing, so closing it is safe.
