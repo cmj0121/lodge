@@ -8,7 +8,8 @@
     /// open, and the shortcut overlay and the location prompt in light and dark), workspace colours and
     /// Anonymous's dark window, the Settings tab, the History tab from an in-memory history, and the Downloads popover and button
     /// from sample items, to PNG files off screen, then exits. It never shows a window or takes focus,
-    /// so it can run while someone uses the machine. The only download is a `data:` URL saved to a temporary folder.
+    /// so it can run while someone uses the machine. The only download is a `data:` URL saved to a temporary folder;
+    /// the fingerprint check's pages come from a server on the loopback interface that stops with it.
     @MainActor
     enum LayoutRenderer {
         static func runIfRequested() {
@@ -54,6 +55,7 @@
             checkPressureKeepsSessionStore()
             checkReleasedViewGoes()
             checkPlaces()
+            checkFingerprint()
             renderSettings(in: directory)
             renderHistory(in: directory)
             renderDownloads(in: directory)
