@@ -31,7 +31,9 @@
 | Workspace 顏色       | 在 workspace sheet 選八種顏色之一或不選；sidebar 與焦點框跟著上色                       |
 | Sidebar 標題         | Default 和 Anonymous 在名稱下方附一行簡短說明；自訂 workspace 不顯示                    |
 | 獨立的身分           | 登入、cookie 和網站資料各自保存在產生它們的 workspace 裡                                |
-| 獨立的 fingerprint   | 每個 workspace 對每個網站都呈現一個不同且穩定的 fingerprint                             |
+| 獨立的 fingerprint   | 各 workspace 對各網站一組穩定的 canvas、WebGL、音訊 fingerprint；Anonymous 每 tab 一組  |
+| Fingerprint 按鈕     | 網站讀取 fingerprint 時出現在網址列尾端；該網站已關閉保護時呈橘色                       |
+| 逐站開關             | `lodge://protection` 為此 workspace 的網站關閉或開啟保護；Anonymous 只限該 tab          |
 | 自己的瀏覽紀錄       | 每個瀏覽器保留造訪過的頁面，「顯示所有瀏覽紀錄」以 tab 列出；Anonymous 不留任何紀錄     |
 | 一個頁面，一個瀏覽器 | 頁面始終屬於同一個瀏覽器；在另一個 workspace 開啟時，帶著網址過去重新開始               |
 | 歸屬一目了然         | 每個頁面都顯示它屬於哪個瀏覽器                                                          |
@@ -43,8 +45,8 @@
 | 內容不外流           | 判斷頁面有未送出的工作時，不讀取欄位內容，也不把任何東西送出頁面                        |
 | 輕盈好用             | 沒在用的 workspace 安靜無聲，切換快速，回來就能接著做                                   |
 | 多個視窗             | ⌘N 再開一個共用同一組 workspace 的視窗；各自顯示自己的 tab，重開後還原                  |
-| Lodge 頁面           | `lodge://settings` 與 `lodge://history` 以 tab 開啟，每個 workspace 各一個；網頁連不到  |
-| 設定 tab             | ⌘, 或齒輪開啟：一般、搜尋、下載項目、關於（版本、macOS、資料夾）                        |
+| Lodge 頁面           | `lodge://settings`、`history`、`protection` 以 tab 開啟，各 workspace 一個；網頁連不到  |
+| 設定 tab             | ⌘, 或齒輪開啟：一般、搜尋、指紋、下載項目、關於（版本、macOS、資料夾）                  |
 | 搜尋引擎             | 每個 workspace 用自己的搜尋引擎；在 workspace 選單的「搜尋引擎…」挑選                   |
 | Default 的引擎       | 在「設定」的「搜尋」挑選；自訂 workspace 未自選前跟隨它；Anonymous 用 DuckDuckGo        |
 | 自訂搜尋引擎         | 在「設定」的「搜尋」或「搜尋引擎…」sheet 按「加入搜尋引擎⋯」：名稱與 `…?q=%s` 網址      |
@@ -62,6 +64,24 @@
 | 英文與繁體中文       | 跟隨 macOS，或 Language & Region › Applications 裡 Lodge 的設定；workspace 名稱維持英文 |
 | 三個平台             | Mac、iPhone、iPad 共用同一套規則，各自用最適合的方式操作                                |
 | 清楚的承諾           | 每個 workspace 的網站資料與登入各自分開，Lodge 就照這樣說明                             |
+
+## Fingerprint 的限制
+
+每個 workspace 給每個網站一組專屬的 fingerprint，每次造訪都相同；每個 Anonymous tab 都有自己的一組，隨 tab 關閉消失。
+保護在每個網站都開啟，直到你在 `lodge://protection` 為某個網站關閉。
+
+| Fingerprint | 說明                                                                                      |
+| ----------- | ----------------------------------------------------------------------------------------- |
+| 涵蓋        | 以 canvas 繪製的圖像（2D，以及主執行緒上的 OffscreenCanvas）、WebGL 與音訊                |
+| 細節        | WebGL 的 `readPixels` 與 canvas 編碼；算繪與解碼的音訊、`copyFromChannel`、`AnalyserNode` |
+| 不涵蓋      | 你的 IP 位址：Lodge 不改變網路路徑，網站仍可藉此把 workspace 串在一起                     |
+| 不涵蓋      | 網站在 Web Worker 或 Service Worker 中執行的程式碼，讀到的是真實數值                      |
+| 不涵蓋      | TLS 交握與 HTTP 標頭順序，由 WebKit 決定，每個 workspace 都相同                           |
+| 不涵蓋      | 經 WebGL 讀回的 `createImageBitmap`、`getBufferSubData` 與 `captureStream`                |
+| 不涵蓋      | 網頁在 Lodge 接手前就從 frame 取走的方法                                                  |
+| 尚未涵蓋    | navigator、螢幕與字型的 fingerprint，留待之後的里程碑                                     |
+| 不做        | 更改 User-Agent、每個 workspace 各自的 proxy 或 VPN、阻擋追蹤器                           |
+| 不做        | 手動挑選或重設 workspace 的 fingerprint                                                   |
 
 ## 為什麼不用現有的瀏覽器
 
