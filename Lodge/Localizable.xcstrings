@@ -621,6 +621,16 @@
         }
       }
     },
+    "Each workspace gives every site its own fingerprint, the same on every visit. Each Anonymous tab gets its own, gone with the tab. Lodge never asks: when a site reads one, a fingerprint button shows in the address field." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每個工作空間都給每個網站一組專屬的指紋，每次造訪都相同。每個 Anonymous 分頁都有自己的一組，分頁關閉就隨之消失。Lodge 從不詢問：網站讀取指紋時，網址列會出現指紋按鈕。"
+          }
+        }
+      }
+    },
     "Edit" : {
       "localizations" : {
         "zh-Hant" : {
@@ -767,6 +777,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在網頁中尋找"
+          }
+        }
+      }
+    },
+    "Fingerprint" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "指紋"
           }
         }
       }
@@ -1327,6 +1347,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "打開"
+          }
+        }
+      }
+    },
+    "Open Fingerprint Protection" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前往指紋保護"
           }
         }
       }
@@ -1917,6 +1947,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "網站能從裝置繪製圖像與播放聲音的方式分辨不同裝置。在此工作空間中，Lodge 會給每個網站一組專屬的答案，每次造訪都相同，因此網站無法跨工作空間認出你。"
+          }
+        }
+      }
+    },
+    "Sites turned off" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已關閉保護的網站"
           }
         }
       }

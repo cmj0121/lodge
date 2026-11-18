@@ -37,8 +37,8 @@ struct ProtectionPageView: View {
                     turnedOff(store: store, settings: settings)
                 }
                 Section("What it covers") {
-                    coverage("Covered", "Images drawn on a canvas, WebGL and audio")
-                    coverage(
+                    FingerprintCoverageRow("Covered", "Images drawn on a canvas, WebGL and audio")
+                    FingerprintCoverageRow(
                         "Not covered",
                         "Your IP address, code a site runs in web or service workers, the TLS handshake and header order")
                 }
@@ -63,16 +63,6 @@ struct ProtectionPageView: View {
 
     private var anonymousSummary: String {
         String(localized: "Sites can tell devices apart by how they draw images and play sound. Each Anonymous tab gets its own answers, gone with the tab.")
-    }
-
-    /// A row of the covers section: its title, the list under it, both left aligned, the list wrapping.
-    private func coverage(_ title: LocalizedStringKey, _ list: LocalizedStringKey) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-            Text(list)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
     }
 
     private func thisSite(_ target: ProtectionTarget, store: StoreRef, settings: FingerprintSettings) -> some View {
