@@ -33,6 +33,9 @@ final class BrowserModel {
     private(set) var zoom: [TabID: Double] = [:]
     /// Each tab's decoded favicon, kept apart from `tabs` so an icon arriving redraws only its icon.
     private(set) var favicons: [TabID: NSImage] = [:]
+    /// Which fingerprint apis each tab's current page, in any frame, has read (D4); absent means none. Cleared when
+    /// the main frame commits a new document, and gone with the tab or its view.
+    private(set) var fingerprintReads: [TabID: Set<FingerprintAPI>] = [:]
 
     /// Shared by every workspace's model.
     @ObservationIgnored let registry: WebViewRegistry
@@ -307,6 +310,7 @@ final class BrowserModel {
         controllers[id] = nil
         let state = registry.release(id)
         work[id] = nil
+        resetFingerprintReads(id)
         forgetBeforeUnload(id)
         if tab.url != nil, let state { savedStates[id] = state }
         keepPlace(of: tab, state: state as? Data, scrollY: scrolls.removeValue(forKey: id)?.y)
@@ -400,6 +404,40 @@ final class BrowserModel {
         if tabs.tabs.isEmpty { appendBlanks([TabID()]) }
     }
 
+    // MARK: Fingerprint
+
+    /// The tab's fingerprint key and exceptions (D3): an anonymous tab's store's, else its workspace's from the
+    /// coordinator; nil for an unknown tab, and with no coordinator (previews, layout renders).
+    func fingerprintSettings(for id: TabID) -> FingerprintSettings? {
+        guard let tab = tabs[id] else { return nil }
+        if case .ephemeral = tab.store { return registry.fingerprint(for: tab.store) }
+        return placement?.fingerprint(for: workspaceID)
+    }
+
+    /// The tab's site exception changed: its view's scripts are installed again for documents loaded from now on.
+    /// U6's exception toggle calls it, then reloads the tab.
+    func reinstallFingerprint(_ id: TabID) {
+        controllers[id]?.reinstallScripts()
+    }
+
+    /// A frame of the tab showing `view` read `api`.
+    func didReadFingerprint(_ api: FingerprintAPI, from view: WKWebView) {
+        guard let id = tabs.tabs.first(where: { registry.webView(for: $0.id) === view })?.id,
+            fingerprintReads[id]?.contains(api) != true
+        else { return }
+        fingerprintReads[id, default: []].insert(api)
+    }
+
+    /// The tab's main frame committed a new document, or its web content process ended: nothing is read yet.
+    func resetFingerprintReads(_ id: TabID) {
+        if fingerprintReads[id] != nil { fingerprintReads[id] = nil }
+    }
+
+    #if DEBUG
+        /// Layout self-checks: the site the tab's view is seeded for (D1).
+        func fingerprintSite(_ id: TabID) -> String? { controllers[id]?.topSite }
+    #endif
+
     /// Appends blank tabs with these ids, without web views.
     func appendBlanks(_ ids: [TabID]) {
         guard !ids.isEmpty else { return }
@@ -410,25 +448,30 @@ final class BrowserModel {
 
     /// Called by WebKit for popups and `target=_blank`: the new tab runs on the configuration it hands over and is
     /// shown in the window showing `source`; WebKit loads it.
-    /// `sendsForm`: the popup opens for a sent form (`target=_blank`), so its view counts as having sent one.
-    func openPopup(from source: TabID, configuration: WKWebViewConfiguration, sendsForm: Bool = false) -> WKWebView? {
+    /// `topSite`: the site its scripts are first seeded for (D7). `sendsForm`: the popup opens for a sent form
+    /// (`target=_blank`), so its view counts as having sent one.
+    func openPopup(
+        from source: TabID, configuration: WKWebViewConfiguration, topSite: String? = nil, sendsForm: Bool = false
+    ) -> WKWebView? {
         guard tabs[source] != nil else { return nil }
         let popup = BrowserTab(store: newTabStore(popupOf: source))
         popupOpeners[popup.id] = source
-        let view = append(popup, configuration: configuration, load: false)
+        let view = append(popup, configuration: configuration, topSite: topSite, load: false)
         if sendsForm { didSendForm(popup.id) }
         placement?.didOpen(popup.id, in: workspaceID, from: source)
         return view
     }
 
     /// Appends `tab` and builds its web view, loading `tab.url` when `load` is true; which window shows it is the
-    /// caller's.
+    /// caller's. `topSite` is a popup's, with its `configuration` (`view(for:)`).
     @discardableResult
-    func append(_ tab: BrowserTab, configuration: WKWebViewConfiguration? = nil, load: Bool) -> LodgeWebView? {
+    func append(
+        _ tab: BrowserTab, configuration: WKWebViewConfiguration? = nil, topSite: String? = nil, load: Bool
+    ) -> LodgeWebView? {
         var tab = tab
         tab.isLive = false
         changeTabs { $0.open(tab) }
-        return view(for: tab.id, configuration: configuration, load: load)
+        return view(for: tab.id, configuration: configuration, topSite: topSite, load: load)
     }
 
     /// A window now shows `id` in place of `previous`: the previous tab's sheet ends and it stops taking focus when
@@ -447,9 +490,12 @@ final class BrowserModel {
     /// The tab's web view, building it (registry + TabController) when the tab has none, then marking the tab
     /// live. Loads `tab.url` when it built the view and `load` is true. Nil for an unknown tab, and for a tab on a
     /// `lodge:` address, which never has one: the single guard keeping web views off Lodge pages.
-    /// The ONLY place that sets `isLive = true`.
+    /// The ONLY place that sets `isLive = true`. The view's scripts are first seeded (D7) for `topSite` with a popup's
+    /// `configuration`, else for the tab's address, so a restored or resting tab's new view gets them too.
     @discardableResult
-    func view(for id: TabID, configuration: WKWebViewConfiguration? = nil, load: Bool = true) -> LodgeWebView? {
+    func view(
+        for id: TabID, configuration: WKWebViewConfiguration? = nil, topSite: String? = nil, load: Bool = true
+    ) -> LodgeWebView? {
         guard let tab = tabs[id], !LodgePage.isLodge(tab.url) else { return nil }
         if let view = registry.webView(for: id) { return view }
         let isRestoring = restoredTabs.remove(id) != nil
@@ -462,7 +508,8 @@ final class BrowserModel {
         update(id) { $0.isLive = true }
         // Built once the tab is listed, so the controller's initial KVO values reach it.
         let controller = TabController(
-            tab: id, webView: view, model: self, faviconSession: registry.faviconSession(for: tab.store))
+            tab: id, webView: view, model: self, faviconSession: registry.faviconSession(for: tab.store),
+            topSite: configuration == nil ? FingerprintSite.of(tab.url, inheriting: nil) : topSite)
         controllers[id] = controller
         if load, let saved {
             controller.browserWillLoad()
@@ -473,7 +520,7 @@ final class BrowserModel {
             controller.expectsRestoreCommit = isRestoring
             view.interactionState = state
         } else if load, let url = tab.url {
-            if case .load(_, let y?) = onDisk { controller.restoreScroll(to: y, at: url, in: view) }
+            if case .load(_, let y?) = onDisk { controller.restoreScroll(to: y, at: url) }
             controller.browserWillLoad()
             let navigation = view.load(URLRequest(url: url))
             if isRestoring { controller.restoreNavigation = navigation }
@@ -575,6 +622,7 @@ final class BrowserModel {
             if favicons[id] != nil { favicons[id] = nil }
             if security[id] != nil { security[id] = nil }
             if zoom[id] != nil { zoom[id] = nil }
+            resetFingerprintReads(id)
         }
         Task { @MainActor [registry] in
             registry.detach(tabs: dropped)
@@ -827,4 +875,6 @@ protocol WindowPlacement: AnyObject {
     func didOpen(_ tab: TabID, in workspace: UUID, from source: TabID?)
     /// The tabs are about to close in `model`: each window showing one moves on (D3).
     func willClose(_ tabs: Set<TabID>, of model: BrowserModel)
+    /// The workspace's fingerprint key and exceptions; nil for Anonymous (D3).
+    func fingerprint(for workspaceID: UUID) -> FingerprintSettings?
 }

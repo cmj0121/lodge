@@ -30,20 +30,32 @@ public enum FingerprintScript {
     /// name as a string: a page-world object can read as null from an isolated world, a primitive cannot (D4).
     public static let eventName = "lodgefingerprintread"
 
-    /// Isolated world, `.atDocumentStart`, `forMainFrameOnly: false`: relays each read api once per document. A forged
-    /// event only lights the indicator.
+    /// Isolated world, `.atDocumentStart`, `forMainFrameOnly: false`: relays each read api once per document, and
+    /// again, for every api the document read, when it comes back from the back/forward cache (`pageshow` with
+    /// `persisted`), since its commit cleared what the app knew. A forged event only lights the indicator.
     public static let relaySource = """
         (() => {
           const handlers = window.webkit && window.webkit.messageHandlers;
           const handler = handlers && handlers.\(handlerName);
           if (!handler) { return; }
           const apis = new Set(['canvas', 'webgl', 'audio']);
+          const read = new Set();
           const sent = new Set();
-          document.addEventListener('\(eventName)', (e) => {
-            const api = e.detail;
-            if (typeof api !== 'string' || !apis.has(api) || sent.has(api)) { return; }
+          const send = (api) => {
+            if (sent.has(api)) { return; }
             sent.add(api);
             try { handler.postMessage({ api: api }); } catch (_) {}
+          };
+          document.addEventListener('\(eventName)', (e) => {
+            const api = e.detail;
+            if (typeof api !== 'string' || !apis.has(api)) { return; }
+            read.add(api);
+            send(api);
+          }, { capture: true, passive: true });
+          window.addEventListener('pageshow', (e) => {
+            if (!e.persisted) { return; }
+            sent.clear();
+            read.forEach(send);
           }, { capture: true, passive: true });
         })();
         """

@@ -25,14 +25,26 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var isFormPostLoading = false
     /// The scroll-restoring script (`PlaceScript`), until the load it was added for ends.
     private var scrollRestore: WKUserScript?
+    /// The main frame's response was let through and its commit is still to come: that commit is a new document whose
+    /// reads start afresh. A back/forward cache restore commits without a response, so its reads were cleared at its
+    /// navigation action instead, before its relay re-reports them on `pageshow`, whichever of that and the commit
+    /// comes first.
+    private var commitsNewDocument = false
+    /// The view whose user scripts this controller alone installs (`installScripts(seed:)`).
+    private weak var webView: WKWebView?
+    /// The registrable domain of the view's main frame that its scripts are seeded for (D1); nil without one.
+    private(set) var topSite: String?
     #if DEBUG
         /// Layout self-checks: how many `lodge:` navigations and popups every tab has refused.
         static var lodgeRefusals = 0
     #endif
 
-    init(tab: TabID, webView: LodgeWebView, model: BrowserModel, faviconSession: URLSession) {
+    /// Installs the view's scripts seeded for `topSite`, the site its first document is expected at (D7).
+    init(tab: TabID, webView: LodgeWebView, model: BrowserModel, faviconSession: URLSession, topSite: String?) {
         self.tab = tab
         self.model = model
+        self.webView = webView
+        self.topSite = topSite
         history = HistoryEventFilter(tab: tab)
         favicons = FaviconLoader(session: faviconSession) { [weak model] image in model?.setFavicon(image, for: tab) }
         super.init()
@@ -80,6 +92,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             holdState(webView, \.microphoneCaptureState),
             holdState(webView, \.fullscreenState),
         ]
+        reinstallScripts()
     }
 
     /// Tells the model when a state that keeps a background tab's view alive changes.
@@ -124,24 +137,60 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         nextLoadIsBrowserInitiated = true
     }
 
-    /// The tab wakes from a record (D5): the next load of `url` in `view` scrolls its main frame back to `y`, from a
-    /// user script removed once that load ends.
-    func restoreScroll(to y: Double, at url: URL, in view: WKWebView) {
-        let script = WKUserScript(
+    /// The tab wakes from a record (D5): the next load of `url` scrolls its main frame back to `y`, from a user script
+    /// removed once that load ends.
+    func restoreScroll(to y: Double, at url: URL) {
+        scrollRestore = WKUserScript(
             source: PlaceScript.restoreScroll(to: y, at: url), injectionTime: .atDocumentEnd, forMainFrameOnly: true,
             in: .world(name: PlaceScript.worldName))
-        view.configuration.userContentController.addUserScript(script)
-        scrollRestore = script
+        reinstallScripts()
     }
 
-    /// The load the scroll-restoring script was added for has ended: it goes, the work script stays.
-    private func endScrollRestore(in view: WKWebView) {
-        guard let script = scrollRestore else { return }
+    /// The load the scroll-restoring script was added for has ended: it goes, every other script stays.
+    private func endScrollRestore() {
+        guard scrollRestore != nil else { return }
         scrollRestore = nil
-        let controller = view.configuration.userContentController
-        let kept = controller.userScripts.filter { $0.source != script.source }
+        reinstallScripts()
+    }
+
+    /// The main frame is at, or about to show, a document at `url`: when that is another site than `topSite`, the
+    /// scripts are seeded for it (D1). The response decision calls it, and so do a commit (a back/forward cache
+    /// restore has no response) and a load that fails or stops before committing (the old page stays).
+    private func seedMainFrame(at url: URL?) {
+        let site = FingerprintSite.of(url, inheriting: topSite)
+        guard site != topSite else { return }
+        topSite = site
+        reinstallScripts()
+    }
+
+    /// Installs the scripts again for `topSite` with the tab's current fingerprint settings, as after its site's
+    /// exception changes; documents loaded from then on see the change.
+    func reinstallScripts() {
+        installScripts(seed: model?.fingerprintSettings(for: tab)?.pageSeed(for: topSite))
+    }
+
+    /// The one place the view's user scripts are set (D7), since removing any drops every world's: the fingerprint
+    /// patch seeded with `seed` in the page world (none for nil: the site is excepted or has no registrable domain),
+    /// the fingerprint relay (D4) and the work script (D3) in their own worlds in every frame, and the
+    /// scroll-restoring script while one is pending.
+    func installScripts(seed: String?) {
+        guard let controller = webView?.configuration.userContentController else { return }
         controller.removeAllUserScripts()
-        kept.forEach(controller.addUserScript)
+        if let seed {
+            controller.addUserScript(
+                WKUserScript(
+                    source: FingerprintScript.pageSource(seed: seed), injectionTime: .atDocumentStart,
+                    forMainFrameOnly: false, in: .page))
+        }
+        controller.addUserScript(
+            WKUserScript(
+                source: FingerprintScript.relaySource, injectionTime: .atDocumentStart, forMainFrameOnly: false,
+                in: .world(name: FingerprintScript.worldName)))
+        controller.addUserScript(
+            WKUserScript(
+                source: PageWorkScript.source, injectionTime: .atDocumentStart, forMainFrameOnly: false,
+                in: .world(name: PageWorkScript.worldName)))
+        if let scrollRestore { controller.addUserScript(scrollRestore) }
     }
 
     /// Called when another tab is selected: ends this tab's open sheet.
@@ -186,6 +235,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         {
             setFormPostLoading(true)
         }
+        if isMainFrame, navigationAction.navigationType == .backForward { model?.resetFingerprintReads(tab) }
         return (.allow, preferences)
     }
 
@@ -199,7 +249,14 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         let download = DownloadPolicy.shouldDownload(
             mimeCanShow: navigationResponse.canShowMIMEType, contentDisposition: disposition,
             isMainFrame: navigationResponse.isForMainFrame, userInitiated: action?.userInitiated ?? false)
-        return download ? .download : .allow
+        if download { return .download }
+        // The main frame's final response, once redirects are done, is let through: its document gets its site's
+        // seed (D7).
+        if navigationResponse.isForMainFrame {
+            seedMainFrame(at: navigationResponse.response.url)
+            commitsNewDocument = true
+        }
+        return .allow
     }
 
     /// A link click (an `<a download>` included) or a form submission counts as user-initiated: WebKit has no public
@@ -255,27 +312,32 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             dialogGate.commit(origin: Origin(url: url))
             sendHistory(history.committed(url, title: webView.title ?? "", store: store, isRestore: isRestore))
         }
+        seedMainFrame(at: webView.url)
         favicons.pageCommitted(webView.url)
         model?.resetWork(tab)
+        if commitsNewDocument { model?.resetFingerprintReads(tab) }
+        commitsNewDocument = false
         model?.update(tab) { $0.hasCrashed = false }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         favicons.pageFinished(in: webView)
         setFormPostLoading(false)
-        endScrollRestore(in: webView)
+        endScrollRestore()
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
         setFormPostLoading(false)
-        endScrollRestore(in: webView)
+        endScrollRestore()
     }
 
     func webView(
         _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error
     ) {
+        seedMainFrame(at: webView.url)
+        commitsNewDocument = false
         setFormPostLoading(false)
-        endScrollRestore(in: webView)
+        endScrollRestore()
     }
 
     /// Tells the model when a main-frame form submission starts or stops loading.
@@ -288,6 +350,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         setFormPostLoading(false)
         model?.resetWork(tab)
+        model?.resetFingerprintReads(tab)
         model?.update(tab) {
             $0.hasCrashed = true
             $0.isLoading = false
@@ -306,8 +369,10 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             #endif
             return nil
         }
+        // A popup's first document is at its own site, or its opener's when it opens blank (D7).
         return model?.openPopup(
             from: tab, configuration: configuration,
+            topSite: FingerprintSite.of(navigationAction.request.url, inheriting: topSite),
             sendsForm: [.formSubmitted, .formResubmitted].contains(navigationAction.navigationType))
     }
 

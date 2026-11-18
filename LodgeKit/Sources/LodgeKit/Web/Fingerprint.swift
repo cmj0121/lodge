@@ -81,3 +81,26 @@ public struct FingerprintKeys: Equatable, Sendable {
         byWorkspace[workspace] = nil
     }
 }
+
+extension FingerprintSettings {
+    /// The seed every frame of a web view whose main frame is at `site` gets (D1); nil without a site or when the site
+    /// is excepted, so its pages get no patch and see the real fingerprint.
+    public func pageSeed(for site: String?) -> String? {
+        guard let site, !isOff(site) else { return nil }
+        return seed(for: site)
+    }
+}
+
+/// Which site a web view's scripts are seeded for (D1, D7).
+public enum FingerprintSite {
+    /// The main-frame site of a document at `url`: `inherited` (the opener's, or the view's current site) for no URL,
+    /// an empty one or `about:blank`, which take their creator's origin; else the URL's registrable domain, nil
+    /// without one (`about:`, `data:`, `file:`, `lodge:`).
+    public static func of(_ url: URL?, inheriting inherited: String?) -> String? {
+        guard let url, !url.absoluteString.isEmpty else { return inherited }
+        if url.scheme?.lowercased() == "about", url.absoluteString.lowercased().hasPrefix("about:blank") {
+            return inherited
+        }
+        return RegistrableDomain.of(url)
+    }
+}
