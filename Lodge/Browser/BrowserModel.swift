@@ -236,13 +236,14 @@ final class BrowserModel {
         return await asksBeforeLeaving(id, view)
     }
 
-    /// The holds known without asking the page.
+    /// The holds known without asking the page; a sign-in challenge waiting for its sheet is one.
     private func isHeldNow(_ id: TabID) -> Bool {
         guard let view = registry.webView(for: id) else { return false }
         if view.cameraCaptureState != .none || view.microphoneCaptureState != .none { return true }
         if view.fullscreenState != .notInFullscreen { return true }
         if let opener = popupOpeners[id], registry.webView(for: opener) != nil { return true }
         if popupOpeners.contains(where: { $0.value == id && registry.webView(for: $0.key) != nil }) { return true }
+        if controllers[id]?.isWaitingForSignIn == true { return true }
         return work[id]?.isHeld == true
     }
 
@@ -312,6 +313,7 @@ final class BrowserModel {
     private func release(_ id: TabID) {
         guard let tab = tabs[id], registry.webView(for: id) != nil else { return }
         controllers[id]?.didDeselect()
+        controllers[id]?.cancelChallenges()
         controllers[id] = nil
         let state = registry.release(id)
         work[id] = nil
@@ -518,8 +520,8 @@ final class BrowserModel {
     }
 
     /// A window now shows `id` in place of `previous`: the previous tab's sheet ends and it stops taking focus when
-    /// shown, unless another window still shows it; the folders above the new tab's bookmark open, and it gets its
-    /// web view.
+    /// shown, unless another window still shows it; the folders above the new tab's bookmark open, it gets its web
+    /// view, and its waiting sign-in challenge its sheet.
     func didSelect(_ id: TabID?, previous: TabID?, previousStillShown: Bool) {
         if let previous, previous != id, !previousStillShown {
             controllers[previous]?.didDeselect()
@@ -528,6 +530,7 @@ final class BrowserModel {
         guard let id else { return }
         if let link = tabs[id]?.link { changeLibrary { $0.reveal(link) } }
         view(for: id)
+        controllers[id]?.didSelect()
     }
 
     /// The tab's web view, building it (registry + TabController) when the tab has none, then marking the tab
@@ -649,6 +652,7 @@ final class BrowserModel {
         let dropped = before.filter { tabs[$0] == nil }
         guard !dropped.isEmpty else { return }
         for id in dropped {
+            controllers[id]?.cancelChallenges()
             controllers[id] = nil
             restoredTabs.remove(id)
             savedStates[id] = nil
@@ -901,6 +905,12 @@ final class BrowserModel {
         } else {
             view.reload()
         }
+    }
+
+    /// Stops the tab's load; no delegate call follows, so its controller is told here (D1).
+    func stopLoading(_ id: TabID) {
+        registry.webView(for: id)?.stopLoading()
+        controllers[id]?.didStop()
     }
 
     /// Stores the tab's zoom (dropping the entry at actual size) and applies it to its web view.

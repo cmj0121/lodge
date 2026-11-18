@@ -1471,6 +1471,16 @@
         }
       }
     },
+    "Password" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "密碼"
+          }
+        }
+      }
+    },
     "Pin" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1921,6 +1931,26 @@
         }
       }
     },
+    "Sign In" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "登入"
+          }
+        }
+      }
+    },
+    "Sign in to %@" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "登入 %@"
+          }
+        }
+      }
+    },
     "Site information" : {
       "localizations" : {
         "zh-Hant" : {
@@ -2077,6 +2107,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此檔案的標籤超過 %@ 個，不像是瀏覽器輸出的書籤，未加入任何項目。"
+          }
+        }
+      }
+    },
+    "The name and password are sent without encryption." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用者名稱與密碼將以未加密的方式傳送。"
+          }
+        }
+      }
+    },
+    "The name or password was wrong." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用者名稱或密碼錯誤。"
+          }
+        }
+      }
+    },
+    "The site asks for a name and password for “%@”." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此網站要求輸入「%@」的使用者名稱與密碼。"
+          }
+        }
+      }
+    },
+    "The site asks for a name and password." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此網站要求輸入使用者名稱與密碼。"
           }
         }
       }
@@ -2247,6 +2317,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未命名"
+          }
+        }
+      }
+    },
+    "User name" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用者名稱"
           }
         }
       }

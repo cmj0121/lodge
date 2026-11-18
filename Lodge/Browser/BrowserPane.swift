@@ -232,7 +232,9 @@ struct BrowserPane {
         if let id = selectedID { model.reload(id) }
     }
 
-    func stopLoading() { selectedView?.stopLoading() }
+    func stopLoading() {
+        if let id = selectedID { model.stopLoading(id) }
+    }
 
     /// Opens the location prompt for a new tab; the tab opens only when the prompt submits an address.
     func newTab() {
