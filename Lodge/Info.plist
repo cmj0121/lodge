@@ -18,6 +18,11 @@
 			<string>Default</string>
 		</dict>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

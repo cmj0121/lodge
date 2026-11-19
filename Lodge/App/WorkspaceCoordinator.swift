@@ -597,14 +597,19 @@ extension WorkspaceCoordinator: WindowPlacement {
     }
 
     /// D5: the window leaves the registry and its remembered tabs; a blank it made and still owns closes, every
-    /// other tab stays. While quitting it stays, so the session keeps it.
+    /// other tab stays. While quitting it stays, so the session keeps it. Its shown tab is deselected, so a sheet on
+    /// it ends and a waiting sign-in can show in another window.
     private func didClose(_ window: WindowState) {
         if keyBrowserWindow === window { keyBrowserWindow = nil }
         guard !isQuitting else { return }
         window.nsWindow = nil
         let model = active
+        let shown = selections.shown(in: window.id)
         let change = selections.removeWindow(window.id, in: model.selectionTabs)
         windows.removeAll { $0 === window }
+        if let shown {
+            model.didSelect(nil, previous: shown, previousStillShown: selections.shownTabs.contains(shown))
+        }
         if lastActiveBrowserWindow === window { lastActiveBrowserWindow = windows.first }
         model.remove(Set(change.close))
         stampRest()

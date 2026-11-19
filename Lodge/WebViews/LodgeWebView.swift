@@ -8,9 +8,12 @@ final class LodgeWebView: WKWebView {
     /// Set when the model wants this page focused before it is in a window; the next move into one takes
     /// first responder and clears it.
     var focusesWhenShown = false
+    /// Told whenever the view moves into or out of a window, so a sheet waiting for one can show.
+    var didMoveToWindow: (() -> Void)?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        didMoveToWindow?()
         guard focusesWhenShown, let window else { return }
         focusesWhenShown = false
         window.makeFirstResponder(self)

@@ -62,7 +62,7 @@ one you are in uses resources.
 | Pick a suggestion     | ↑/↓ moves through the list, Return opens the selection, Esc closes the list              |
 | Inline completion     | The field completes to the top suggestion; → accepts it, deleting drops it               |
 | Default browser       | Its General section makes Lodge the default; links from other apps open in a Default tab |
-| Credentials           | Passwords and passkeys come from the OS credential store, ready in every workspace       |
+| Credentials           | A site that asks for a name and password gets a sheet; nothing is saved or filled yet    |
 | English and 繁體中文  | Follows macOS or Language & Region › Applications; workspace names stay English          |
 | Three platforms       | Mac, iPhone and iPad share one set of rules, each with the controls that suit it         |
 | Clear promise         | Each workspace keeps its own site data and sign-ins, and Lodge says exactly that         |
@@ -85,15 +85,36 @@ the tab. The protection is on everywhere until you switch it off for a site on `
 | Not done    | Changing the User-Agent, a proxy or VPN per workspace, blocking trackers                              |
 | Not done    | Picking or resetting a workspace's fingerprint by hand                                                |
 
+## Credential limits
+
+Lodge asks you when a site wants a name and password, and keeps the answer only for this run of Lodge. The self-check
+confirms an answer stays in the workspace it was given in.
+
+| Credential   | What it means                                                                                              |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| Asked        | A site's HTTP sign-in request (Basic, Digest, NTLM) gets a sheet in the tab that asked                     |
+| Asked        | Cancel shows the site's own page                                                                           |
+| Warned       | Basic sign-in over plain `http`: the sheet says the answer is sent unencrypted                             |
+| Warned       | A plain `http` page waits behind a warning, nothing sent; Go Back stays, Continue loads it                 |
+| Kept         | Continue on `http` lasts until Lodge quits, per workspace; Anonymous: its tab and popups, until they close |
+| Not warned   | Pages on this computer (`localhost`, `127.x.x.x`, `::1`), and `http` images or frames                      |
+| Not done     | Trying `https` first for a plain `http` address                                                            |
+| Kept         | Until Lodge quits, only in that workspace; an Anonymous tab's only in that tab and its popups              |
+| Not done     | Signing out; to forget an answer, quit Lodge or close the Anonymous tab and its popups                     |
+| Not shown    | A sign-in request from another site's image or frame                                                       |
+| Not yet      | Passkeys, which wait for Apple's browser entitlement                                                       |
+| Not yet      | Saving and filling passwords; saved ones will be Lodge's own, in the system keychain                       |
+| Not possible | iCloud Keychain passwords, which Apple keeps out of reach of third-party browsers                          |
+
 ## Why not an existing browser
 
-| Capability                      | Lodge | Chrome / Edge | Firefox            | Safari      | Arc      |
-| ------------------------------- | ----- | ------------- | ------------------ | ----------- | -------- |
-| Many browsers in one window     | ✅    | ⚠️ profiles   | ⚠️ containers only | ⚠️ profiles | ✅       |
-| Default pins in every workspace | ✅    | ❌            | ❌                 | ❌          | ❌       |
-| Hibernate a whole workspace     | ✅    | tab only      | tab only           | tab only    | tab only |
-| Same model on iOS / iPadOS      | ✅    | ⚠️            | ❌                 | ✅          | ⚠️       |
-| System-level credentials        | ✅    | ⚠️            | ❌                 | ✅          | ❌       |
+| Capability                      | Lodge      | Chrome / Edge | Firefox            | Safari      | Arc      |
+| ------------------------------- | ---------- | ------------- | ------------------ | ----------- | -------- |
+| Many browsers in one window     | ✅         | ⚠️ profiles   | ⚠️ containers only | ⚠️ profiles | ✅       |
+| Default pins in every workspace | ✅         | ❌            | ❌                 | ❌          | ❌       |
+| Hibernate a whole workspace     | ✅         | tab only      | tab only           | tab only    | tab only |
+| Same model on iOS / iPadOS      | ✅         | ⚠️            | ❌                 | ✅          | ⚠️       |
+| System-level credentials        | ⚠️ not yet | ⚠️            | ❌                 | ✅          | ❌       |
 
 Built on WebKit, so passkeys, service workers and extensions follow what Apple opens to browsers.
 

@@ -16,6 +16,9 @@ final class WebViewRegistry {
     /// Each anonymous tab's store's fingerprint key and exceptions (D3), in memory only, shared with its popups and
     /// dropped with the store.
     private var fingerprints: [StoreRef: FingerprintSettings] = [:]
+    /// The plain-http hosts each store's tabs load without a warning (D8), in memory only until Lodge quits; an
+    /// anonymous tab's go with its store.
+    private var plainHTTPHosts: [StoreRef: Set<String>] = [:]
     /// Called with an anonymous tab's store once it is dropped, so what was kept for it goes too.
     var storeDropped: @MainActor (StoreRef) -> Void = { _ in }
 
@@ -94,6 +97,7 @@ final class WebViewRegistry {
         guard case .ephemeral = ref else { return }
         faviconSessions.removeValue(forKey: ref)?.invalidateAndCancel()
         fingerprints[ref] = nil
+        plainHTTPHosts[ref] = nil
         if let store = stores.removeValue(forKey: ref) {
             Task {
                 await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
@@ -155,6 +159,16 @@ final class WebViewRegistry {
         guard case .ephemeral = ref, var settings = fingerprint(for: ref) else { return }
         settings.setOff(off, site)
         fingerprints[ref] = settings
+    }
+
+    /// The plain-http hosts tabs on `ref` load without a warning (D8).
+    func plainHTTPHosts(for ref: StoreRef) -> Set<String> { plainHTTPHosts[ref] ?? [] }
+
+    /// Tabs on `ref` load plain-http pages at `host` without a warning until Lodge quits, or for an anonymous tab's
+    /// store until it is dropped; a store nothing holds any more keeps nothing.
+    func allowPlainHTTP(_ host: String, for ref: StoreRef) {
+        if case .ephemeral = ref, !isHeld(ref) { return }
+        plainHTTPHosts[ref, default: []].insert(host)
     }
 
     /// A configuration on the store's data store, with the work and fingerprint handlers (`addHandlers`).

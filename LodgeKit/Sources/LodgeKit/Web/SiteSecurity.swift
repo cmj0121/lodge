@@ -51,7 +51,7 @@ public enum SiteSecurity: Equatable, Sendable {
     }
 
     /// localhost, 127.0.0.0/8 or ::1.
-    private static func isLoopback(_ host: String) -> Bool {
+    static func isLoopback(_ host: String) -> Bool {
         host == "localhost" || IPHost(host)?.isLoopback == true
     }
 }

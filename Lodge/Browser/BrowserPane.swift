@@ -28,7 +28,7 @@ struct BrowserPane {
     /// Off whenever the site is excepted, read or not, since an excepted page gets no patch and never reports a read;
     /// on only once the page read one. Nil on a page with no site or before a read.
     var selectedFingerprint: (site: String, isOff: Bool)? {
-        guard let id = selectedID, let site = model.fingerprintSite(id),
+        guard let id = selectedID, model.plainHTTPWarnings[id] == nil, let site = model.fingerprintSite(id),
             let settings = model.fingerprintSettings(for: id)
         else { return nil }
         if settings.isOff(site) { return (site, true) }
@@ -223,6 +223,20 @@ struct BrowserPane {
         if !model.load(url, in: id) { openLoose(url) }
     }
 
+    /// The plain-http warning's Go Back (D8): the shown tab keeps the page it had, and the keys go back to it.
+    func goBackFromPlainHTTP() {
+        guard let id = selectedID else { return }
+        model.goBackFromPlainHTTP(id)
+        focusSelectedView()
+    }
+
+    /// The plain-http warning's Continue (D8): the shown tab's store allows the host and the page loads.
+    func continueToPlainHTTP() {
+        guard let id = selectedID else { return }
+        model.continueToPlainHTTP(id)
+        focusSelectedView()
+    }
+
     func goBack() { selectedView?.goBack() }
 
     func goForward() { selectedView?.goForward() }
@@ -232,7 +246,9 @@ struct BrowserPane {
         if let id = selectedID { model.reload(id) }
     }
 
-    func stopLoading() { selectedView?.stopLoading() }
+    func stopLoading() {
+        if let id = selectedID { model.stopLoading(id) }
+    }
 
     /// Opens the location prompt for a new tab; the tab opens only when the prompt submits an address.
     func newTab() {

@@ -1,6 +1,26 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ asks for a name and password for “%@”." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ 要求輸入「%2$@」的使用者名稱與密碼。"
+          }
+        }
+      }
+    },
+    "%@ asks for a name and password." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 要求輸入使用者名稱與密碼。"
+          }
+        }
+      }
+    },
     "%@ read this page's fingerprint. Lodge gave it this tab's own." : {
       "localizations" : {
         "zh-Hant" : {
@@ -461,6 +481,16 @@
         }
       }
     },
+    "Continue to %@" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "繼續前往 %@"
+          }
+        }
+      }
+    },
     "Copy Address" : {
       "localizations" : {
         "zh-Hant" : {
@@ -871,6 +901,16 @@
         }
       }
     },
+    "Go Back" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返回"
+          }
+        }
+      }
+    },
     "Go back" : {
       "localizations" : {
         "zh-Hant" : {
@@ -947,6 +987,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "圖像"
+          }
+        }
+      }
+    },
+    "If you continue, this tab and its popups won't ask again for this site until they close." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "如果繼續，在此分頁與它的彈出式視窗關閉之前，都不會再為這個網站詢問。"
+          }
+        }
+      }
+    },
+    "If you continue, this workspace won't ask again for this site until Lodge quits." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "如果繼續，在結束 Lodge 之前，此工作空間不會再為這個網站詢問。"
           }
         }
       }
@@ -1471,6 +1531,16 @@
         }
       }
     },
+    "Password" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "密碼"
+          }
+        }
+      }
+    },
     "Pin" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1921,6 +1991,26 @@
         }
       }
     },
+    "Sign In" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "登入"
+          }
+        }
+      }
+    },
+    "Sign in to %@" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "登入 %@"
+          }
+        }
+      }
+    },
     "Site information" : {
       "localizations" : {
         "zh-Hant" : {
@@ -2061,6 +2151,16 @@
         }
       }
     },
+    "The connection to %@ is not encrypted" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "與 %@ 的連線未加密"
+          }
+        }
+      }
+    },
     "The download finished before it had a place to go." : {
       "localizations" : {
         "zh-Hant" : {
@@ -2077,6 +2177,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此檔案的標籤超過 %@ 個，不像是瀏覽器輸出的書籤，未加入任何項目。"
+          }
+        }
+      }
+    },
+    "The name and password are sent without encryption." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用者名稱與密碼將以未加密的方式傳送。"
+          }
+        }
+      }
+    },
+    "The name or password was wrong." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用者名稱或密碼錯誤。"
           }
         }
       }
@@ -2251,6 +2371,16 @@
         }
       }
     },
+    "User name" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用者名稱"
+          }
+        }
+      }
+    },
     "Version" : {
       "localizations" : {
         "zh-Hant" : {
@@ -2277,6 +2407,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保護範圍"
+          }
+        }
+      }
+    },
+    "What you send to this site or see on it, such as passwords and messages, can be read or changed on the way." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你傳給這個網站或在網站上看到的內容（例如密碼和訊息），都可能在傳輸途中被讀取或竄改。"
           }
         }
       }

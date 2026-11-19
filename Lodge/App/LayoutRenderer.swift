@@ -56,8 +56,12 @@
             checkReleasedViewGoes()
             checkPlaces()
             checkFingerprint()
+            checkAuth()
+            checkPlainHTTP()
             renderSettings(in: directory)
             renderProtection(in: directory)
+            renderAuth(in: directory)
+            renderPlainHTTP(in: directory)
             renderHistory(in: directory)
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -2163,6 +2167,120 @@
             snapshot(
                 root(coordinator).defaultAppStorage(defaults), size: size, appearance: NSAppearance(named: .darkAqua),
                 to: directory.appending(path: "layout-protection-anonymous.png"))
+        }
+
+        /// The sign-in sheet over the window of the tab that asked, in light and dark: a second try at a plain-http site
+        /// with a realm and a name to prefill, so every line the sheet can show is there. No page loads; the sheet is
+        /// laid out on its own and drawn where it would hang under the title bar.
+        private static func renderAuth(in directory: URL) {
+            let suiteName = "dev.lodge.selfcheck.\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            let size = NSSize(width: 1100, height: 700)
+            let host = "wiki.team.example.com"
+            let page = URL(string: "http://\(host):8080/wiki/")!
+            let space = URLProtectionSpace(
+                host: host, port: 8080, protocol: NSURLProtectionSpaceHTTP, realm: "Team wiki",
+                authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
+            guard
+                let prompt = AuthPrompt(
+                    space: space, previousFailureCount: 1, proposedUser: "alex", pageSite: nil,
+                    navigation: Origin(url: page))
+            else { return }
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                let name = appearance == .aqua ? "light" : "dark"
+                let coordinator = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+                coordinator.bringForwardHook = { _ in }
+                coordinator.windows[0].locationPrompt = nil
+                let model = firstPane(coordinator).model
+                let tab = BrowserTab(store: model.newTabStore(), url: page, title: "Team wiki")
+                model.append(tab, load: false)
+                coordinator.opened(tab.id, in: model, window: coordinator.windows[0])
+                let look = NSAppearance(named: appearance)
+                let (alert, _, _) = TabController.signInAlert(for: prompt)
+                alert.window.appearance = look
+                alert.layout()
+                guard
+                    let behind = image(root(coordinator).defaultAppStorage(defaults), size: size, appearance: look),
+                    let panel = alert.window.contentView,
+                    let sheet = panel.bitmapImageRepForCachingDisplay(in: panel.bounds),
+                    let picture = NSBitmapImageRep(
+                        bitmapDataPlanes: nil, pixelsWide: behind.pixelsWide, pixelsHigh: behind.pixelsHigh,
+                        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+                else { continue }
+                panel.cacheDisplay(in: panel.bounds, to: sheet)
+                picture.size = size
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: picture)
+                behind.draw(in: NSRect(origin: .zero, size: size))
+                let frame = NSRect(
+                    x: (size.width - panel.bounds.width) / 2, y: size.height - 28 - panel.bounds.height,
+                    width: panel.bounds.width, height: panel.bounds.height)
+                var ground = NSColor.windowBackgroundColor.cgColor
+                var edge = NSColor.separatorColor.cgColor
+                alert.window.effectiveAppearance.performAsCurrentDrawingAppearance {
+                    ground = NSColor.windowBackgroundColor.cgColor
+                    edge = NSColor.separatorColor.cgColor
+                }
+                let outline = NSBezierPath(roundedRect: frame, xRadius: 10, yRadius: 10)
+                NSColor(cgColor: ground)?.setFill()
+                outline.fill()
+                NSColor(cgColor: edge)?.setStroke()
+                outline.stroke()
+                sheet.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+                NSGraphicsContext.restoreGraphicsState()
+                try? picture.representation(using: .png, properties: [:])?
+                    .write(to: directory.appending(path: "layout-auth-\(name).png"))
+            }
+        }
+
+        /// The plain-http warning (D8) in place of a tab's page, in light and dark, and in Anonymous's dark look with its
+        /// own wording. No page loads: the warning is put up by hand on a tab whose view never loaded. Printed ok or
+        /// FAILED: the page under it is the window's ground, not the web view's, in each look.
+        private static func renderPlainHTTP(in directory: URL) {
+            func report(_ name: String, _ passed: Bool) { print("Plain http: \(name): \(passed ? "ok" : "FAILED")") }
+            let suiteName = "dev.lodge.selfcheck.\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            let size = NSSize(width: 1100, height: 700)
+            let page = URL(string: "http://wiki.team.example.com:8080/wiki/")!
+            /// The page's ground near the card's bottom, below the warning.
+            let probe = NSPoint(x: (SidebarMode.expanded.width + size.width) / 2, y: 30)
+            var grounds: [String: CGFloat] = [:]
+            for (name, anonymous, appearance) in [
+                ("light", false, NSAppearance.Name.aqua), ("dark", false, .darkAqua), ("anonymous", true, .darkAqua),
+            ] {
+                let coordinator = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+                coordinator.bringForwardHook = { _ in }
+                if anonymous { coordinator.switchTo(Workspace.anonymousID) }
+                coordinator.windows[0].locationPrompt = nil
+                let model = firstPane(coordinator).model
+                let tab = BrowserTab(store: model.newTabStore(), url: nil)
+                model.append(tab, load: false)
+                coordinator.opened(tab.id, in: model, window: coordinator.windows[0])
+                model.showPlainHTTPWarning(page, for: tab.id)
+                let look = NSAppearance(named: appearance)
+                let system = NSApp.appearance
+                NSApp.appearance = look
+                defer { NSApp.appearance = system }
+                let shown = image(root(coordinator).defaultAppStorage(defaults), size: size, appearance: look)
+                try? shown?.representation(using: .png, properties: [:])?
+                    .write(to: directory.appending(path: "layout-insecure-\(name).png"))
+                if let shown {
+                    let scale = CGFloat(shown.pixelsWide) / size.width
+                    let color = shown.colorAt(x: Int(probe.x * scale), y: shown.pixelsHigh - Int(probe.y * scale))?
+                        .usingColorSpace(.sRGB)
+                    grounds[name] = color.map { ($0.redComponent + $0.greenComponent + $0.blueComponent) / 3 }
+                }
+            }
+            report(
+                "the warning page follows the window's look, Anonymous included",
+                (grounds["light"] ?? 0) > 0.8 && (grounds["dark"] ?? 1) < 0.3 && (grounds["anonymous"] ?? 1) < 0.3)
         }
 
         /// An off-screen window hosting `view`, never shown; it is not freed on closing, so closing it is safe.

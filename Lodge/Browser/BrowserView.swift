@@ -133,7 +133,11 @@ private struct PageArea: View {
                 if let tab {
                     WebViewHost(tab: tab.id)
                 }
-                if let tab, tab.hasCrashed {
+                if let tab, let url = pane.model.plainHTTPWarnings[tab.id] {
+                    InsecurePageView(
+                        host: PlainHTTP.host(of: url) ?? "", isAnonymous: pane.model.isAnonymous,
+                        goBack: pane.goBackFromPlainHTTP, proceed: pane.continueToPlainHTTP)
+                } else if let tab, tab.hasCrashed {
                     CrashedPlaceholder(host: tab.url?.host(), reload: pane.reload)
                 } else if showsNewTab {
                     NewTabPlaceholder()
