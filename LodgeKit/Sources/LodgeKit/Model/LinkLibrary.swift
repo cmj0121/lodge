@@ -190,6 +190,59 @@ public struct LinkLibrary: Equatable, Sendable {
         pins.insert(link, at: min(max(index, 0), pins.count))
     }
 
+    /// Puts `link` on the pins at `index` (clamped to 0...count), keeping it as it is. False, changing nothing, when
+    /// a link with its id is already in the library or its URL is already pinned.
+    @discardableResult public mutating func insert(_ link: SavedLink, toPinsAt index: Int) -> Bool {
+        guard !holds(link.id), !pins.contains(where: { $0.url == link.url }) else { return false }
+        pins.insert(link, at: min(max(index, 0), pins.count))
+        return true
+    }
+
+    /// Puts `link` into the folder at `index` (clamped to 0...count; nil appends), keeping it as it is. False,
+    /// changing nothing, for an unknown folder, a link whose id is already in the library, or a URL already directly
+    /// in that folder.
+    @discardableResult
+    public mutating func insertBookmark(_ link: SavedLink, into folder: UUID, at index: Int?) -> Bool {
+        guard !holds(link.id),
+            let children = bookmarks.folder(folder)?.children,
+            !children.contains(where: { if case .link(let kept) = $0 { kept.url == link.url } else { false } })
+        else { return false }
+        bookmarks.update(folder) { folder in
+            let count = folder.children.count
+            folder.children.insert(.link(link), at: index.map { min(max($0, 0), count) } ?? count)
+        }
+        return true
+    }
+
+    /// Moves bookmark `id` onto the pins at `index` (clamped), the link kept as it is. False, changing nothing, for
+    /// an unknown id, a pin, a folder, and a URL already pinned.
+    @discardableResult public mutating func moveLinkToPins(_ id: UUID, at index: Int) -> Bool {
+        guard let link = bookmarks.links.first(where: { $0.id == id }),
+            !pins.contains(where: { $0.url == link.url })
+        else { return false }
+        remove(id)
+        pins.insert(link, at: min(max(index, 0), pins.count))
+        return true
+    }
+
+    /// Moves pin `id` into the folder at `index` (clamped; nil appends), the link kept as it is. False, changing
+    /// nothing, for an unknown id, a bookmark, an unknown folder, and a URL already directly in that folder.
+    @discardableResult
+    public mutating func moveLinkToBookmarks(_ id: UUID, into folder: UUID, at index: Int?) -> Bool {
+        guard let from = pins.firstIndex(where: { $0.id == id }) else { return false }
+        let link = pins.remove(at: from)
+        guard insertBookmark(link, into: folder, at: index) else {
+            pins.insert(link, at: from)
+            return false
+        }
+        return true
+    }
+
+    /// Whether a pin or bookmark with `id` is in the library.
+    private func holds(_ id: UUID) -> Bool {
+        pins.contains { $0.id == id } || bookmarks.links.contains { $0.id == id }
+    }
+
     /// Opens or closes the folder; an unknown id changes nothing.
     public mutating func setExpanded(_ folder: UUID, _ expanded: Bool) {
         bookmarks.update(folder) { $0.isExpanded = expanded }
