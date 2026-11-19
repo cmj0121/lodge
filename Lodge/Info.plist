@@ -35,6 +35,16 @@
 			<key>UTTypeDescription</key>
 			<string>Lodge Workspace</string>
 		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>dev.lodge.sidebar-item</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Lodge Sidebar Item</string>
+		</dict>
 	</array>
 </dict>
 </plist>

@@ -860,6 +860,11 @@ protocol SharedPins: AnyObject {
     /// Removes the pin from Default; Default's tab of it becomes loose.
     func unpin(_ id: UUID)
     func movePin(_ id: UUID, to index: Int)
+    /// Pins a copy of the link (a new id) in Default at `index`, keeping `icon` for it there; a URL already pinned
+    /// changes nothing.
+    func insertPin(_ link: SavedLink, at index: Int, icon: Data?)
+    /// The icon bytes the pin keeps in Default; nil when it keeps none.
+    func keptPinIcon(_ pin: UUID) -> Data?
     /// Switches every window to Default and opens the pin in `window`, or shows its open tab there.
     func openPin(_ link: SavedLink, from window: WindowState)
 }
@@ -886,6 +891,12 @@ extension WorkspaceCoordinator: SharedPins {
     func unpin(_ id: UUID) { defaultModel.unpin(id) }
 
     func movePin(_ id: UUID, to index: Int) { defaultModel.movePin(id, to: index) }
+
+    func insertPin(_ link: SavedLink, at index: Int, icon: Data?) {
+        defaultModel.insertPin(SavedLink(url: link.url, title: link.title), at: index, icon: icon)
+    }
+
+    func keptPinIcon(_ pin: UUID) -> Data? { defaultModel.icons?.icon(for: pin) }
 
     func openPin(_ link: SavedLink, from window: WindowState) {
         guard windows.contains(where: { $0 === window }) else { return }

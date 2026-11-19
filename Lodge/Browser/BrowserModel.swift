@@ -776,12 +776,25 @@ final class BrowserModel {
 
     /// Keeps `image` as the link's icon in `icons`, written only when its bytes differ from those kept.
     private func keepIcon(_ image: NSImage, for link: UUID) {
-        guard let icons, savedLink(link) != nil, let data = Self.iconData(image) else { return }
+        guard let data = Self.iconData(image) else { return }
+        keepIcon(data: data, for: link, image: image)
+    }
+
+    /// Keeps the icon bytes for the link in `icons`, written only when they differ from those kept; `image`, when
+    /// given, is what they decode to, so the next draw needs no decoding.
+    private func keepIcon(data: Data, for link: UUID, image: NSImage? = nil) {
+        guard let icons, savedLink(link) != nil else { return }
         do {
-            if try icons.write(data, for: link) { storedIcons[link] = (data, image) }
+            guard try icons.write(data, for: link) else { return }
+            if let image { storedIcons[link] = (data, image) } else { storedIcons[link] = nil }
         } catch {
             Self.iconsLogger.error("Cannot keep a link's icon: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// The icon bytes the link keeps: in memory in Anonymous, else on disk.
+    private func keptIconData(_ link: UUID) -> Data? {
+        isAnonymous ? savedLink(link)?.icon : icons?.icon(for: link)
     }
 
     private static let iconsLogger = Logger(subsystem: "dev.lodge", category: "icons")
@@ -828,15 +841,27 @@ final class BrowserModel {
             return
         }
         let link = library.add(page.url, title: page.tab.displayTitle, to: shelf)
-        if let image = favicons[id] {
-            // The tab shows the link's own URL, so its icon is the link's.
-            if isAnonymous {
-                if shelf == .bookmarks { storeIcon(image, in: link.id) }
-            } else {
-                keepIcon(image, for: link.id)
-            }
-        }
+        keepTabIcon(id, for: link.id, on: shelf)
         if page.tab.link == nil { update(id) { $0.link = link.id } }
+    }
+
+    /// Keeps the tab's icon as the link's: the tab shows the link's own URL, so its icon is the link's. In Anonymous
+    /// only a bookmark keeps one.
+    private func keepTabIcon(_ id: TabID, for link: UUID, on shelf: LinkShelf) {
+        guard let image = favicons[id] else { return }
+        if isAnonymous {
+            if shelf == .bookmarks { storeIcon(image, in: link) }
+        } else {
+            keepIcon(image, for: link)
+        }
+    }
+
+    /// Puts `link` on this workspace's own pins at `index` (Default's, for a shared pin dropped elsewhere), keeping
+    /// `icon` for it; a URL already pinned changes nothing.
+    func insertPin(_ link: SavedLink, at index: Int, icon: Data?) {
+        var inserted = false
+        changeLibrary { inserted = $0.insert(link, toPinsAt: index) }
+        if inserted, let icon { keepIcon(data: icon, for: link.id) }
     }
 
     /// Pins `url` on this workspace's own pins (Default's), or returns the pin already there for it.
@@ -916,6 +941,145 @@ final class BrowserModel {
     /// Moves the pin so it ends at `index` among the pins, Default's when shared.
     func movePin(_ id: UUID, to index: Int) {
         if let sharedPins { sharedPins.movePin(id, to: index) } else { library.move(id, to: index) }
+    }
+
+    // MARK: Sidebar drag and drop
+
+    /// Whether `drop(_:on:)` would move `item` to `target` (D4): only an item of this workspace still in the model,
+    /// onto a folder or loose tab that is here. Folders go only into bookmarks; a link lands only where its URL is
+    /// not already (the pins, or that folder directly).
+    func canDrop(_ item: SidebarDragItem, on target: SidebarDropTarget) -> Bool {
+        dropMove(item, on: target) != nil
+    }
+
+    /// Moves `item` to `target` (D4) and returns true; false, changing nothing, when `canDrop` is false.
+    @discardableResult func drop(_ item: SidebarDragItem, on target: SidebarDropTarget) -> Bool {
+        guard let move = dropMove(item, on: target) else { return false }
+        move()
+        return true
+    }
+
+    /// The move dropping `item` on `target` makes; nil when it is refused.
+    private func dropMove(_ item: SidebarDragItem, on target: SidebarDropTarget) -> (() -> Void)? {
+        guard item.workspace == workspaceID else { return nil }
+        switch target {
+        case .pins: break
+        case .bookmarks(let folder, _): guard library.folder(folder) != nil else { return nil }
+        case .loose(let before): guard before.map(isLoose) ?? true else { return nil }
+        }
+        switch item.kind {
+        case .pin: return pinMove(item.id, to: target)
+        case .bookmark: return bookmarkMove(item.id, to: target)
+        case .folder:
+            guard library.folder(item.id) != nil, case .bookmarks(let folder, let index) = target,
+                library.canMoveBookmark(item.id, into: folder)
+            else { return nil }
+            return { self.moveBookmark(item.id, into: folder, at: index) }
+        case .tab: return tabMove(item.id, to: target)
+        }
+    }
+
+    private func isLoose(_ id: TabID) -> Bool { sidebar.loose.contains { $0.tab?.id == id } }
+
+    private func pinMove(_ id: UUID, to target: SidebarDropTarget) -> (() -> Void)? {
+        guard let pin = pins.first(where: { $0.id == id }) else { return nil }
+        switch target {
+        case .pins(let index):
+            return { self.movePin(id, to: index) }
+        case .bookmarks(let folder, let index):
+            var next = library
+            guard let sharedPins else {
+                guard next.moveLinkToBookmarks(id, into: folder, at: index) else { return nil }
+                return { self.library = next }
+            }
+            // Default's pin becomes this workspace's bookmark, the same link, with the icon Default keeps for it.
+            let icon = sharedPins.keptPinIcon(id)
+            var link = pin
+            if isAnonymous { link.icon = icon }
+            guard next.insertBookmark(link, into: folder, at: index) else { return nil }
+            return {
+                self.library = next
+                if let icon, !self.isAnonymous { self.keepIcon(data: icon, for: id) }
+                sharedPins.unpin(id)
+            }
+        case .loose(let before):
+            guard let sharedPins else { return { self.loosen(id, before: before) } }
+            return {
+                sharedPins.unpin(id)
+                self.openLoose(pin, before: before)
+            }
+        }
+    }
+
+    private func bookmarkMove(_ id: UUID, to target: SidebarDropTarget) -> (() -> Void)? {
+        guard let link = library.links(on: .bookmarks).first(where: { $0.id == id }) else { return nil }
+        switch target {
+        case .pins(let index):
+            if let sharedPins {
+                guard !pins.contains(where: { $0.url == link.url }) else { return nil }
+                return {
+                    sharedPins.insertPin(link, at: index, icon: self.keptIconData(id))
+                    self.removeLink(id)
+                }
+            }
+            var next = library
+            guard next.moveLinkToPins(id, at: index) else { return nil }
+            return { self.library = next }
+        case .bookmarks(let folder, let index):
+            guard library.canMoveBookmark(id, into: folder) else { return nil }
+            return { self.moveBookmark(id, into: folder, at: index) }
+        case .loose(let before):
+            return { self.loosen(id, before: before) }
+        }
+    }
+
+    private func tabMove(_ id: TabID, to target: SidebarDropTarget) -> (() -> Void)? {
+        guard isLoose(id), let tab = tabs[id] else { return nil }
+        if case .loose(let before) = target { return { self.changeTabs { $0.move(id, before: before) } } }
+        guard let url = tab.url else { return nil }
+        let link = SavedLink(url: url, title: tab.displayTitle)
+        var next = library
+        let shelf: LinkShelf
+        switch target {
+        case .pins(let index):
+            if let sharedPins {
+                guard !pins.contains(where: { $0.url == url }) else { return nil }
+                return { sharedPins.insertPin(link, at: index, icon: self.favicons[id].flatMap(Self.iconData)) }
+            }
+            guard next.insert(link, toPinsAt: index) else { return nil }
+            shelf = .pins
+        case .bookmarks(let folder, let index):
+            guard next.insertBookmark(link, into: folder, at: index) else { return nil }
+            shelf = .bookmarks
+        case .loose: return nil
+        }
+        return {
+            self.library = next
+            self.keepTabIcon(id, for: link.id, on: shelf)
+            self.update(id) { $0.link = link.id }
+        }
+    }
+
+    /// Removes this workspace's link and moves its tab, now loose, to just before `before`; with no tab of it, opens
+    /// one there on its URL, not selected.
+    private func loosen(_ id: UUID, before: TabID?) {
+        guard let link = savedLink(id) else { return }
+        let tab = tabs.tab(forLink: id)?.id
+        removeLink(id)
+        if let tab {
+            changeTabs { $0.move(tab, before: before) }
+        } else {
+            openLoose(link, before: before)
+        }
+    }
+
+    /// Opens a loose tab on the link's URL just before `before`, its web view built when a window shows it.
+    private func openLoose(_ link: SavedLink, before: TabID?) {
+        let tab = BrowserTab(store: newTabStore(), url: link.url, title: link.title, isLive: false)
+        changeTabs { tabs in
+            tabs.open(tab)
+            tabs.move(tab.id, before: before)
+        }
     }
 
     // MARK: Import and export

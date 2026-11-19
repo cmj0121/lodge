@@ -57,6 +57,7 @@
             checkReleasedViewGoes()
             checkPlaces()
             checkKeptIcons()
+            checkSidebarDrops()
             checkFingerprint()
             checkAuth()
             checkPlainHTTP()
@@ -1553,6 +1554,273 @@
             let anonymous = coordinator.model(for: Workspace.anonymousID)
             report("Anonymous keeps no icons on disk", anonymous != nil && anonymous?.icons == nil)
             autoreleasepool { home.close(tab.id) }
+        }
+
+        /// Sidebar drag and drop (#33), straight on the models, every row of D4's table and its refusals, each printed
+        /// ok or FAILED: in Default (own pins) pins and bookmarks reorder and change shelf keeping the link, its tab
+        /// and its icon file; a loose tab saved on a shelf becomes that link's tab with its icon; loose tabs reorder; a
+        /// link dropped among loose tabs goes and its tab, or a new unselected one, lands at the place. In another
+        /// workspace a shared pin becomes a bookmark with Default's icon or a loose tab, and a bookmark or loose tab
+        /// becomes a pin in Default; Anonymous follows the same rules, its bookmark keeping the icon itself. A refused
+        /// drop changes nothing.
+        /// No tab gets a web view, so no request goes out.
+        private static func checkSidebarDrops() {
+            func report(_ name: String, _ passed: Bool) { print("Sidebar drops: \(name): \(passed ? "ok" : "FAILED")") }
+            func png() -> (image: NSImage, data: Data)? {
+                guard
+                    let context = CGContext(
+                        data: nil, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                else { return nil }
+                context.setFillColor(red: 0.2, green: 0.7, blue: 0.4, alpha: 1)
+                context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+                guard let made = context.makeImage(), let data = LinkIcon.png(from: made) else { return nil }
+                return (NSImage(cgImage: made, size: .zero), data)
+            }
+            func url(_ name: String) -> URL { URL(string: "about:blank#\(name)")! }
+            struct State: Equatable {
+                let library: LinkLibrary
+                let tabs: TabList
+                let pins: [SavedLink]
+            }
+            func state(_ models: [BrowserModel]) -> [State] {
+                models.map { State(library: $0.library, tabs: $0.tabs, pins: $0.pins) }
+            }
+            func loose(_ model: BrowserModel) -> [TabID] { model.sidebar.loose.compactMap(\.tab?.id) }
+            func folderLinks(_ model: BrowserModel, _ folder: UUID) -> [SavedLink] {
+                let children = model.library.folder(folder)?.children ?? []
+                return children.compactMap { if case .link(let link) = $0 { link } else { nil } }
+            }
+
+            let temporary = FileManager.default.temporaryDirectory.appending(
+                path: "LodgeDrops-\(UUID().uuidString)", directoryHint: .isDirectory)
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: temporary, downloads: nil, defaultLibrary: .sample,
+                restDefaults: nil)
+            coordinator.bringForwardHook = { _ in }
+            coordinator.restAfter = .never
+            coordinator.switchTo(Workspace.defaultID)
+            let pane = firstPane(coordinator)
+            let home = pane.model
+            let setupName = "Set up"
+            guard let work = try? coordinator.create(name: "Drops", symbol: "briefcase"),
+                let other = coordinator.model(for: work.id),
+                let anonymous = coordinator.model(for: Workspace.anonymousID),
+                let icon = png(), let homeIcons = home.icons, let otherIcons = other.icons
+            else { return report(setupName, false) }
+            let all = [home, other, anonymous]
+            func item(_ kind: SidebarDragItem.Kind, _ id: UUID, in model: BrowserModel) -> SidebarDragItem {
+                SidebarDragItem(kind: kind, id: id, workspace: model.workspaceID)
+            }
+            func refused(_ model: BrowserModel, _ item: SidebarDragItem, _ target: SidebarDropTarget) -> Bool {
+                let before = state(all)
+                return !model.canDrop(item, on: target) && !model.drop(item, on: target) && state(all) == before
+            }
+            func dropped(_ model: BrowserModel, _ item: SidebarDragItem, _ target: SidebarDropTarget) -> Bool {
+                model.canDrop(item, on: target) && model.drop(item, on: target)
+            }
+            let root = home.library.bookmarks.id
+            guard
+                case .folder(let reading) = home.library.bookmarks.children.first(where: {
+                    if case .folder = $0 { true } else { false }
+                })
+            else { return report(setupName, false) }
+
+            // Default: pin → pins, bookmark → bookmarks, as before.
+            let pins = home.pins
+            report(
+                "A pin reorders among the pins",
+                dropped(home, item(.pin, pins[0].id, in: home), .pins(index: 2))
+                    && home.pins.map(\.id) == [pins[1].id, pins[2].id, pins[0].id, pins[3].id])
+            let swift = home.library.links(on: .bookmarks)[0]
+            report(
+                "A bookmark moves into a folder",
+                dropped(home, item(.bookmark, swift.id, in: home), .bookmarks(folder: reading.id, index: 0))
+                    && folderLinks(home, reading.id).first == swift)
+
+            // Bookmark → pins and pin → bookmarks keep the link, its tab and its icon file.
+            let news = home.library.links(on: .bookmarks).first { $0.title == "Hacker News" }!
+            let newsTab = home.receive(url: news.url, title: news.title)
+            home.update(newsTab) { $0.link = news.id }
+            _ = try? homeIcons.write(icon.data, for: news.id)
+            report(
+                "A bookmark moves to the pins with its tab and icon",
+                dropped(home, item(.bookmark, news.id, in: home), .pins(index: 0)) && home.pins.first == news
+                    && !home.library.links(on: .bookmarks).contains(news) && home.tabs[newsTab]?.link == news.id
+                    && home.sidebar.pins.first?.tab?.id == newsTab && homeIcons.icon(for: news.id) == icon.data)
+            report(
+                "A pin moves to the bookmarks with its tab and icon",
+                dropped(home, item(.pin, news.id, in: home), .bookmarks(folder: root, index: nil))
+                    && home.library.bookmarks.children.last == .link(news) && !home.pins.contains(news)
+                    && home.tabs[newsTab]?.link == news.id && homeIcons.icon(for: news.id) == icon.data)
+
+            // A loose tab saved on a shelf becomes the link's tab, keeping its icon.
+            let saved = home.receive(url: url("saved"), title: "Saved")
+            home.setFavicon(icon.image, for: saved)
+            let pinned = dropped(home, item(.tab, saved, in: home), .pins(index: 1))
+            let pin = home.pins[1]
+            report(
+                "A loose tab dropped on the pins becomes the pin's tab",
+                pinned && pin.url == url("saved") && home.tabs[saved]?.link == pin.id && !loose(home).contains(saved)
+                    && homeIcons.icon(for: pin.id) != nil)
+            let marked = home.receive(url: url("marked"), title: "Marked")
+            let bookmarked = dropped(home, item(.tab, marked, in: home), .bookmarks(folder: reading.id, index: 1))
+            let mark = folderLinks(home, reading.id).dropFirst().first
+            report(
+                "A loose tab dropped on the bookmarks becomes the bookmark's tab",
+                bookmarked && mark?.url == url("marked") && home.tabs[marked]?.link == mark?.id)
+
+            // Loose tabs reorder; a link dropped among them goes, its tab or a new one landing at the place.
+            let first = home.receive(url: url("first"), title: "First")
+            let second = home.receive(url: url("second"), title: "Second")
+            let third = home.receive(url: url("third"), title: "Third")
+            let order = loose(home)
+            report(
+                "A loose tab moves before another",
+                dropped(home, item(.tab, third, in: home), .loose(before: first))
+                    && loose(home).filter { [first, second, third].contains($0) } == [third, first, second]
+                    && loose(home).count == order.count)
+            report(
+                "A loose tab moves after the last",
+                dropped(home, item(.tab, third, in: home), .loose(before: nil)) && loose(home).last == third)
+            report(
+                "A pin dropped among loose tabs goes, its tab landing at the place",
+                dropped(home, item(.pin, pin.id, in: home), .loose(before: second)) && !home.pins.contains(pin)
+                    && home.tabs[saved]?.link == nil
+                    && loose(home).firstIndex(of: saved) == loose(home).firstIndex(of: second).map { $0 - 1 }
+                    && homeIcons.icon(for: pin.id) == nil)
+            let shown = pane.selected?.id
+            let blog = home.library.links(on: .bookmarks).first { $0.title == "Swift Blog" }!
+            let tabsBefore = Set(home.tabs.tabs.map(\.id))
+            let blogMoved = dropped(home, item(.bookmark, blog.id, in: home), .loose(before: nil))
+            let opened = home.tabs.tabs.first { !tabsBefore.contains($0.id) }
+            report(
+                "A bookmark with no tab dropped among loose tabs opens one there, not selected",
+                blogMoved && !home.library.links(on: .bookmarks).contains(blog) && opened?.url == blog.url
+                    && opened?.link == nil && loose(home).last == opened?.id && pane.selected?.id == shown)
+
+            // Folders go only into bookmarks.
+            report(
+                "A folder moves among the bookmarks",
+                dropped(home, item(.folder, reading.id, in: home), .bookmarks(folder: root, index: 0))
+                    && home.library.bookmarks.children.first?.id == reading.id)
+            report(
+                "A folder dropped on the pins or loose tabs is refused",
+                refused(home, item(.folder, reading.id, in: home), .pins(index: 0))
+                    && refused(home, item(.folder, reading.id, in: home), .loose(before: nil)))
+            report(
+                "A folder into itself is refused",
+                refused(home, item(.folder, reading.id, in: home), .bookmarks(folder: reading.id, index: nil)))
+
+            // Refusals: another workspace's payload, unknown ids and places, a tab that is no loose tab, a URL there.
+            let foreign = SidebarDragItem(kind: .pin, id: home.pins[0].id, workspace: work.id)
+            report("A payload from another workspace is refused", refused(home, foreign, .pins(index: 0)))
+            report(
+                "Unknown ids are refused",
+                refused(home, item(.pin, UUID(), in: home), .pins(index: 0))
+                    && refused(home, item(.bookmark, UUID(), in: home), .pins(index: 0))
+                    && refused(home, item(.tab, UUID(), in: home), .loose(before: nil))
+                    && refused(home, item(.folder, UUID(), in: home), .bookmarks(folder: root, index: nil)))
+            report(
+                "Unknown targets are refused",
+                refused(home, item(.pin, home.pins[0].id, in: home), .bookmarks(folder: UUID(), index: nil))
+                    && refused(home, item(.tab, first, in: home), .loose(before: newsTab))
+                    && refused(home, item(.tab, first, in: home), .loose(before: TabID())))
+            report(
+                "A link's tab is no loose tab to drop",
+                refused(home, item(.tab, newsTab, in: home), .pins(index: 0))
+                    && refused(home, item(.tab, newsTab, in: home), .loose(before: nil)))
+            let again = home.receive(url: home.pins[0].url, title: "Again")
+            report(
+                "A loose tab on a pinned URL is refused on the pins",
+                refused(home, item(.tab, again, in: home), .pins(index: 0)))
+
+            // Another workspace: the pins are Default's.
+            guard let shared = home.pins.last, let kept = home.pins.first else { return report(setupName, false) }
+            _ = try? homeIcons.write(icon.data, for: shared.id)
+            let sharedTab = home.receive(url: shared.url, title: shared.title)
+            home.update(sharedTab) { $0.link = shared.id }
+            report(
+                "A shared pin reorders Default's pins",
+                dropped(other, item(.pin, kept.id, in: other), .pins(index: 1)) && home.pins[1] == kept)
+            let otherRoot = other.library.bookmarks.id
+            report(
+                "A shared pin dropped on the bookmarks becomes this workspace's bookmark with Default's icon",
+                dropped(other, item(.pin, shared.id, in: other), .bookmarks(folder: otherRoot, index: 0))
+                    && other.library.links(on: .bookmarks).first == shared && !home.pins.contains(shared)
+                    && !other.pins.contains(shared) && otherIcons.icon(for: shared.id) == icon.data
+                    && home.tabs[sharedTab]?.link == nil && loose(home).contains(sharedTab))
+            guard let leaving = home.pins.last else { return report(setupName, false) }
+            let otherTabs = Set(other.tabs.tabs.map(\.id))
+            let unpinned = dropped(other, item(.pin, leaving.id, in: other), .loose(before: nil))
+            let arrived = other.tabs.tabs.first { !otherTabs.contains($0.id) }
+            report(
+                "A shared pin dropped among loose tabs opens there and leaves Default's pins",
+                unpinned && !home.pins.contains(leaving) && arrived?.url == leaving.url
+                    && loose(other).last == arrived?.id)
+            let otherTab = other.receive(url: url("other"), title: "Other")
+            let otherMarked = dropped(other, item(.tab, otherTab, in: other), .bookmarks(folder: otherRoot, index: nil))
+            let otherMark = other.library.links(on: .bookmarks).last
+            report(
+                "A loose tab dropped on the bookmarks elsewhere becomes the bookmark's tab",
+                otherMarked && otherMark?.url == url("other") && other.tabs[otherTab]?.link == otherMark?.id)
+            if let otherMark { _ = try? otherIcons.write(icon.data, for: otherMark.id) }
+            report(
+                "A bookmark dropped on shared pins pins a copy in Default with its icon and leaves its tab loose",
+                dropped(other, item(.bookmark, otherMark!.id, in: other), .pins(index: 0))
+                    && home.pins.first?.url == url("other") && home.pins.first?.id != otherMark?.id
+                    && home.pins.first.flatMap { homeIcons.icon(for: $0.id) } == icon.data
+                    && !other.library.links(on: .bookmarks).contains { $0.id == otherMark?.id }
+                    && other.tabs[otherTab]?.link == nil && loose(other).contains(otherTab))
+            let copied = other.receive(url: url("copied"), title: "Copied")
+            other.setFavicon(icon.image, for: copied)
+            report(
+                "A loose tab dropped on shared pins pins a copy in Default with its icon, the tab staying loose",
+                dropped(other, item(.tab, copied, in: other), .pins(index: 1)) && home.pins[1].url == url("copied")
+                    && homeIcons.icon(for: home.pins[1].id) != nil
+                    && other.tabs[copied]?.link == nil && loose(other).contains(copied))
+            report(
+                "A URL already pinned in Default is refused on the shared pins",
+                refused(other, item(.tab, copied, in: other), .pins(index: 0)))
+            report(
+                "Default's pin dragged from this workspace's sidebar is refused in Default",
+                refused(home, item(.pin, home.pins[0].id, in: other), .loose(before: nil)))
+
+            // Anonymous: the same rules, its pins Default's, its bookmark keeping the icon itself.
+            guard let anonymousPin = home.pins.last else { return report(setupName, false) }
+            _ = try? homeIcons.write(icon.data, for: anonymousPin.id)
+            report(
+                "In Anonymous a shared pin becomes a bookmark keeping Default's icon",
+                dropped(
+                    anonymous, item(.pin, anonymousPin.id, in: anonymous),
+                    .bookmarks(folder: anonymous.library.bookmarks.id, index: nil))
+                    && anonymous.library.links(on: .bookmarks).last?.id == anonymousPin.id
+                    && anonymous.library.links(on: .bookmarks).last?.icon == icon.data
+                    && !home.pins.contains(anonymousPin))
+            let privateTab = anonymous.receive(url: url("private"), title: "Private")
+            anonymous.setFavicon(icon.image, for: privateTab)
+            report(
+                "In Anonymous a loose tab dropped on the pins pins a copy in Default with its icon",
+                dropped(anonymous, item(.tab, privateTab, in: anonymous), .pins(index: 0))
+                    && home.pins.first?.url == url("private")
+                    && home.pins.first.flatMap { homeIcons.icon(for: $0.id) } != nil
+                    && anonymous.tabs[privateTab]?.link == nil)
+            let one = anonymous.receive(url: url("one"), title: "One")
+            let two = anonymous.receive(url: url("two"), title: "Two")
+            report(
+                "In Anonymous loose tabs reorder",
+                dropped(anonymous, item(.tab, two, in: anonymous), .loose(before: one))
+                    && loose(anonymous).filter { [one, two].contains($0) } == [two, one])
+            let anonymousRoot = anonymous.library.bookmarks.id
+            report(
+                "In Anonymous the root folder moves nowhere",
+                refused(anonymous, item(.folder, anonymousRoot, in: anonymous), .pins(index: 0))
+                    && refused(
+                        anonymous, item(.folder, anonymousRoot, in: anonymous),
+                        .bookmarks(folder: anonymousRoot, index: nil)))
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
         }
 
         /// Places on disk (#26), in a temporary app directory: a tab that never sent a form rests with WebKit's state on
