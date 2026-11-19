@@ -82,7 +82,8 @@ the tab. The protection is on everywhere until you switch it off for a site on `
 | Not covered | `createImageBitmap` read back through WebGL, `getBufferSubData` and `captureStream`                   |
 | Not covered | Methods a page took from a frame before Lodge reached it                                              |
 | Not yet     | Navigator, screen and font fingerprints, for a later milestone                                        |
-| Not done    | Changing the User-Agent, a proxy or VPN per workspace, blocking trackers                              |
+| Not covered | The User-Agent, which names your installed Safari and is the same in every workspace                  |
+| Not done    | A User-Agent, proxy or VPN per workspace, blocking trackers                                           |
 | Not done    | Picking or resetting a workspace's fingerprint by hand                                                |
 
 ## Credential limits

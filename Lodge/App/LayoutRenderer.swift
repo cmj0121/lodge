@@ -58,6 +58,7 @@
             checkFingerprint()
             checkAuth()
             checkPlainHTTP()
+            checkUserAgent()
             renderSettings(in: directory)
             renderProtection(in: directory)
             renderAuth(in: directory)
@@ -2281,6 +2282,68 @@
             report(
                 "the warning page follows the window's look, Anonymous included",
                 (grounds["light"] ?? 0) > 0.8 && (grounds["dark"] ?? 1) < 0.3 && (grounds["anonymous"] ?? 1) < 0.3)
+        }
+
+        /// The Safari-family User-Agent (D1), printed ok or FAILED for each: a Default tab's page, an Anonymous tab's
+        /// and a popup the page opens all report a `navigator.userAgent` ending in `Version/<n> Safari/605.1.15`. Where
+        /// `<n>` came from is printed; falling back while `/Applications/Safari.app` exists fails. Pages are inline HTML
+        /// and `about:blank`, so no request goes out.
+        private static func checkUserAgent() {
+            func report(_ name: String, _ passed: Bool) { print("User-Agent: \(name): \(passed ? "ok" : "FAILED")") }
+            func settle(_ seconds: Double = 0.05) { RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds)) }
+            let expected = WebViewRegistry.userAgentApplicationName
+            let installed = WebViewRegistry.installedSafariVersion
+            let fromSafari = installed.map { expected == "Version/\($0) Safari/605.1.15" } ?? false
+            let source =
+                fromSafari ? "from Safari's bundle, \(installed ?? "")" : "fallback, \(SafariUserAgent.fallbackVersion)"
+            print("User-Agent: version \(source)")
+            report(
+                "the version is the installed Safari's when Safari is there",
+                fromSafari || !FileManager.default.fileExists(atPath: "/Applications/Safari.app"))
+            func userAgent(of view: WKWebView) -> String? {
+                var answer: String?
+                var done = false
+                view.evaluateJavaScript("navigator.userAgent") { value, _ in
+                    answer = value as? String
+                    done = true
+                }
+                let deadline = Date.now.addingTimeInterval(5)
+                while !done, Date.now < deadline { settle() }
+                return answer
+            }
+            func endsRight(_ agent: String?) -> Bool {
+                agent?.wholeMatch(of: /Mozilla\/5\.0 .* Version\/[0-9]+(\.[0-9]+)* Safari\/605\.1\.15/) != nil
+                    && agent?.hasSuffix(expected) == true
+            }
+            for anonymous in [false, true] {
+                let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+                coordinator.bringForwardHook = { _ in }
+                if anonymous { coordinator.switchTo(Workspace.anonymousID) }
+                let window = coordinator.windows[0]
+                window.locationPrompt = nil
+                let hostWindow = host(root(coordinator, window), size: NSSize(width: 900, height: 600))
+                defer { hostWindow.close() }
+                let pane = coordinator.pane(for: window)
+                let model = pane.model
+                let name = anonymous ? "an Anonymous tab" : "a Default tab"
+                let tab = BrowserTab(store: model.newTabStore(), url: nil)
+                model.append(tab, load: false)
+                guard let view = model.view(for: tab.id, load: false) else { return report("\(name)'s page", false) }
+                view.loadHTMLString("<!doctype html><title>agent</title><body>x</body>", baseURL: nil)
+                let deadline = Date.now.addingTimeInterval(5)
+                while view.title != "agent" || view.isLoading, Date.now < deadline { settle() }
+                report("\(name)'s page", endsRight(userAgent(of: view)))
+                let before = Set(model.tabs.tabs.map(\.id))
+                view.evaluateJavaScript("window.open('about:blank')")
+                let opened = Date.now.addingTimeInterval(5)
+                var popup: WKWebView?
+                while popup == nil, Date.now < opened {
+                    settle()
+                    popup = model.tabs.tabs.map(\.id).first { !before.contains($0) }.flatMap(model.registry.webView(for:))
+                }
+                report("a popup from \(name)", popup.map { endsRight(userAgent(of: $0)) } ?? false)
+                for id in model.tabs.tabs.map(\.id) { model.registry.detach(tab: id) }
+            }
         }
 
         /// An off-screen window hosting `view`, never shown; it is not freed on closing, so closing it is safe.

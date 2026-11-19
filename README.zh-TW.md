@@ -80,7 +80,8 @@
 | 不涵蓋      | 經 WebGL 讀回的 `createImageBitmap`、`getBufferSubData` 與 `captureStream`                |
 | 不涵蓋      | 網頁在 Lodge 接手前就從 frame 取走的方法                                                  |
 | 尚未涵蓋    | navigator、螢幕與字型的 fingerprint，留待之後的里程碑                                     |
-| 不做        | 更改 User-Agent、每個 workspace 各自的 proxy 或 VPN、阻擋追蹤器                           |
+| 不涵蓋      | User-Agent：標示你安裝的 Safari 版本，每個 workspace 都相同                               |
+| 不做        | 每個 workspace 各自的 User-Agent、proxy 或 VPN，阻擋追蹤器                                |
 | 不做        | 手動挑選或重設 workspace 的 fingerprint                                                   |
 
 ## Credential 的限制
