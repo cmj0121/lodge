@@ -60,7 +60,7 @@
 | 選取建議             | ↑/↓ 在清單中移動，Return 開啟選取的項目，Esc 關閉清單                                   |
 | 自動補完             | 欄位直接補上第一個建議；按 → 接受，刪除則捨棄補上的部分                                 |
 | 預設瀏覽器           | 在「設定」tab 的「一般」設為預設；其他 app 的連結以新的 Default tab 開啟                |
-| Credential           | 密碼和 passkey 來自 OS 的 credential store，在每個 workspace 都能使用                   |
+| Credential           | 網站要求使用者名稱與密碼時會跳出 sheet 詢問；目前還不會儲存或自動填入                   |
 | 英文與繁體中文       | 跟隨 macOS，或 Language & Region › Applications 裡 Lodge 的設定；workspace 名稱維持英文 |
 | 三個平台             | Mac、iPhone、iPad 共用同一套規則，各自用最適合的方式操作                                |
 | 清楚的承諾           | 每個 workspace 的網站資料與登入各自分開，Lodge 就照這樣說明                             |
@@ -83,15 +83,35 @@
 | 不做        | 更改 User-Agent、每個 workspace 各自的 proxy 或 VPN、阻擋追蹤器                           |
 | 不做        | 手動挑選或重設 workspace 的 fingerprint                                                   |
 
+## Credential 的限制
+
+網站要求使用者名稱與密碼時，Lodge 會詢問你，答案只保留到這次 Lodge 結束。自我檢查會確認答案只留在輸入它的 workspace。
+
+| Credential | 說明                                                                                                    |
+| ---------- | ------------------------------------------------------------------------------------------------------- |
+| 詢問       | 網站的 HTTP 登入要求（Basic、Digest、NTLM）會在發出要求的 tab 跳出 sheet                                |
+| 詢問       | 按「取消」顯示網站自己的頁面                                                                            |
+| 警告       | 在未加密的 `http` 網頁使用 Basic 登入時，sheet 會警告答案將以未加密方式送出                             |
+| 警告       | 未加密的 `http` 網頁會先顯示警告，什麼都不送出；「返回」留在原頁，「繼續」才載入                        |
+| 保留       | `http` 網站按「繼續」後保留到 Lodge 結束，只在該 workspace；Anonymous 只在該 tab 與它的 popup，直到關閉 |
+| 不警告     | 這台電腦上的網頁（`localhost`、`127.x.x.x`、`::1`），以及 `http` 的圖片或 frame                         |
+| 不做       | 把 `http` 網址先改用 `https` 嘗試                                                                       |
+| 保留       | 保留到 Lodge 結束，只在該 workspace；Anonymous tab 的答案只在該 tab 與它的 popup                        |
+| 不做       | 登出；要忘掉答案，請結束 Lodge 或關閉 Anonymous tab 與它的 popup                                        |
+| 不顯示     | 來自其他網站的圖片或 frame 的登入要求                                                                   |
+| 尚未支援   | passkey，要等 Apple 的瀏覽器 entitlement                                                                |
+| 尚未支援   | 儲存與自動填入密碼；之後儲存的密碼會是 Lodge 自己的，存在系統 keychain                                  |
+| 無法做到   | iCloud Keychain 的密碼，Apple 不讓第三方瀏覽器取用                                                      |
+
 ## 為什麼不用現有的瀏覽器
 
-| 能力                            | Lodge | Chrome / Edge | Firefox            | Safari      | Arc      |
-| ------------------------------- | ----- | ------------- | ------------------ | ----------- | -------- |
-| 一個視窗裡多個瀏覽器            | ✅    | ⚠️ profiles   | ⚠️ 只有 containers | ⚠️ profiles | ✅       |
-| 每個 workspace 都有 Default pin | ✅    | ❌            | ❌                 | ❌          | ❌       |
-| 整個 workspace 一起 hibernate   | ✅    | 只有 tab      | 只有 tab           | 只有 tab    | 只有 tab |
-| iOS / iPadOS 同一套模型         | ✅    | ⚠️            | ❌                 | ✅          | ⚠️       |
-| 系統層 credential               | ✅    | ⚠️            | ❌                 | ✅          | ❌       |
+| 能力                            | Lodge   | Chrome / Edge | Firefox            | Safari      | Arc      |
+| ------------------------------- | ------- | ------------- | ------------------ | ----------- | -------- |
+| 一個視窗裡多個瀏覽器            | ✅      | ⚠️ profiles   | ⚠️ 只有 containers | ⚠️ profiles | ✅       |
+| 每個 workspace 都有 Default pin | ✅      | ❌            | ❌                 | ❌          | ❌       |
+| 整個 workspace 一起 hibernate   | ✅      | 只有 tab      | 只有 tab           | 只有 tab    | 只有 tab |
+| iOS / iPadOS 同一套模型         | ✅      | ⚠️            | ❌                 | ✅          | ⚠️       |
+| 系統層 credential               | ⚠️ 尚未 | ⚠️            | ❌                 | ✅          | ❌       |
 
 Lodge 以 WebKit 為底，passkey、service worker 和 extension 隨 Apple 對瀏覽器開放的能力而定。
 
