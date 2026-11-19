@@ -56,8 +56,10 @@
             checkReleasedViewGoes()
             checkPlaces()
             checkFingerprint()
+            checkAuth()
             renderSettings(in: directory)
             renderProtection(in: directory)
+            renderAuth(in: directory)
             renderHistory(in: directory)
             renderDownloads(in: directory)
             print(directory.path(percentEncoded: false))
@@ -2163,6 +2165,72 @@
             snapshot(
                 root(coordinator).defaultAppStorage(defaults), size: size, appearance: NSAppearance(named: .darkAqua),
                 to: directory.appending(path: "layout-protection-anonymous.png"))
+        }
+
+        /// The sign-in sheet over the window of the tab that asked, in light and dark: a second try at a plain-http site
+        /// with a realm and a name to prefill, so every line the sheet can show is there. No page loads; the sheet is
+        /// laid out on its own and drawn where it would hang under the title bar.
+        private static func renderAuth(in directory: URL) {
+            let suiteName = "dev.lodge.selfcheck.\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            defaults.set(SidebarMode.expanded.rawValue, forKey: SidebarMode.defaultsKey)
+            let size = NSSize(width: 1100, height: 700)
+            let host = "intranet.example"
+            let space = URLProtectionSpace(
+                host: host, port: 80, protocol: NSURLProtectionSpaceHTTP, realm: "Team wiki",
+                authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
+            guard
+                let prompt = AuthPrompt(
+                    space: space, previousFailureCount: 1, proposedUser: "alex", pageSite: nil, navigationHost: host)
+            else { return }
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                let name = appearance == .aqua ? "light" : "dark"
+                let coordinator = WorkspaceCoordinator(
+                    restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample)
+                coordinator.bringForwardHook = { _ in }
+                coordinator.windows[0].locationPrompt = nil
+                let model = firstPane(coordinator).model
+                let tab = BrowserTab(store: model.newTabStore(), url: URL(string: "http://\(host)/wiki/"), title: "Team wiki")
+                model.append(tab, load: false)
+                coordinator.opened(tab.id, in: model, window: coordinator.windows[0])
+                let look = NSAppearance(named: appearance)
+                let (alert, _, _) = TabController.signInAlert(for: prompt)
+                alert.window.appearance = look
+                alert.layout()
+                guard
+                    let behind = image(root(coordinator).defaultAppStorage(defaults), size: size, appearance: look),
+                    let panel = alert.window.contentView,
+                    let sheet = panel.bitmapImageRepForCachingDisplay(in: panel.bounds),
+                    let picture = NSBitmapImageRep(
+                        bitmapDataPlanes: nil, pixelsWide: behind.pixelsWide, pixelsHigh: behind.pixelsHigh,
+                        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+                else { continue }
+                panel.cacheDisplay(in: panel.bounds, to: sheet)
+                picture.size = size
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: picture)
+                behind.draw(in: NSRect(origin: .zero, size: size))
+                let frame = NSRect(
+                    x: (size.width - panel.bounds.width) / 2, y: size.height - 28 - panel.bounds.height,
+                    width: panel.bounds.width, height: panel.bounds.height)
+                var ground = NSColor.windowBackgroundColor.cgColor
+                var edge = NSColor.separatorColor.cgColor
+                alert.window.effectiveAppearance.performAsCurrentDrawingAppearance {
+                    ground = NSColor.windowBackgroundColor.cgColor
+                    edge = NSColor.separatorColor.cgColor
+                }
+                let outline = NSBezierPath(roundedRect: frame, xRadius: 10, yRadius: 10)
+                NSColor(cgColor: ground)?.setFill()
+                outline.fill()
+                NSColor(cgColor: edge)?.setStroke()
+                outline.stroke()
+                sheet.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+                NSGraphicsContext.restoreGraphicsState()
+                try? picture.representation(using: .png, properties: [:])?
+                    .write(to: directory.appending(path: "layout-auth-\(name).png"))
+            }
         }
 
         /// An off-screen window hosting `view`, never shown; it is not freed on closing, so closing it is safe.

@@ -56,6 +56,8 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         static var lodgeRefusals = 0
         /// Layout self-checks: answers a sign-in challenge where its sheet would be shown, nil meaning Cancel.
         static var selfCheckAnswer: ((AuthPrompt) -> (user: String, password: String)?)?
+        /// Layout self-checks: how many sign-in challenges every tab has answered or cancelled.
+        static var selfCheckResumes = 0
     #endif
 
     /// Installs the view's scripts seeded for `topSite`, the site its first document is expected at (D7).
@@ -243,7 +245,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             signIn = nil
             challenges = []
         }
-        for challenge in waiting { challenge.continuation.resume(returning: (.cancelAuthenticationChallenge, nil)) }
+        for challenge in waiting { resume(challenge, with: (.cancelAuthenticationChallenge, nil)) }
         if isOnScreen { dismissSheet?() }
     }
 
@@ -280,7 +282,11 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         }
         #if DEBUG
             if let selfCheckAnswer = Self.selfCheckAnswer {
-                answer(item, with: selfCheckAnswer(item.prompt))
+                let credentials = selfCheckAnswer(item.prompt)
+                // The answer stands in for the sheet: a tab switched away from meanwhile waits again, as a sheet
+                // ended by `didDeselect()` does.
+                guard signIn?.id == item.id else { return }
+                if model?.placement?.isShown(tab) == true { answer(item, with: credentials) } else { requeue(item) }
                 pumpChallenges()
                 return
             }
@@ -321,11 +327,20 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             signIn = nil
             challenges.removeAll { $0.challenge.protectionSpace == space }
         }
-        for challenge in [item] + sameSpace { challenge.continuation.resume(returning: reply) }
+        for challenge in [item] + sameSpace { resume(challenge, with: reply) }
+    }
+
+    private func resume(
+        _ challenge: Challenge, with reply: (URLSession.AuthChallengeDisposition, URLCredential?)
+    ) {
+        #if DEBUG
+            Self.selfCheckResumes += 1
+        #endif
+        challenge.continuation.resume(returning: reply)
     }
 
     /// The sign-in alert for `prompt`, with its name and password fields.
-    private static func signInAlert(for prompt: AuthPrompt) -> (NSAlert, NSTextField, NSSecureTextField) {
+    static func signInAlert(for prompt: AuthPrompt) -> (NSAlert, NSTextField, NSSecureTextField) {
         let alert = NSAlert()
         alert.messageText = String(localized: "Sign in to \(prompt.host)")
         var lines: [String] = []
