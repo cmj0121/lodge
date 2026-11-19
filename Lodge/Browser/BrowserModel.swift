@@ -39,6 +39,12 @@ final class BrowserModel {
     /// What each protection page tab was opened for from the indicator (D5), by that page's tab, in memory only, so
     /// absent after relaunch; gone with the page's tab, and when the page is reached any other way.
     private var protectionTargets: [TabID: ProtectionTarget] = [:]
+    /// The plain-http page each tab's main frame was about to load when it was stopped for the warning (D8), shown in
+    /// place of the page until Go Back, Continue or another main-frame load; gone with the tab or its view.
+    private(set) var plainHTTPWarnings: [TabID: URL] = [:]
+    /// Tabs whose warned load was a back/forward one, so Continue goes to that history entry rather than loading
+    /// afresh.
+    @ObservationIgnored private var plainHTTPBackForward: Set<TabID> = []
     /// Bumped on every exception change, so views reading exceptions, which live outside the model, redraw.
     private(set) var fingerprintExceptionsRevision = 0
 
@@ -311,7 +317,10 @@ final class BrowserModel {
     /// Destroys the tab's web view; the tab keeps its URL and title, and its page's interaction state waits in
     /// memory for the view to be rebuilt, and on disk (`places`) for a relaunch.
     private func release(_ id: TabID) {
-        guard let tab = tabs[id], registry.webView(for: id) != nil else { return }
+        guard registry.webView(for: id) != nil else { return }
+        // A resting tab comes back on the page it showed, as after Go Back, and keeps that page's place.
+        goBackFromPlainHTTP(id)
+        guard let tab = tabs[id] else { return }
         controllers[id]?.didDeselect()
         controllers[id]?.cancelChallenges()
         controllers[id] = nil
@@ -557,6 +566,7 @@ final class BrowserModel {
             tab: id, webView: view, model: self, faviconSession: registry.faviconSession(for: tab.store),
             topSite: configuration == nil ? FingerprintSite.of(tab.url, inheriting: nil) : topSite)
         controllers[id] = controller
+        if load { controller.wakeURL = tab.url }
         if load, let saved {
             controller.browserWillLoad()
             controller.expectsRestoreCommit = true
@@ -664,6 +674,8 @@ final class BrowserModel {
             rest.forget(id)
             forgetBeforeUnload(id)
             if protectionTargets[id] != nil { protectionTargets[id] = nil }
+            if plainHTTPWarnings[id] != nil { plainHTTPWarnings[id] = nil }
+            plainHTTPBackForward.remove(id)
             popupOpeners = popupOpeners.filter { $0.value != id }
             historyRecorder?.send(.closed(tab: id))
             if loadProgress[id] != nil { loadProgress[id] = nil }
@@ -911,6 +923,76 @@ final class BrowserModel {
     func stopLoading(_ id: TabID) {
         registry.webView(for: id)?.stopLoading()
         controllers[id]?.didStop()
+    }
+
+    // MARK: Plain http
+
+    #if DEBUG
+        /// Layout self-checks: loopback hosts are warned about too, so a check can show the warning with a local
+        /// server.
+        static var selfCheckWarnsLoopback = false
+    #endif
+
+    /// Whether the tab's main frame loading `url` is stopped for the warning (D8): plain http to a host the tab's store
+    /// has not allowed, not on this computer.
+    func warnsPlainHTTP(_ url: URL, in id: TabID) -> Bool {
+        guard let store = tabs[id]?.store else { return false }
+        var exemptsLoopback = true
+        #if DEBUG
+            exemptsLoopback = !Self.selfCheckWarnsLoopback
+        #endif
+        return PlainHTTP.warns(url, allowed: registry.plainHTTPHosts(for: store), exemptsLoopback: exemptsLoopback)
+    }
+
+    /// The tab's main-frame load of `url` was stopped for the warning: it shows in place of the page, the address
+    /// field shows `url` and the security indicator says it is not secure. `backForward`: the load was a back/forward
+    /// one. A later warning replaces it.
+    func showPlainHTTPWarning(_ url: URL, for id: TabID, backForward: Bool = false) {
+        guard tabs[id] != nil else { return }
+        if backForward { plainHTTPBackForward.insert(id) } else { plainHTTPBackForward.remove(id) }
+        if plainHTTPWarnings[id] != url { plainHTTPWarnings[id] = url }
+        update(id) { $0.url = url }
+        setSecurity(SiteSecurity(url: url, hasOnlySecureContent: false), for: id)
+    }
+
+    /// Go Back: the warning goes and the tab shows its page as it was, its address and security again the view's; a
+    /// view that never showed a page keeps the address it was woken at (blank page, Reload loads it), and a new tab
+    /// is blank again.
+    func goBackFromPlainHTTP(_ id: TabID) {
+        guard plainHTTPWarnings[id] != nil else { return }
+        plainHTTPWarnings[id] = nil
+        plainHTTPBackForward.remove(id)
+        if let controller = controllers[id] {
+            controller.showCurrentPage()
+        } else {
+            update(id) { $0.url = nil }
+        }
+    }
+
+    /// Another main-frame load the tab let through ends its warning: the address shows where it goes.
+    func endPlainHTTPWarning(_ id: TabID, loading url: URL?) {
+        guard plainHTTPWarnings[id] != nil else { return }
+        goBackFromPlainHTTP(id)
+        if let url, !LodgePage.isLodge(url) { update(id) { $0.url = url } }
+    }
+
+    /// Continue: the warned page's host is allowed for the tab's store, until Lodge quits (an anonymous tab's, until
+    /// its store goes), and the page loads: a back/forward load goes to the nearest history entry at its URL while the
+    /// view still has one, any other loads the URL afresh.
+    func continueToPlainHTTP(_ id: TabID) {
+        guard let url = plainHTTPWarnings.removeValue(forKey: id), let tab = tabs[id] else { return }
+        let backForward = plainHTTPBackForward.remove(id) != nil
+        if let host = PlainHTTP.host(of: url) { registry.allowPlainHTTP(host, for: tab.store) }
+        if backForward, let view = registry.webView(for: id),
+            let item = (view.backForwardList.backList.reversed() + view.backForwardList.forwardList).first(where: {
+                $0.url == url
+            })
+        {
+            update(id) { $0.url = url }
+            view.go(to: item)
+        } else {
+            _ = load(url, in: id)
+        }
     }
 
     /// Stores the tab's zoom (dropping the entry at actual size) and applies it to its web view.

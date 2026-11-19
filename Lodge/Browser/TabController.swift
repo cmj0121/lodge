@@ -39,6 +39,8 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         let id = UUID()
         let challenge: URLAuthenticationChallenge
         let prompt: AuthPrompt
+        /// It came while the main frame's navigation was provisional, from that navigation's origin.
+        let isForNavigation: Bool
         let continuation: CheckedContinuation<(URLSession.AuthChallengeDisposition, URLCredential?), Never>
     }
     /// Sign-in challenges waiting for their sheet, first come first: only the head is ever shown (D1).
@@ -47,8 +49,17 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var signIn: Challenge?
     /// The tab is going: every challenge has been answered with a cancel, and any later one is too.
     private var isTornDown = false
-    /// The host the main frame is loading or showing; a challenge from it prompts even on another site (D3).
-    private var navigationHost: String?
+    /// The origin the main frame is loading or showing, as provisional start, server redirect and commit report it;
+    /// a challenge from it prompts even on another site (D3).
+    private var navigationOrigin: Origin?
+    /// The main frame's navigation has started and neither committed nor ended: a challenge from `navigationOrigin`
+    /// is for it, not for the committed page.
+    private var isNavigating = false
+    /// The user cancelled a sheet since the last commit: challenges not for the main frame's navigation are rejected
+    /// with no sheet until the next one.
+    private var refusesOtherChallenges = false
+    /// At most this many challenges wait behind the sheet; more are rejected.
+    private static let challengeLimit = 8
     /// The registrable domain of the committed page; a challenge from another site gets no sheet (D3).
     private var pageSite: String?
     #if DEBUG
@@ -58,6 +69,9 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         static var selfCheckAnswer: ((AuthPrompt) -> (user: String, password: String)?)?
         /// Layout self-checks: how many sign-in challenges every tab has answered or cancelled.
         static var selfCheckResumes = 0
+        /// Layout self-checks: how many prompting challenges every tab has rejected with no sheet, after a Cancel or
+        /// with the queue full.
+        static var selfCheckRefusals = 0
     #endif
 
     /// Installs the view's scripts seeded for `topSite`, the site its first document is expected at (D7).
@@ -84,7 +98,9 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             webView.observe(\.url, options: .initial) { [weak self] view, _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    if let url = view.url, !LodgePage.isLodge(url) { self.model?.update(self.tab) { $0.url = url } }
+                    if let url = view.url, !LodgePage.isLodge(url), !self.isWarningPlainHTTP {
+                        self.model?.update(self.tab) { $0.url = url }
+                    }
                     self.updateSecurity(of: view)
                     self.sendHistory(
                         self.history.urlChanged(
@@ -127,9 +143,27 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         }
     }
 
-    /// Reclassifies the page's security from the view's current URL and content.
+    /// Reclassifies the page's security from the view's current URL and content; the plain-http warning keeps its own.
     private func updateSecurity(of view: WKWebView) {
+        guard !isWarningPlainHTTP else { return }
         model?.setSecurity(SiteSecurity(url: view.url, hasOnlySecureContent: view.hasOnlySecureContent), for: tab)
+    }
+
+    /// The tab shows the plain-http warning (D8): the address and security are the warned page's, not the view's.
+    private var isWarningPlainHTTP: Bool { model?.plainHTTPWarnings[tab] != nil }
+
+    /// The main frame has committed a document since the view was made, so `webView.url` is a page it shows.
+    private var hasCommitted = false
+    /// The address the view was built to load (a restored, resting or new tab with an address); nil for a blank tab.
+    var wakeURL: URL?
+
+    /// The warning has gone (Go Back): the address and security are the view's page again; a view that never showed
+    /// one keeps the address it was woken at, a blank tab none.
+    func showCurrentPage() {
+        guard let webView else { return }
+        let url = hasCommitted ? webView.url : wakeURL
+        if url.map(LodgePage.isLodge) != true { model?.update(tab) { $0.url = url } }
+        updateSecurity(of: webView)
     }
 
     /// The tab's store; nil once the tab is gone.
@@ -253,7 +287,8 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// main frame's target is the committed page again.
     func didStop() {
         cancelQueuedChallenges()
-        navigationHost = webView?.url?.host()
+        navigationOrigin = webView?.url.map(Origin.init(url:))
+        isNavigating = false
     }
 
     /// Runs `change` on the challenges, telling the model when whether one holds the tab changes.
@@ -315,7 +350,8 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     /// Answers the challenge on screen: a name and password are used for this session, and for every queued
     /// challenge of the same protection space; nil (Cancel) rejects the space for them all, so the server's own page
-    /// shows. Challenges arriving later still prompt.
+    /// shows, and rejects every queued challenge not for the main frame's navigation, as it does those arriving
+    /// before the next commit.
     private func answer(_ item: Challenge, with credentials: (user: String, password: String)?) {
         let reply: (URLSession.AuthChallengeDisposition, URLCredential?) =
             credentials.map {
@@ -323,11 +359,16 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             } ?? (.rejectProtectionSpace, nil)
         let space = item.challenge.protectionSpace
         let sameSpace = challenges.filter { $0.challenge.protectionSpace == space }
+        let refused =
+            credentials == nil
+            ? challenges.filter { $0.challenge.protectionSpace != space && !$0.isForNavigation } : []
+        if credentials == nil { refusesOtherChallenges = true }
         changeChallenges {
             signIn = nil
             challenges.removeAll { $0.challenge.protectionSpace == space }
+            challenges.removeAll { refused.map(\.id).contains($0.id) }
         }
-        for challenge in [item] + sameSpace { resume(challenge, with: reply) }
+        for challenge in [item] + sameSpace + refused { resume(challenge, with: reply) }
     }
 
     private func resume(
@@ -339,16 +380,17 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         challenge.continuation.resume(returning: reply)
     }
 
-    /// The sign-in alert for `prompt`, with its name and password fields.
+    /// The sign-in alert for `prompt`, with its name and password fields: the title names the site, the body the
+    /// whole host.
     static func signInAlert(for prompt: AuthPrompt) -> (NSAlert, NSTextField, NSSecureTextField) {
         let alert = NSAlert()
-        alert.messageText = String(localized: "Sign in to \(prompt.host)")
+        alert.messageText = String(localized: "Sign in to \(prompt.site)")
         var lines: [String] = []
         if prompt.failed { lines.append(String(localized: "The name or password was wrong.")) }
         if let realm = prompt.realm {
-            lines.append(String(localized: "The site asks for a name and password for “\(realm)”."))
+            lines.append(String(localized: "\(prompt.shownHost) asks for a name and password for “\(realm)”."))
         } else {
-            lines.append(String(localized: "The site asks for a name and password."))
+            lines.append(String(localized: "\(prompt.shownHost) asks for a name and password."))
         }
         if prompt.isPlainHTTP { lines.append(String(localized: "The name and password are sent without encryption.")) }
         alert.informativeText = lines.joined(separator: "\n\n")
@@ -393,10 +435,23 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         {
             model?.didSendForm(tab)
         }
-        if navigationAction.shouldPerformDownload { return (.download, preferences) }
-        if navigationAction.navigationType == .linkActivated, navigationAction.modifierFlags.contains(.command),
-            let url = navigationAction.request.url, NewTabPolicy.allows(url)
+        let opensNewTab =
+            navigationAction.navigationType == .linkActivated && navigationAction.modifierFlags.contains(.command)
+            && navigationAction.request.url.map(NewTabPolicy.allows) == true
+        // A plain-http page in this view's own main frame, however it was reached and a download link's included, waits
+        // for the warning (D8); a load aimed at a new window has no target frame and is decided in the popup's own
+        // view, as is a Cmd-click in its new tab.
+        if !opensNewTab, navigationAction.targetFrame?.isMainFrame == true, let url = navigationAction.request.url,
+            let model
         {
+            if model.warnsPlainHTTP(url, in: tab) {
+                warnPlainHTTP(url, in: webView, backForward: navigationAction.navigationType == .backForward)
+                return (.cancel, preferences)
+            }
+            model.endPlainHTTPWarning(tab, loading: url)
+        }
+        if navigationAction.shouldPerformDownload { return (.download, preferences) }
+        if opensNewTab, let url = navigationAction.request.url {
             model?.open(url: url, from: tab)
             return (.cancel, preferences)
         }
@@ -407,7 +462,6 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             setFormPostLoading(true)
         }
         if isMainFrame, navigationAction.navigationType == .backForward { model?.resetFingerprintReads(tab) }
-        if navigationAction.targetFrame?.isMainFrame == true { navigationHost = navigationAction.request.url?.host() }
         return (.allow, preferences)
     }
 
@@ -429,6 +483,21 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             commitsNewDocument = true
         }
         return .allow
+    }
+
+    /// Stops for the warning: nothing reaches the server. A restore that was to commit no longer will. The keys leave
+    /// the hidden page, so typing does not go on in it behind the warning. A load stopped at a server redirect fails
+    /// its provisional navigation, which puts the sign-in state back on the committed page; one stopped before it
+    /// started leaves that state as it was.
+    /// A back/forward load is marked so, for Continue to go to its history entry.
+    private func warnPlainHTTP(_ url: URL, in webView: WKWebView, backForward: Bool) {
+        expectsRestoreCommit = false
+        model?.showPlainHTTPWarning(url, for: tab, backForward: backForward)
+        if let window = webView.window, let responder = window.firstResponder as? NSView,
+            responder.isDescendant(of: webView)
+        {
+            window.makeFirstResponder(nil)
+        }
     }
 
     /// A link click (an `<a download>` included) or a form submission counts as user-initiated: WebKit has no public
@@ -474,20 +543,24 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         cancelQueuedChallenges()
-        navigationHost = webView.url?.host()
+        navigationOrigin = webView.url.map(Origin.init(url:))
+        isNavigating = true
         model?.update(tab) { $0.hasCrashed = false }
     }
 
     func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
-        navigationHost = webView.url?.host()
+        navigationOrigin = webView.url.map(Origin.init(url:))
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         let isRestore = (navigation != nil && navigation === restoreNavigation) || expectsRestoreCommit
         if isRestore { restoreNavigation = nil }
         expectsRestoreCommit = false
+        hasCommitted = true
         pageSite = webView.url.flatMap(RegistrableDomain.of)
-        navigationHost = webView.url?.host()
+        navigationOrigin = webView.url.map(Origin.init(url:))
+        isNavigating = false
+        refusesOtherChallenges = false
         if let url = webView.url {
             dialogGate.commit(origin: Origin(url: url))
             sendHistory(history.committed(url, title: webView.title ?? "", store: store, isRestore: isRestore))
@@ -515,7 +588,8 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error
     ) {
         cancelQueuedChallenges()
-        navigationHost = webView.url?.host()
+        navigationOrigin = webView.url.map(Origin.init(url:))
+        isNavigating = false
         seedMainFrame(at: webView.url)
         commitsNewDocument = false
         setFormPostLoading(false)
@@ -531,6 +605,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         cancelQueuedChallenges()
+        isNavigating = false
         setFormPostLoading(false)
         model?.resetWork(tab)
         model?.resetFingerprintReads(tab)
@@ -564,8 +639,9 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     /// Basic, Digest and NTLM challenges wait for the sign-in sheet (D1); a challenge from another site than the
-    /// page's that is not for the main frame's own load gets none and is rejected (D3). Others are handled as WebKit
-    /// would.
+    /// page's that is not for the main frame's own load gets none and is rejected (D3), as is one not for that load
+    /// after a Cancel until the next commit, and one beyond `challengeLimit` waiting; the main frame's navigation
+    /// always waits for its sheet. Others are handled as WebKit would.
     func webView(
         _ webView: WKWebView, respondTo challenge: URLAuthenticationChallenge
     ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
@@ -576,11 +652,21 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard
             let prompt = AuthPrompt(
                 space: challenge.protectionSpace, previousFailureCount: challenge.previousFailureCount,
-                proposedUser: challenge.proposedCredential?.user, pageSite: pageSite, navigationHost: navigationHost)
+                proposedUser: challenge.proposedCredential?.user, pageSite: pageSite, navigation: navigationOrigin)
         else { return (.rejectProtectionSpace, nil) }
+        let isForNavigation = isNavigating && prompt.isNavigationTarget
+        guard isForNavigation || (!refusesOtherChallenges && challenges.count < Self.challengeLimit) else {
+            #if DEBUG
+                Self.selfCheckRefusals += 1
+            #endif
+            return (.rejectProtectionSpace, nil)
+        }
         return await withCheckedContinuation { continuation in
             changeChallenges {
-                challenges.append(Challenge(challenge: challenge, prompt: prompt, continuation: continuation))
+                challenges.append(
+                    Challenge(
+                        challenge: challenge, prompt: prompt, isForNavigation: isForNavigation,
+                        continuation: continuation))
             }
             pumpChallenges()
         }
