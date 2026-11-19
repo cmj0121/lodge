@@ -31,6 +31,7 @@ private struct ExpandedSidebar: View {
     private var model: BrowserModel { pane.model }
     let coordinator: WorkspaceCoordinator
     let toggle: () -> Void
+    @State private var dragPresence = SidebarDragPresence()
 
     var body: some View {
         let items = model.sidebar
@@ -44,6 +45,13 @@ private struct ExpandedSidebar: View {
             // Clears the window buttons, which sit over this row.
             .padding(.leading, 78 - 12)
             AddressBar(pane: pane, isCompact: true)
+                // With no pins, a drag shows where to pin over the address, so nothing below moves under the pointer.
+                .overlay {
+                    if items.pins.isEmpty && dragPresence.isDragging {
+                        EmptyPinsDropZone(model: model)
+                            .environment(\.sidebarDragPresence, dragPresence)
+                    }
+                }
                 .padding(.top, 6)
                 .padding(.bottom, 10)
             ScrollView {
@@ -67,17 +75,27 @@ private struct ExpandedSidebar: View {
                     .contextMenu {
                         Button("New Folder…") { BookmarkPrompts.newFolder(in: nil, model: model) }
                     }
+                    // A drop on the header goes into the bookmarks' root, the one place to drop on while there are none.
+                    .sidebarDrop(model) { _, _, _ in
+                        .bookmarks(folder: model.library.bookmarks.id, index: nil)
+                    } indicator: { _, _ in
+                        DropIntoMark(cornerRadius: SidebarRowLabel.Metrics.cornerRadius)
+                    }
                     if !items.bookmarks.isEmpty {
-                        BookmarkOutline(pane: pane, workspaces: coordinator, nodes: items.bookmarks)
+                        BookmarkOutline(
+                            pane: pane, workspaces: coordinator, nodes: items.bookmarks, dragPresence: dragPresence)
                     }
                     if !items.bookmarks.isEmpty && !items.loose.isEmpty {
                         Divider()
                             .padding(.vertical, 4)
                     }
                     rows(items.loose)
+                    LooseDropEnd(model: model)
                 }
             }
             .scrollIndicators(.never)
+            .onDrop(of: [.lodgeSidebarItem], delegate: SidebarDragTracker(presence: dragPresence))
+            .environment(\.sidebarDragPresence, dragPresence)
             Divider()
             HStack(spacing: 6) {
                 WorkspaceBar(coordinator: coordinator, pane: pane, axis: .horizontal)
@@ -320,6 +338,10 @@ private struct ItemMenu: View {
             }
             if shelf == .pins {
                 Button("Unpin") { model.unpin(link.id) }
+                let move = SidebarDragItem(kind: .pin, id: link.id, workspace: model.workspaceID)
+                let bookmarks = SidebarDropTarget.bookmarks(folder: model.library.bookmarks.id, index: nil)
+                Button("Move to Bookmarks") { model.drop(move, on: bookmarks) }
+                    .disabled(!model.canDrop(move, on: bookmarks))
             } else {
                 Button("Remove from Bookmarks") { model.removeLink(link.id) }
             }
@@ -508,8 +530,8 @@ private struct PinGrid: View {
     }
 }
 
-/// A pin as its icon alone, the title as a tooltip: a tile in the grid, or an entry in the rail.
-/// Dragging it onto another pin moves it to that pin's place.
+/// A pin as its icon alone, the title as a tooltip: a tile in the grid, or an entry in the rail. It drags as a
+/// sidebar item, and takes drops before or after itself, whichever half the pointer is on (D4).
 private struct ItemButton: View {
     struct Metrics {
         let iconSize: CGFloat
@@ -561,16 +583,41 @@ private struct ItemButton: View {
             Button(shape.isTile ? "Move Right" : "Move Down") { move(by: 1) }
         }
         .sidebarItem(item, pane: pane, isHovered: $isHovered)
-        .modifier(PinDrag(pin: pinID))
-        .dropDestination(for: String.self) { payload, _ in
-            guard let dragged = payload.first.flatMap(UUID.init(uuidString:)), isPin(dragged), let index else {
-                return false
+        .sidebarDrag(pinID.map { SidebarDragItem(kind: .pin, id: $0, workspace: model.workspaceID) })
+        .sidebarDrop(model, target: target) { location, size in
+            let isAfter = isAfter(location, in: size)
+            if shape.isTile {
+                DropPlaceMark(axis: .vertical)
+                    .padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, alignment: isAfter ? .trailing : .leading)
+                    .offset(x: isAfter ? Self.markOffset(gap: 6) : -Self.markOffset(gap: 6))
+            } else {
+                DropPlaceMark(axis: .horizontal)
+                    .padding(.horizontal, 4)
+                    .frame(maxHeight: .infinity, alignment: isAfter ? .bottom : .top)
+                    .offset(y: isAfter ? Self.markOffset(gap: 4) : -Self.markOffset(gap: 4))
             }
-            model.movePin(dragged, to: index)
-            return true
-        } isTargeted: {
-            isHovered = $0
         }
+    }
+
+    /// How far the mark moves out from the tile's edge so it sits in the middle of the `gap` to the next one.
+    private static func markOffset(gap: CGFloat) -> CGFloat { 3 + gap / 2 }
+
+    /// Whether the pointer is on the half of the tile after its middle: the right in the grid, the bottom in the rail.
+    private func isAfter(_ location: CGPoint, in size: CGSize) -> Bool {
+        shape.isTile ? location.x > size.width / 2 : location.y > size.height / 2
+    }
+
+    /// The slot the pointer marks, before or after this pin; a pin moved forward ends one place earlier, as it leaves
+    /// its own slot behind.
+    private func target(_ dragged: SidebarDragItem, _ location: CGPoint, _ size: CGSize) -> SidebarDropTarget? {
+        guard let index else { return nil }
+        var slot = index + (isAfter(location, in: size) ? 1 : 0)
+        if dragged.kind == .pin, let from = model.sidebar.pins.firstIndex(where: { $0.id == .link(dragged.id) }) {
+            if from == index { return nil }
+            if from < slot { slot -= 1 }
+        }
+        return .pins(index: slot)
     }
 
     private var pinID: UUID? {
@@ -580,30 +627,16 @@ private struct ItemButton: View {
     /// This pin's place among the pins.
     private var index: Int? { model.sidebar.pins.firstIndex { $0.id == item.id } }
 
-    /// Whether a dropped id is a pin's, so a bookmark or stray text moves nothing.
-    private func isPin(_ id: UUID) -> Bool { model.sidebar.pins.contains { $0.id == .link(id) } }
-
     private func move(by offset: Int) {
         if let pinID, let index { model.movePin(pinID, to: index + offset) }
     }
 }
 
-/// Lets a pin be dragged, carrying its link id; anything else stays put.
-private struct PinDrag: ViewModifier {
-    let pin: UUID?
-
-    func body(content: Content) -> some View {
-        if let pin {
-            content.draggable(pin.uuidString)
-        } else {
-            content
-        }
-    }
-}
-
-/// A loose tab with its title; the selected one carries a close button.
+/// A loose tab with its title; the selected one carries a close button. It drags as a sidebar item, and a drop on it
+/// lands just above it (D4); Move Up and Move Down do the same from the keyboard.
 private struct SidebarRow: View {
     let pane: BrowserPane
+    private var model: BrowserModel { pane.model }
     let item: SidebarItem
     let isSelected: Bool
     let favicon: NSImage?
@@ -615,7 +648,59 @@ private struct SidebarRow: View {
             .onTapGesture { pane.activate(item.target) }
             .help(pane.toolTip(for: item))
             .itemAccessibility(item, isSelected: isSelected, pane: pane)
+            .accessibilityActions {
+                if let up = place(by: -1) { Button("Move Up") { move(to: up) } }
+                if let down = place(by: 1) { Button("Move Down") { move(to: down) } }
+            }
             .sidebarItem(item, pane: pane, isHovered: $isHovered)
+            .sidebarDrag(dragItem)
+            .sidebarDrop(model) { dragged, _, _ in
+                guard let tab = item.tab, dragged != dragItem else { return nil }
+                return .loose(before: tab.id)
+            } indicator: { _, _ in
+                LooseDropMark()
+            }
+    }
+
+    private var dragItem: SidebarDragItem? {
+        item.tab.map { SidebarDragItem(kind: .tab, id: $0.id, workspace: model.workspaceID) }
+    }
+
+    /// Where moving the row `offset` places among the loose tabs puts it; nil past either end.
+    private func place(by offset: Int) -> SidebarDropTarget? {
+        let loose = model.sidebar.loose.compactMap(\.tab?.id)
+        guard let tab = item.tab, let index = loose.firstIndex(of: tab.id) else { return nil }
+        let to = index + offset
+        guard loose.indices.contains(to) else { return nil }
+        // Moving down lands before the tab after the next one, or at the end.
+        let before = offset < 0 ? to : to + 1
+        return .loose(before: before < loose.count ? loose[before] : nil)
+    }
+
+    private func move(to place: SidebarDropTarget) {
+        if let dragItem { model.drop(dragItem, on: place) }
+    }
+}
+
+/// The line above a loose row a drop lands before, in the middle of the gap to the row above.
+private struct LooseDropMark: View {
+    var body: some View {
+        DropPlaceMark(axis: .horizontal)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .offset(y: -4)
+    }
+}
+
+/// The place after the last loose tab, and the only one while there are none: a drop here lands at the end.
+private struct LooseDropEnd: View {
+    let model: BrowserModel
+
+    var body: some View {
+        Color.clear
+            .frame(height: 24)
+            .contentShape(.rect)
+            .sidebarDrop(model) { _, _, _ in .loose(before: nil) } indicator: { _, _ in LooseDropMark() }
+            .accessibilityHidden(true)
     }
 }
 
@@ -850,5 +935,245 @@ private struct NewTabButton: View {
         Button("New Tab", systemImage: "plus", action: pane.newTab)
             .iconButtonStyle()
             .help(ShortcutCatalog.tooltip(String(localized: "Open a new tab"), for: .newTab))
+    }
+}
+
+// MARK: Drag and drop (D4)
+
+extension View {
+    /// Lets the entry be dragged as a sidebar item of this workspace; nil leaves it put.
+    @ViewBuilder
+    fileprivate func sidebarDrag(_ item: SidebarDragItem?) -> some View {
+        if let item {
+            draggable(item)
+        } else {
+            self
+        }
+    }
+
+    /// Takes sidebar items dropped here: `target` says where the dragged item, under the pointer at a point in a
+    /// view of a size, would land, and the drop is offered only when the model allows it (`canDrop`), showing
+    /// `indicator` for that point while it is. Plain text and other apps' data are never taken.
+    fileprivate func sidebarDrop<Indicator: View>(
+        _ model: BrowserModel,
+        target: @escaping (SidebarDragItem, CGPoint, CGSize) -> SidebarDropTarget?,
+        @ViewBuilder indicator: @escaping (CGPoint, CGSize) -> Indicator
+    ) -> some View {
+        modifier(SidebarDropZone(model: model, target: target, indicator: indicator))
+    }
+}
+
+private struct SidebarDropZone<Indicator: View>: ViewModifier {
+    let model: BrowserModel
+    let target: (SidebarDragItem, CGPoint, CGSize) -> SidebarDropTarget?
+    let indicator: (CGPoint, CGSize) -> Indicator
+    /// The dragged item once its payload is read, while a drag is over the view.
+    @State private var dragged: SidebarDragItem?
+    @State private var location: CGPoint?
+    @State private var size: CGSize = .zero
+    /// Bumped as each drag enters and leaves, so a payload read for an earlier one is never taken for it.
+    @State private var generation = 0
+    @Environment(\.sidebarDragPresence) private var presence
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+            .onDrop(
+                of: [.lodgeSidebarItem],
+                delegate: Delegate(
+                    model: model, target: target, size: size, presence: presence, dragged: $dragged,
+                    location: $location, generation: $generation))
+            .overlay {
+                if let location, let dragged, allowed(dragged, at: location) != nil {
+                    indicator(location, size)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+
+    private func allowed(_ item: SidebarDragItem, at location: CGPoint) -> SidebarDropTarget? {
+        target(item, location, size).flatMap { model.canDrop(item, on: $0) ? $0 : nil }
+    }
+
+    @MainActor
+    private struct Delegate: DropDelegate {
+        let model: BrowserModel
+        let target: (SidebarDragItem, CGPoint, CGSize) -> SidebarDropTarget?
+        let size: CGSize
+        let presence: SidebarDragPresence?
+        @Binding var dragged: SidebarDragItem?
+        @Binding var location: CGPoint?
+        @Binding var generation: Int
+
+        func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.lodgeSidebarItem]) }
+
+        /// Reads this drag's payload afresh; a read that ends after the drag left, or once another one entered, is
+        /// dropped.
+        func dropEntered(info: DropInfo) {
+            presence?.touch()
+            generation += 1
+            let token = generation
+            dragged = nil
+            location = info.location
+            guard let provider = info.itemProviders(for: [.lodgeSidebarItem]).first else { return }
+            let (dragged, generation) = ($dragged, $generation)
+            _ = provider.loadTransferable(type: SidebarDragItem.self) { result in
+                let item = try? result.get()
+                Task { @MainActor in
+                    if generation.wrappedValue == token { dragged.wrappedValue = item }
+                }
+            }
+        }
+
+        /// Until the payload is read, nothing is promised: the pointer shows no move.
+        func dropUpdated(info: DropInfo) -> DropProposal? {
+            presence?.touch()
+            location = info.location
+            guard let dragged, allowed(dragged, at: info.location) != nil else {
+                return DropProposal(operation: .forbidden)
+            }
+            return DropProposal(operation: .move)
+        }
+
+        func dropExited(info: DropInfo) {
+            presence?.leave()
+            end()
+        }
+
+        func performDrop(info: DropInfo) -> Bool {
+            presence?.end()
+            defer { end() }
+            guard let dragged, let place = allowed(dragged, at: info.location) else { return false }
+            return model.drop(dragged, on: place)
+        }
+
+        private func end() {
+            generation += 1
+            location = nil
+            dragged = nil
+        }
+
+        private func allowed(_ item: SidebarDragItem, at location: CGPoint) -> SidebarDropTarget? {
+            target(item, location, size).flatMap { model.canDrop(item, on: $0) ? $0 : nil }
+        }
+    }
+}
+
+/// Where a drop will land: an accent line with a ring at its start, as the bookmark outline marks its own drops, so
+/// every section of the sidebar shows the place the same way in light, dark and any workspace colour.
+struct DropPlaceMark: View {
+    enum Axis { case horizontal, vertical }
+
+    let axis: Axis
+
+    static let thickness: CGFloat = 2
+    private static let ring: CGFloat = 6
+
+    var body: some View {
+        let line = Capsule().fill(Color.accentColor)
+        let ring = Circle().strokeBorder(Color.accentColor, lineWidth: 1.5).frame(width: Self.ring, height: Self.ring)
+        switch axis {
+        case .horizontal:
+            HStack(spacing: 0) {
+                ring
+                line.frame(height: Self.thickness)
+            }
+            .frame(height: Self.ring)
+        case .vertical:
+            VStack(spacing: 0) {
+                ring
+                line.frame(width: Self.thickness)
+            }
+            .frame(width: Self.ring)
+        }
+    }
+}
+
+/// Whether a sidebar item is being dragged over the sidebar, so places that are hidden while empty (the pins) can show
+/// a zone to drop on. Every drop zone, and the sidebar as a whole, reports the drag passing; it counts as gone a
+/// moment after the last one it left, so moving from one zone to the next does not flicker.
+@MainActor
+@Observable
+final class SidebarDragPresence {
+    private(set) var isDragging = false
+    @ObservationIgnored private var generation = 0
+
+    func touch() {
+        generation += 1
+        if !isDragging { isDragging = true }
+    }
+
+    func leave() {
+        generation += 1
+        let token = generation
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self, self.generation == token else { return }
+            self.isDragging = false
+        }
+    }
+
+    func end() {
+        generation += 1
+        isDragging = false
+    }
+}
+
+extension EnvironmentValues {
+    @Entry var sidebarDragPresence: SidebarDragPresence?
+}
+
+/// Reports a sidebar item passing over the sidebar's background; it takes no drop itself.
+private struct SidebarDragTracker: DropDelegate {
+    let presence: SidebarDragPresence
+
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.lodgeSidebarItem]) }
+
+    func dropEntered(info: DropInfo) { presence.touch() }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        presence.touch()
+        return DropProposal(operation: .forbidden)
+    }
+
+    func dropExited(info: DropInfo) { presence.leave() }
+
+    func performDrop(info: DropInfo) -> Bool {
+        presence.end()
+        return false
+    }
+}
+
+/// A drop into a place rather than between rows: the place's outline in the accent, as the bookmark outline marks a
+/// drop onto a folder.
+private struct DropIntoMark: View {
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius)
+            .fill(Color.accentColor.opacity(0.08))
+            .strokeBorder(Color.accentColor, lineWidth: 1.5)
+    }
+}
+
+/// The place to pin while there are none, shown over the address only while a sidebar item is dragged: a ghost tile
+/// that takes the item as the first pin.
+private struct EmptyPinsDropZone: View {
+    let model: BrowserModel
+
+    var body: some View {
+        let radius = ItemButton.Metrics.pin.cornerRadius
+        Label("Drop here to pin", systemImage: "pin")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.regularMaterial, in: .rect(cornerRadius: radius))
+            .overlay {
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(.tertiary, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            }
+            .contentShape(.rect)
+            .sidebarDrop(model) { _, _, _ in .pins(index: 0) } indicator: { _, _ in DropIntoMark(cornerRadius: radius) }
+            .accessibilityHidden(true)
     }
 }

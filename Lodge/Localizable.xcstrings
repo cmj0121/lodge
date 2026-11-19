@@ -701,6 +701,16 @@
         }
       }
     },
+    "Drop here to pin" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拖放到這裡以釘選"
+          }
+        }
+      }
+    },
     "Each workspace gives every site its own fingerprint, the same on every visit. Each Anonymous tab gets its own, gone with the tab. Lodge never asks: when a site reads one, a fingerprint button shows in the address field." : {
       "localizations" : {
         "zh-Hant" : {
@@ -1257,6 +1267,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上移"
+          }
+        }
+      }
+    },
+    "Move to Bookmarks" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移至書籤"
+          }
+        }
+      }
+    },
+    "Move to Pins" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移至釘選"
           }
         }
       }

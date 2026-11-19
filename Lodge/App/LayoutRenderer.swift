@@ -2,6 +2,7 @@
     import AppKit
     import LodgeKit
     import SwiftUI
+    import UniformTypeIdentifiers
     import WebKit
 
     /// Debug aid: `Lodge -renderLayout YES` draws the window's layout (both sidebar modes, find
@@ -58,6 +59,7 @@
             checkPlaces()
             checkKeptIcons()
             checkSidebarDrops()
+            checkSidebarPayload()
             checkFingerprint()
             checkAuth()
             checkPlainHTTP()
@@ -1821,6 +1823,40 @@
                         anonymous, item(.folder, anonymousRoot, in: anonymous),
                         .bookmarks(folder: anonymousRoot, index: nil)))
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+        }
+
+        /// The sidebar's drag payload (#33), printed ok or FAILED: the app declares its type as data; what SwiftUI's
+        /// `.draggable` writes is what the bookmark outline reads off an AppKit pasteboard, and the other way round; a
+        /// pasteboard holding only plain text carries no item. The pasteboard is a private one of this run.
+        private static func checkSidebarPayload() {
+            func report(_ name: String, _ passed: Bool) { print("Sidebar payload: \(name): \(passed ? "ok" : "FAILED")") }
+            let declared = UTType("dev.lodge.sidebar-item")
+            report(
+                "The app declares the sidebar item type as data",
+                declared == .lodgeSidebarItem && declared?.isDeclared == true && declared?.conforms(to: .data) == true)
+
+            let item = SidebarDragItem(kind: .bookmark, id: UUID(), workspace: Workspace.defaultID)
+            var exported: Data?
+            var imported: SidebarDragItem?
+            var done = false
+            Task { @MainActor in
+                exported = try? await item.exported(as: .lodgeSidebarItem)
+                if let data = item.pasteboardData {
+                    imported = try? await SidebarDragItem(importing: data, contentType: .lodgeSidebarItem)
+                }
+                done = true
+            }
+            let deadline = Date.now.addingTimeInterval(5)
+            while !done, Date.now < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02)) }
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name("dev.lodge.render-payload-\(UUID().uuidString)"))
+            defer { pasteboard.releaseGlobally() }
+            pasteboard.clearContents()
+            pasteboard.setData(exported, forType: SidebarDragItem.pasteboardType)
+            report("What SwiftUI drags, the outline reads", SidebarDragItem(pasteboard: pasteboard) == item)
+            report("What the outline drags, SwiftUI reads", imported == item)
+            pasteboard.clearContents()
+            pasteboard.setString(item.id.uuidString, forType: .string)
+            report("Plain text carries no sidebar item", SidebarDragItem(pasteboard: pasteboard) == nil)
         }
 
         /// Places on disk (#26), in a temporary app directory: a tab that never sent a form rests with WebKit's state on

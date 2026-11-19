@@ -1,3 +1,4 @@
+import AppKit
 import CoreTransferable
 import Foundation
 import LodgeKit
@@ -31,4 +32,20 @@ enum SidebarDropTarget: Equatable {
     case bookmarks(folder: UUID, index: Int?)
     /// Just before that loose tab; nil after the last loose tab.
     case loose(before: TabID?)
+}
+
+extension SidebarDragItem {
+    /// The pasteboard type AppKit sources and destinations (the bookmark outline) read and write.
+    static let pasteboardType = NSPasteboard.PasteboardType(UTType.lodgeSidebarItem.identifier)
+
+    /// The item as `CodableRepresentation` writes it, JSON, for an AppKit pasteboard.
+    var pasteboardData: Data? { try? JSONEncoder().encode(self) }
+
+    /// The item an AppKit drag carries; nil when it carries none.
+    init?(pasteboard: NSPasteboard) {
+        guard let data = pasteboard.data(forType: Self.pasteboardType),
+            let item = try? JSONDecoder().decode(Self.self, from: data)
+        else { return nil }
+        self = item
+    }
 }
