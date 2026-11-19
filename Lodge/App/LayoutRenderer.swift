@@ -59,6 +59,7 @@
             checkPlaces()
             checkKeptIcons()
             checkSidebarDrops()
+            checkRailDrops()
             checkSidebarPayload()
             checkFingerprint()
             checkAuth()
@@ -1825,9 +1826,219 @@
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
         }
 
+        /// The rail's drops (#33), printed ok or FAILED, each through the place the rail's view asks
+        /// (`SidebarDropPlace`) and the model's `canDrop`/`drop`, as a drag would: rail pins reorder and take loose tabs
+        /// but not a pin onto itself or a folder; the bookmarks button takes a pin or a loose tab into the root, a shared
+        /// pin too, and refuses bookmarks, folders and another workspace's payload; the empty area takes a pin out to the
+        /// end of the loose tabs and refuses everything else.
+        private static func checkRailDrops() {
+            func report(_ name: String, _ passed: Bool) { print("Rail drops: \(name): \(passed ? "ok" : "FAILED")") }
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample,
+                restDefaults: nil)
+            coordinator.bringForwardHook = { _ in }
+            coordinator.restAfter = .never
+            coordinator.switchTo(Workspace.defaultID)
+            let home = firstPane(coordinator).model
+            guard let work = try? coordinator.create(name: "Rail", symbol: "briefcase"),
+                let other = coordinator.model(for: work.id), home.pins.count >= 3,
+                case .folder(let folder)? = home.library.bookmarks.children.first(where: {
+                    if case .folder = $0 { true } else { false }
+                })
+            else { return report("Set up", false) }
+            func item(_ kind: SidebarDragItem.Kind, _ id: UUID, in model: BrowserModel) -> SidebarDragItem {
+                SidebarDragItem(kind: kind, id: id, workspace: model.workspaceID)
+            }
+            struct State: Equatable {
+                let library: LinkLibrary
+                let tabs: TabList
+                let pins: [SavedLink]
+            }
+            func snapshot() -> [State] {
+                [home, other].map { State(library: $0.library, tabs: $0.tabs, pins: $0.pins) }
+            }
+            /// Drops `dragged` where `place` says, as a drop zone does: only when it names a place the model allows.
+            func dropped(_ model: BrowserModel, _ dragged: SidebarDragItem, _ place: SidebarDropTarget?) -> Bool {
+                guard let place, model.canDrop(dragged, on: place) else { return false }
+                return model.drop(dragged, on: place)
+            }
+            func refused(_ model: BrowserModel, _ dragged: SidebarDragItem, _ place: SidebarDropTarget?) -> Bool {
+                let before = snapshot()
+                return (place.map { !model.canDrop(dragged, on: $0) } ?? true) && !dropped(model, dragged, place)
+                    && snapshot() == before
+            }
+            func loose(_ model: BrowserModel) -> [TabID] { model.sidebar.loose.compactMap(\.tab?.id) }
+            let root = home.library.bookmarks.id
+
+            // Rail pins: the same slots as the grid, top to bottom.
+            let pins = home.pins
+            report(
+                "A pin dropped after another rail pin moves there",
+                dropped(home, item(.pin, pins[0].id, in: home), SidebarDropPlace.pin(
+                    item(.pin, pins[0].id, in: home), at: 1, after: true, in: home))
+                    && home.pins.map(\.id).prefix(3) == [pins[1].id, pins[0].id, pins[2].id])
+            // A pin takes the place of the pin it is dropped on, whichever half: a neighbour swaps, either way, and the
+            // mark shows on the side it ends up.
+            func swapped(_ from: Int, _ to: Int, after: Bool) -> Bool {
+                let before = home.pins.map(\.id)
+                let moving = item(.pin, before[from], in: home)
+                let place = SidebarDropPlace.pin(moving, at: to, after: after, in: home)
+                var expected = before
+                expected.swapAt(from, to)
+                return place == .pins(index: to)
+                    && SidebarDropPlace.pinMarkIsAfter(moving, at: to, after: after, in: home) == (from < to)
+                    && dropped(home, moving, place) && home.pins.map(\.id) == expected
+            }
+            report(
+                "A pin dropped on its next neighbour swaps with it, on either half",
+                swapped(0, 1, after: false) && swapped(0, 1, after: true))
+            report(
+                "A pin dropped on its previous neighbour swaps with it, on either half",
+                swapped(2, 1, after: true) && swapped(2, 1, after: false))
+            let fromAfar = home.pins.map(\.id)
+            let far = item(.pin, fromAfar[2], in: home)
+            report(
+                "A pin dropped on one further back takes its place",
+                dropped(home, far, SidebarDropPlace.pin(far, at: 0, after: true, in: home))
+                    && home.pins.map(\.id) == [fromAfar[2], fromAfar[0], fromAfar[1]] + fromAfar.dropFirst(3))
+            let onItself = item(.pin, home.pins[0].id, in: home)
+            report(
+                "A rail pin dropped on itself goes nowhere",
+                refused(home, onItself, SidebarDropPlace.pin(onItself, at: 0, after: false, in: home))
+                    && refused(home, onItself, SidebarDropPlace.pin(onItself, at: 0, after: true, in: home)))
+            let folderItem = item(.folder, folder.id, in: home)
+            report(
+                "A folder dropped on a rail pin is refused",
+                refused(home, folderItem, SidebarDropPlace.pin(folderItem, at: 1, after: false, in: home)))
+            let tab = home.receive(url: URL(string: "about:blank#rail-pin")!, title: "Rail Pin")
+            let tabItem = item(.tab, tab, in: home)
+            report(
+                "A loose tab dropped on a rail pin is pinned there",
+                dropped(home, tabItem, SidebarDropPlace.pin(tabItem, at: 0, after: false, in: home))
+                    && home.pins.first?.url == URL(string: "about:blank#rail-pin") && home.tabs[tab]?.link == home.pins.first?.id)
+
+            // Loose rows: a loose tab takes the place of the one it is dropped on; anything else lands before it.
+            let rows = (0..<3).map { home.receive(url: URL(string: "about:blank#rail-row-\($0)")!, title: "Row \($0)") }
+            func rowOrder() -> [TabID] { loose(home).filter(rows.contains) }
+            let down = item(.tab, rows[0], in: home)
+            report(
+                "A loose tab dropped on the next one swaps with it, marked below",
+                SidebarDropPlace.looseMarkIsBelow(down, onto: rows[1], in: home)
+                    && dropped(home, down, SidebarDropPlace.loose(down, onto: rows[1], in: home))
+                    && rowOrder() == [rows[1], rows[0], rows[2]])
+            let up = item(.tab, rows[2], in: home)
+            report(
+                "A loose tab dropped on the one before swaps with it, marked above",
+                !SidebarDropPlace.looseMarkIsBelow(up, onto: rows[0], in: home)
+                    && dropped(home, up, SidebarDropPlace.loose(up, onto: rows[0], in: home))
+                    && rowOrder() == [rows[1], rows[2], rows[0]])
+            report(
+                "A loose tab dropped on itself goes nowhere",
+                refused(home, up, SidebarDropPlace.loose(up, onto: rows[2], in: home)))
+            let lastRow = loose(home).last!
+            let toEnd = item(.tab, loose(home)[loose(home).count - 2], in: home)
+            report(
+                "A loose tab dropped on the last one lands after it",
+                SidebarDropPlace.loose(toEnd, onto: lastRow, in: home) == .loose(before: nil))
+            report(
+                "A pin dropped on a loose row lands before it",
+                SidebarDropPlace.loose(item(.pin, home.pins[0].id, in: home), onto: rows[0], in: home)
+                    == .loose(before: rows[0])
+                    && !SidebarDropPlace.looseMarkIsBelow(item(.pin, home.pins[0].id, in: home), onto: rows[0], in: home))
+
+            // Bookmark rows: a row of the same folder moving up lands before the row it is dropped on, else after it.
+            let row = BookmarkOutline.Coordinator.onRowIndex
+            report(
+                "A bookmark dropped on a row takes its place in either direction",
+                row((nil, 1), (nil, 3)) == 1 && row((nil, 1), (nil, 0)) == 2 && row((nil, 1), nil) == 2
+                    && row((.folder(folder.id), 1), (nil, 3)) == 2)
+
+            // The bookmarks button: pins and loose tabs into the root, at the end.
+            let moving = home.pins[1]
+            let pinItem = item(.pin, moving.id, in: home)
+            report(
+                "A pin dropped on the bookmarks button becomes the last root bookmark",
+                SidebarDropPlace.railBookmarks(pinItem, in: home) == .bookmarks(folder: root, index: nil)
+                    && dropped(home, pinItem, SidebarDropPlace.railBookmarks(pinItem, in: home))
+                    && home.library.bookmarks.children.last == .link(moving) && !home.pins.contains(moving))
+            let marked = home.receive(url: URL(string: "about:blank#rail-mark")!, title: "Rail Mark")
+            let markedItem = item(.tab, marked, in: home)
+            report(
+                "A loose tab dropped on the bookmarks button becomes the last root bookmark's tab",
+                dropped(home, markedItem, SidebarDropPlace.railBookmarks(markedItem, in: home))
+                    && home.library.links(on: .bookmarks).last?.url == URL(string: "about:blank#rail-mark")
+                    && home.tabs[marked]?.link == home.library.links(on: .bookmarks).last?.id)
+            let bookmark = home.library.links(on: .bookmarks)[0]
+            report(
+                "A bookmark or folder dropped on the bookmarks button is refused",
+                refused(home, item(.bookmark, bookmark.id, in: home), SidebarDropPlace.railBookmarks(
+                    item(.bookmark, bookmark.id, in: home), in: home))
+                    && refused(home, folderItem, SidebarDropPlace.railBookmarks(folderItem, in: home)))
+            let foreign = SidebarDragItem(kind: .pin, id: home.pins[0].id, workspace: work.id)
+            report(
+                "Another workspace's pin dropped on the bookmarks button is refused",
+                refused(home, foreign, SidebarDropPlace.railBookmarks(foreign, in: home)))
+            let shared = home.pins[0]
+            let sharedItem = item(.pin, shared.id, in: other)
+            report(
+                "A shared pin dropped on another workspace's bookmarks button becomes its bookmark",
+                SidebarDropPlace.railBookmarks(sharedItem, in: other)
+                    == .bookmarks(folder: other.library.bookmarks.id, index: nil)
+                    && dropped(other, sharedItem, SidebarDropPlace.railBookmarks(sharedItem, in: other))
+                    && other.library.links(on: .bookmarks).last == shared && !home.pins.contains(shared))
+
+            // The empty area: a pin out to the end of the loose tabs; nothing else.
+            let leaving = home.pins[0]
+            let leavingItem = item(.pin, leaving.id, in: home)
+            let tabsBefore = Set(home.tabs.tabs.map(\.id))
+            let left = dropped(home, leavingItem, SidebarDropPlace.railEmpty(leavingItem))
+            let opened = home.tabs.tabs.first { !tabsBefore.contains($0.id) }
+            report(
+                "A pin dropped on the empty rail goes to the end of the loose tabs",
+                SidebarDropPlace.railEmpty(leavingItem) == .loose(before: nil) && left && !home.pins.contains(leaving)
+                    && opened?.url == leaving.url && loose(home).last == opened?.id)
+            let spare = home.receive(url: URL(string: "about:blank#rail-spare")!, title: "Spare")
+            let spareItem = item(.tab, spare, in: home)
+            let bookmarkItem = item(.bookmark, home.library.links(on: .bookmarks)[0].id, in: home)
+            report(
+                "A loose tab, bookmark or folder dropped on the empty rail is refused",
+                SidebarDropPlace.railEmpty(spareItem) == nil && refused(home, spareItem, SidebarDropPlace.railEmpty(spareItem))
+                    && refused(home, bookmarkItem, SidebarDropPlace.railEmpty(bookmarkItem))
+                    && refused(home, folderItem, SidebarDropPlace.railEmpty(folderItem)))
+            report(
+                "Another workspace's pin dropped on the empty rail is refused",
+                refused(home, foreign, SidebarDropPlace.railEmpty(foreign)))
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+
+            // The rail's layout, in an off-screen window: pins taller than the rail leave the empty place room to drop
+            // on while a drag is on, and none while it is off; a short rail leaves it the rest.
+            func zoneHeight(content: CGFloat, isDragging: Bool) -> CGFloat? {
+                var height: CGFloat?
+                let layout = RailDropLayout(isDragging: isDragging) {
+                    Color.gray.frame(width: 46, height: content)
+                } zone: {
+                    Color.clear.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+                }
+                _ = image(layout.frame(width: 72, height: 400), size: NSSize(width: 72, height: 400))
+                return height
+            }
+            let full = zoneHeight(content: 2000, isDragging: true)
+            report(
+                "Pins filling the rail leave the empty place room while a drag is on",
+                full.map { $0 >= RailDropLayout<Color, Color>.zoneMinHeight - 0.5 } == true)
+            report(
+                "Pins filling the rail leave no empty place while no drag is on",
+                zoneHeight(content: 2000, isDragging: false).map { $0 < 0.5 } == true)
+            report(
+                "A short rail leaves the empty place the rest",
+                zoneHeight(content: 100, isDragging: false).map { $0 >= 299.5 } == true)
+        }
+
         /// The sidebar's drag payload (#33), printed ok or FAILED: the app declares its type as data; what SwiftUI's
-        /// `.draggable` writes is what the bookmark outline reads off an AppKit pasteboard, and the other way round; a
-        /// pasteboard holding only plain text carries no item. The pasteboard is a private one of this run.
+        /// drag writes is what the bookmark outline reads off an AppKit pasteboard, and the other way round; a
+        /// pasteboard holding only plain text carries no item. Only this process's live drag is taken: a forged payload
+        /// with no nonce or another one, a drag from another process (no source), and one whose drag has ended are
+        /// refused. The pasteboard is a private one of this run.
         private static func checkSidebarPayload() {
             func report(_ name: String, _ passed: Bool) { print("Sidebar payload: \(name): \(passed ? "ok" : "FAILED")") }
             let declared = UTType("dev.lodge.sidebar-item")
@@ -1835,28 +2046,127 @@
                 "The app declares the sidebar item type as data",
                 declared == .lodgeSidebarItem && declared?.isDeclared == true && declared?.conforms(to: .data) == true)
 
-            let item = SidebarDragItem(kind: .bookmark, id: UUID(), workspace: Workspace.defaultID)
-            var exported: Data?
-            var imported: SidebarDragItem?
-            var done = false
-            Task { @MainActor in
-                exported = try? await item.exported(as: .lodgeSidebarItem)
-                if let data = item.pasteboardData {
-                    imported = try? await SidebarDragItem(importing: data, contentType: .lodgeSidebarItem)
-                }
-                done = true
-            }
-            let deadline = Date.now.addingTimeInterval(5)
-            while !done, Date.now < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02)) }
+            let source = NSView()
             let pasteboard = NSPasteboard(name: NSPasteboard.Name("dev.lodge.render-payload-\(UUID().uuidString)"))
             defer { pasteboard.releaseGlobally() }
-            pasteboard.clearContents()
-            pasteboard.setData(exported, forType: SidebarDragItem.pasteboardType)
-            report("What SwiftUI drags, the outline reads", SidebarDragItem(pasteboard: pasteboard) == item)
-            report("What the outline drags, SwiftUI reads", imported == item)
+            func read(_ data: Data?, source: Any?) -> SidebarDragItem? {
+                pasteboard.clearContents()
+                pasteboard.setData(data, forType: SidebarDragItem.pasteboardType)
+                return SidebarDragItem(pasteboard: pasteboard, source: source)
+            }
+            func settle<T>(_ work: @escaping @MainActor () async -> T?) -> T? {
+                var result: T?
+                var done = false
+                Task { @MainActor in
+                    result = await work()
+                    done = true
+                }
+                let deadline = Date.now.addingTimeInterval(5)
+                while !done, Date.now < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02)) }
+                return result
+            }
+
+            let plain = SidebarDragItem(kind: .bookmark, id: UUID(), workspace: Workspace.defaultID)
+            let provider = plain.dragProvider()
+            let live = SidebarDragSession.current
+            report(
+                "A drag's start makes its item, stamped, the live drag",
+                live?.nonce != nil && live.map { $0.id == plain.id && $0.kind == plain.kind } == true)
+            let shipped = settle { () async -> Data? in
+                await withCheckedContinuation { continuation in
+                    _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.lodgeSidebarItem.identifier) {
+                        data, _ in continuation.resume(returning: data)
+                    }
+                }
+            }
+            let fromProvider = read(shipped, source: source)
+            report(
+                "What SwiftUI drags, the outline reads as this process's live drag",
+                fromProvider != nil && fromProvider == live)
+            let loaded = settle { () async -> SidebarDragItem? in
+                await withCheckedContinuation { continuation in
+                    _ = provider.loadTransferable(type: SidebarDragItem.self) { continuation.resume(returning: try? $0.get()) }
+                }
+            }
+            report("What SwiftUI drags, SwiftUI reads", loaded != nil && loaded == live)
+            let item = SidebarDragSession.begin(plain)
+            let imported = settle {
+                try? await SidebarDragItem(importing: item.pasteboardData ?? Data(), contentType: .lodgeSidebarItem)
+            }
+            report("What the outline drags, SwiftUI reads", imported == item && imported?.isLiveDrag == true)
+            report(
+                "The outline sees the live drag while it hovers, from this process only",
+                read(item.pasteboardData, source: source) == item
+                    && SidebarDragItem.hovering(pasteboard: pasteboard, source: source) == item
+                    && SidebarDragItem.hovering(pasteboard: pasteboard, source: nil) == nil)
             pasteboard.clearContents()
             pasteboard.setString(item.id.uuidString, forType: .string)
-            report("Plain text carries no sidebar item", SidebarDragItem(pasteboard: pasteboard) == nil)
+            report(
+                "Plain text carries no sidebar item",
+                SidebarDragItem(pasteboard: pasteboard, source: source) == nil
+                    && SidebarDragItem.hovering(pasteboard: pasteboard, source: source) == nil)
+
+            var wrong = item
+            wrong.nonce = UUID()
+            report("A forged payload with no nonce is refused", read(plain.pasteboardData, source: source) == nil)
+            report("A forged payload with another nonce is refused", read(wrong.pasteboardData, source: source) == nil)
+            report("A drag from another process is refused", read(item.pasteboardData, source: nil) == nil)
+            let next = SidebarDragSession.begin(plain)
+            report(
+                "A new drag makes the last one stale",
+                read(item.pasteboardData, source: source) == nil && read(next.pasteboardData, source: source) == next)
+            SidebarDragSession.end()
+            report(
+                "An ended drag is refused",
+                SidebarDragSession.current == nil && read(next.pasteboardData, source: source) == nil
+                    && !next.isLiveDrag)
+
+            // A click in the app ends a drag that ended elsewhere: the monitor `begin` installs sees it.
+            // The click goes to no window, only through this process's own event queue.
+            let clicked = SidebarDragSession.begin(plain)
+            let wasLive = clicked.isLiveDrag
+            if let click = NSEvent.mouseEvent(
+                with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+            {
+                NSApplication.shared.postEvent(click, atStart: true)
+                if let event = NSApplication.shared.nextEvent(
+                    matching: .leftMouseDown, until: Date(timeIntervalSinceNow: 1), inMode: .default, dequeue: true)
+                {
+                    NSApplication.shared.sendEvent(event)
+                }
+            }
+            report("A click in the app ends the live drag", wasLive && !clicked.isLiveDrag && SidebarDragSession.current == nil)
+
+            // Lodge resigning active ends the live drag too: the notification goes through this process only.
+            let resigning = SidebarDragSession.begin(plain)
+            let resigningWasLive = resigning.isLiveDrag
+            NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApplication.shared)
+            report(
+                "Lodge resigning active ends the live drag",
+                resigningWasLive && !resigning.isLiveDrag && SidebarDragSession.current == nil)
+
+            // At the drop the loaded payload must be the live drag, nonce and all, or nothing moves.
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: nil, downloads: nil, defaultLibrary: .sample,
+                restDefaults: nil)
+            let model = firstPane(coordinator).model
+            let pins = model.pins.map(\.id)
+            let pin = SidebarDragSession.begin(SidebarDragItem(kind: .pin, id: pins[0], workspace: model.workspaceID))
+            var forged = pin
+            forged.nonce = UUID()
+            var bare = pin
+            bare.nonce = nil
+            report(
+                "A drop whose payload has another nonce, none, or none at all moves nothing",
+                !SidebarDragSession.land(forged, live: pin, on: .pins(index: 1), in: model)
+                    && !SidebarDragSession.land(bare, live: pin, on: .pins(index: 1), in: model)
+                    && !SidebarDragSession.land(nil, live: pin, on: .pins(index: 1), in: model) && model.pins.map(\.id) == pins)
+            report(
+                "A drop whose payload is the live drag moves it",
+                SidebarDragSession.land(pin, live: pin, on: .pins(index: 1), in: model)
+                    && model.pins.map(\.id).prefix(2) == [pins[1], pins[0]])
+            SidebarDragSession.end()
         }
 
         /// Places on disk (#26), in a temporary app directory: a tab that never sent a form rests with WebKit's state on

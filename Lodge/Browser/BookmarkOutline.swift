@@ -280,26 +280,28 @@ struct BookmarkOutline: NSViewRepresentable {
                 dragged = SidebarDragItem(kind: .folder, id: folder, workspace: model.workspaceID)
             case .tab?, nil: return nil
             }
-            guard let data = dragged.pasteboardData else { return nil }
+            guard let data = SidebarDragSession.begin(dragged).pasteboardData else { return nil }
             let writer = NSPasteboardItem()
             writer.setData(data, forType: SidebarDragItem.pasteboardType)
             return writer
         }
 
-        /// A drop onto a bookmark lands just after it. Whatever the sidebar drags is offered only where the model takes
-        /// it (`canDrop`): a folder moving into itself or below itself, another workspace's item, or one no longer
-        /// here is refused.
+        /// A drop onto a bookmark takes its place: a row of the same folder moving up lands just before it, anything
+        /// else just after it, so a drop on a neighbour always moves. Whatever the sidebar drags is offered only where
+        /// the model takes it (`canDrop`): a folder moving into itself or below itself, another workspace's item, or
+        /// one no longer here is refused. While hovering, the live drag is read from this process, not the pasteboard.
         func outlineView(
             _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
             proposedChildIndex index: Int
         ) -> NSDragOperation {
-            guard let dragged = SidebarDragItem(pasteboard: info.draggingPasteboard) else { return [] }
+            guard let dragged = SidebarDragItem.hovering(pasteboard: info.draggingPasteboard, source: info.draggingSource)
+            else { return [] }
             outline.dragPresence?.touch()
             var parent = id(item)
             var childIndex = index
             if index == NSOutlineViewDropOnItemIndex, case .link? = parent, let place = places[parent!] {
                 parent = place.parent
-                childIndex = place.index + 1
+                childIndex = Self.onRowIndex(place, from: Self.rowID(dragged).flatMap { places[$0] })
                 outlineView.setDropItem(parent.flatMap { items[$0] }, dropChildIndex: childIndex)
             }
             guard model.canDrop(dragged, on: target(parent, childIndex)) else { return [] }
@@ -310,8 +312,16 @@ struct BookmarkOutline: NSViewRepresentable {
             _ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int
         ) -> Bool {
             outline.dragPresence?.end()
-            guard let dragged = SidebarDragItem(pasteboard: info.draggingPasteboard) else { return false }
-            return model.drop(dragged, on: target(id(item), index))
+            defer { SidebarDragSession.end() }
+            guard let dragged = SidebarDragItem(pasteboard: info.draggingPasteboard, source: info.draggingSource)
+            else {
+                SidebarDragSession.log("Outline drop refused: no live drag")
+                return false
+            }
+            let place = target(id(item), index)
+            let moved = model.drop(dragged, on: place)
+            SidebarDragSession.log("Outline drop \(dragged.kind.rawValue) \(dragged.id) on \(place): \(moved)")
+            return moved
         }
 
         /// A drag that started here ended, dropped anywhere or nowhere.
@@ -320,6 +330,25 @@ struct BookmarkOutline: NSViewRepresentable {
             operation: NSDragOperation
         ) {
             outline.dragPresence?.end()
+            SidebarDragSession.end()
+        }
+
+        /// Where a drop on the bookmark at `place` lands among its folder's children: just before it for a row of the
+        /// same folder below it, moving up; just after it otherwise.
+        static func onRowIndex(
+            _ place: (parent: SidebarItem.ID?, index: Int), from: (parent: SidebarItem.ID?, index: Int)?
+        ) -> Int {
+            if let from, from.parent == place.parent, from.index > place.index { return place.index }
+            return place.index + 1
+        }
+
+        /// The outline row a dragged bookmark or folder is, if it is one.
+        private static func rowID(_ item: SidebarDragItem) -> SidebarItem.ID? {
+            switch item.kind {
+            case .bookmark: .link(item.id)
+            case .folder: .folder(item.id)
+            case .pin, .tab: nil
+            }
         }
 
         /// The bookmarks place of a drop into folder `parent` (nil: the root) at `index`, on the folder itself
