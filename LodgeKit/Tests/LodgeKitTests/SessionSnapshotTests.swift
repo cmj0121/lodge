@@ -769,6 +769,52 @@ import Testing
         #expect(String(decoding: try JSONEncoder().encode(Workspace.anonymous), as: UTF8.self)
             .contains(#""color":"graphite""#))
     }
+
+    @Test func appearancesRoundTrip() throws {
+        var darkDefault = Workspace.default
+        darkDefault.appearance = .dark
+        let light = Workspace(name: "Light", symbol: "sun.max", appearance: .light)
+        var darkAnonymous = Workspace.anonymous
+        darkAnonymous.appearance = .dark
+        let snapshot = SessionSnapshot(
+            workspaces: [entry(darkDefault), entry(light), entry(work), entry(darkAnonymous)], windows: [],
+            pendingDeletions: [])
+        let decoded = try roundTrip(snapshot)
+        #expect(decoded == snapshot)
+        #expect(decoded.workspaces.map(\.workspace.appearance) == [.dark, .light, .system, .dark])
+    }
+
+    /// A snapshot with one Dark workspace, its JSON rewritten by `edit`.
+    private func appearanceFile(_ edit: (String) -> String) throws -> Data {
+        let dark = Workspace(name: "Dark", symbol: "moon", appearance: .dark)
+        let snapshot = SessionSnapshot(workspaces: [entry(dark)], windows: [], pendingDeletions: [])
+        let json = try #require(String(data: snapshot.encoded(), encoding: .utf8))
+        #expect(json.contains(#""appearance" : "dark""#))
+        return Data(edit(json).utf8)
+    }
+
+    @Test func aFileWithoutAppearancesDecodesAsSystem() throws {
+        let data = try appearanceFile { $0.replacing(/\s*"appearance" : "[a-z]+",/, with: "") }
+        #expect(!String(decoding: data, as: UTF8.self).contains("appearance"))
+        let decoded = try SessionSnapshot.decode(data)
+        #expect(decoded.workspaces.map(\.workspace.name) == ["Default", "Dark", "Anonymous"])
+        #expect(decoded.workspaces.map(\.workspace.appearance) == [.system, .system, .system])
+    }
+
+    @Test(arguments: [#""sepia""#, "7", "null", #""""#, #""Dark""#])
+    func anUnknownAppearanceDecodesAsSystem(value: String) throws {
+        let data = try appearanceFile { $0.replacing(#""dark""#, with: value) }
+        let decoded = try SessionSnapshot.decode(data)
+        #expect(decoded.workspaces.map(\.workspace.name) == ["Default", "Dark", "Anonymous"])
+        #expect(decoded.workspaces.map(\.workspace.appearance) == [.system, .system, .system])
+    }
+
+    @Test func systemAppearanceWritesNoKey() throws {
+        let data = try JSONEncoder().encode(Workspace(name: "Work", symbol: "briefcase"))
+        #expect(!String(decoding: data, as: UTF8.self).contains("appearance"))
+        let light = try JSONEncoder().encode(Workspace(name: "Work", symbol: "briefcase", appearance: .light))
+        #expect(String(decoding: light, as: UTF8.self).contains(#""appearance":"light""#))
+    }
 }
 
 /// The v4 shape before windows carried a selected tab and frame.

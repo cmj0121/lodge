@@ -258,4 +258,45 @@ import Testing
         #expect(list.anonymous == .anonymous)
         #expect(WorkspaceList(workspaces: [greyDefault]).default.color == nil)
     }
+
+    @Test func appearanceDefaultsToSystem() throws {
+        var (list, created) = try list("Work")
+        #expect(WorkspaceAppearance.allCases == [.system, .light, .dark])
+        #expect(Workspace(name: "Work", symbol: "star").appearance == .system)
+        #expect(list.workspaces.map(\.appearance) == [.system, .system, .system])
+        #expect(created[0].appearance == .system)
+        try list.setColor(created[0].id, .teal)
+        #expect(list[created[0].id]?.appearance == .system)
+    }
+
+    @Test func setAppearanceChangesDefaultCustomAndAnonymous() throws {
+        var (list, created) = try list("Work")
+        try list.setAppearance(Workspace.defaultID, .light)
+        try list.setAppearance(created[0].id, .dark)
+        try list.setAppearance(Workspace.anonymousID, .light)
+        #expect(list.workspaces.map(\.appearance) == [.light, .dark, .light])
+        try list.setAppearance(created[0].id, .system)
+        #expect(list[created[0].id]?.appearance == .system)
+        var lightAnonymous = Workspace.anonymous
+        lightAnonymous.appearance = .light
+        #expect(list.anonymous == lightAnonymous)
+        let id = UUID()
+        #expect(throws: EditError.unknown(id)) { try list.setAppearance(id, .dark) }
+    }
+
+    @Test func initKeepsDefaultsAndAnonymousAppearance() {
+        var darkDefault = Workspace.default
+        darkDefault.appearance = .dark
+        let work = Workspace(name: "Work", symbol: "briefcase", appearance: .light)
+        var restyledAnonymous = Workspace.anonymous
+        restyledAnonymous.appearance = .dark
+        restyledAnonymous.color = .pink
+        restyledAnonymous.name = "Renamed"
+        let list = WorkspaceList(workspaces: [darkDefault, work, restyledAnonymous])
+        #expect(list.workspaces.map(\.appearance) == [.dark, .light, .dark])
+        var darkAnonymous = Workspace.anonymous
+        darkAnonymous.appearance = .dark
+        #expect(list.anonymous == darkAnonymous)
+        #expect(WorkspaceList(workspaces: [work]).anonymous == .anonymous)
+    }
 }
