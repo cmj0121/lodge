@@ -257,6 +257,130 @@
                 "a main-frame navigation redirected by the server to another site prompts",
                 landed && prompts.count == 1 && asks(prompts.first, other, "login"))
 
+            // A main frame's target is the navigation WebKit started, not one only asked about: once that navigation
+            // stops, the site it went to is another site again.
+            if let back = open(defaultModel, shown: false) {
+                let waiting = "/a/stopwait/never"
+                let afterStop = "/a/stopimage/pictured"
+                answering([right])
+                let stopped =
+                    defaultModel.load(server.page(one, "stopstart"), in: back.id) && loaded(back.view, "stopstart")
+                    && script(back.view, "location.href = '\(url(other, waiting))'; 'went'") == "went"
+                    && waitUntil { server.hits(waiting) > 0 }
+                settle(0.5)
+                defaultModel.stopLoading(back.id)
+                let ended = stopped && waitUntil { !back.view.isLoading }
+                let fetched =
+                    ended
+                    && script(
+                        back.view,
+                        "(() => { const i = new Image(); i.src = '\(url(other, afterStop))'; "
+                            + "document.body.append(i); return 'added' })()") == "added"
+                    && waitUntil { server.hits(afterStop) > 0 }
+                settle(1)
+                show(defaultModel, back.id)
+                settle(1)
+                report(
+                    "a main-frame navigation to another site that stops leaves that site's image with no prompt",
+                    fetched && prompts.isEmpty && server.authorized(afterStop) == 0 && server.authorized(waiting) == 0
+                        && back.view.title == "stopstart")
+                show(defaultModel, main.id)
+            } else {
+                report("a main-frame navigation to another site that stops leaves that site's image with no prompt", false)
+            }
+
+            // A page that keeps asking (D1): after a Cancel its other challenges get no sheet until the next commit, and
+            // no more than eight wait behind the sheet.
+            func addFrame(_ view: WKWebView, _ path: String) -> Bool {
+                let source = "(() => { const f = document.createElement('iframe'); f.src = '\(url(one, path))'; "
+                    + "document.body.append(f); return 'added' })()"
+                return script(view, source) == "added"
+            }
+            let refusing = visit(defaultModel, main, one, "/p/refusing", answers: [nil], until: "refusing")
+            let firstFrame = "/a/refusefirst/framed"
+            let secondFrame = "/a/refusesecond/framed"
+            let cancelledOnce =
+                refusing != nil && addFrame(main.view, firstFrame)
+                && waitUntil { server.hits(firstFrame) > 0 && prompts.count == 1 }
+            settle(0.5)
+            let refusalsBefore = TabController.selfCheckRefusals
+            let refused =
+                cancelledOnce && addFrame(main.view, secondFrame)
+                && waitUntil { TabController.selfCheckRefusals > refusalsBefore }
+            settle(0.5)
+            let quiet = refused && prompts.count == 1 && server.authorized(secondFrame) == 0
+            answering([right])
+            let navigated =
+                script(main.view, "location.href = '\(url(one, "/a/refusenav/arrived"))'; 'went'") == "went"
+                && loaded(main.view, "arrived") && prompts.count == 1
+            answering([nil])
+            let thirdFrame = "/a/refusethird/framed"
+            let asksAgain = navigated && addFrame(main.view, thirdFrame) && waitUntil { prompts.count == 1 }
+            report(
+                "after a Cancel the page's other challenges are rejected with no prompt, its navigation still prompts",
+                quiet && navigated)
+            report("after the next commit the page's challenges prompt again", asksAgain)
+            // WebKit keeps six connections to an origin, a waiting challenge holding one, so the frames come from two.
+            let second = AuthCheckServer()
+            defer { second.stop() }
+            if second.start(), let back = open(defaultModel, shown: false) {
+                let frames = (1...10).map {
+                    ($0.isMultiple(of: 2) ? server : second).url(one, "/a/flood\($0)/framed").absoluteString
+                }
+                answering([])
+                let refusalsBefore = TabController.selfCheckRefusals
+                _ = defaultModel.load(server.page(one, "flood", frames: frames), in: back.id)
+                let capped = waitUntil { TabController.selfCheckRefusals - refusalsBefore == 2 }
+                settle(1)
+                let resumesBefore = TabController.selfCheckResumes
+                show(defaultModel, back.id)
+                let drained = waitUntil { TabController.selfCheckResumes - resumesBefore == 8 }
+                settle(0.5)
+                report(
+                    "no more than eight challenges wait: the rest are rejected with no prompt",
+                    capped && TabController.selfCheckRefusals - refusalsBefore == 2)
+                report(
+                    "one Cancel rejects the waiting challenges of other spaces with no further prompt",
+                    drained && prompts.count == 1 && TabController.selfCheckResumes - resumesBefore == 8)
+                show(defaultModel, main.id)
+            } else {
+                report("no more than eight challenges wait: the rest are rejected with no prompt", false)
+            }
+            // A full queue still takes the main frame's own navigation: the page starts a navigation the server holds,
+            // fills the queue from two other origins while it waits, and the navigation's challenge still prompts.
+            let third = AuthCheckServer()
+            defer { third.stop() }
+            if third.start(), let back = open(defaultModel, shown: false) {
+                let target = url(one, "/a/navfull/arrived")
+                let delayed = server.url(one, "/d?to=\(target)")
+                let frames = (1...10).map {
+                    ($0.isMultiple(of: 2) ? second : third).url(one, "/a/full\($0)/framed").absoluteString
+                }
+                prompts = []
+                respond = { $0.realm == AuthCheckServer.realm("navfull") ? right : nil }
+                let refusalsBefore = TabController.selfCheckRefusals
+                let started =
+                    defaultModel.load(server.page(one, "fullstart"), in: back.id) && loaded(back.view, "fullstart")
+                    && script(back.view, "location.href = '\(delayed)'; 'went'") == "went"
+                    && waitUntil { server.hits("/d") > 0 }
+                let source = frames.map { "{ const f = document.createElement('iframe'); f.src = '\($0)'; "
+                    + "document.body.append(f) }" }.joined(separator: " ")
+                let filled =
+                    started && script(back.view, "(() => { \(source) return 'added' })()") == "added"
+                    && waitUntil { TabController.selfCheckRefusals - refusalsBefore == 2 }
+                let asked = filled && waitUntil { server.hits("/a/navfull/arrived") > 0 }
+                settle(0.5)
+                show(defaultModel, back.id)
+                let arrived = asked && loaded(back.view, "arrived")
+                report(
+                    "with eight challenges waiting, the main frame's navigation still prompts",
+                    arrived && prompts.last?.realm == AuthCheckServer.realm("navfull")
+                        && server.authorized("/a/navfull/arrived") > 0)
+                show(defaultModel, main.id)
+            } else {
+                report("with eight challenges waiting, the main frame's navigation still prompts", false)
+            }
+
             // Each workspace's answers stay in its store (D4): another store's tab is asked again, and the server
             // never gets the answer ahead of the prompt.
             /// The tab loads `path`, is asked for `space` and cancels, and the server got no `Authorization` for it.
@@ -347,7 +471,7 @@
     /// Auth self-check only: an HTTP server on the loopback interface. `/a/<space>/<name>` is a page titled `name`
     /// behind Basic authentication in the realm `realm(space)`, answered 401 with a page titled "denied <name>" until
     /// the request carries `user` and `password`; `/p/<name>` is a page titled `name` with the frames and images its
-    /// `frame` and `image` query items name; `/r?to=<url>` redirects there with a 302. Each path's `Authorization`
+    /// `frame` and `image` query items name; `/r?to=<url>` redirects there with a 302, and `/d?to=<url>` does so after three seconds. Each path's `Authorization`
     /// headers are recorded, a request without one as an empty string. Nothing is cached.
     @MainActor
     final class AuthCheckServer {
@@ -474,7 +598,7 @@
                 body =
                     "<!doctype html><title>\(parts[1])</title><body><p>\(parts[1])</p>"
                     + (frames + images).joined() + "</body>"
-            case "r":
+            case "r", "d":
                 status = "302 Found"
                 headers.append("Location: \(components?.queryItems?.first { $0.name == "to" }?.value ?? "/")")
             default:
@@ -483,11 +607,14 @@
             let data = Data(body.utf8)
             let head = (["HTTP/1.1 \(status)", "Content-Type: text/html; charset=utf-8", "Content-Length: \(data.count)",
                 "Cache-Control: no-store", "Connection: close"] + headers).joined(separator: "\r\n") + "\r\n\r\n"
-            connection.send(
-                content: Data(head.utf8) + data,
-                completion: .contentProcessed { [weak self] _ in
-                    MainActor.assumeIsolated { self?.close(connection) }
-                })
+            let send = {
+                connection.send(
+                    content: Data(head.utf8) + data,
+                    completion: .contentProcessed { [weak self] _ in
+                        MainActor.assumeIsolated { self?.close(connection) }
+                    })
+            }
+            if parts.first == "d" { DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: send) } else { send() }
         }
     }
 #endif
