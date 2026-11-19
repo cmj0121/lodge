@@ -1,8 +1,8 @@
 import Foundation
 
 /// Where each workspace keeps its files in the app's Application Support directory: Default its history in the
-/// directory itself, where it always was, and its tab places in `Places/`; every other workspace in
-/// `Workspaces/<uuid>/`.
+/// directory itself, where it always was, its tab places in `Places/` and its link icons in `Icons/`; every other
+/// workspace in `Workspaces/<uuid>/`.
 public enum WorkspaceFiles {
     /// Default → `app` (keeps `history.sqlite`); custom → `app/Workspaces/<uuid>/`; anonymous → nil, it keeps none.
     public static func historyDirectory(for workspace: Workspace, in app: URL) -> URL? {
@@ -23,7 +23,18 @@ public enum WorkspaceFiles {
         }
     }
 
+    /// Where the workspace's pins and bookmarks keep their icons (`LinkIconCache`): Default → `app/Icons/`; custom →
+    /// `app/Workspaces/<uuid>/Icons/`, removed with the workspace; anonymous → nil, it keeps none on disk.
+    public static func iconsDirectory(for workspace: Workspace, in app: URL) -> URL? {
+        switch workspace.kind {
+        case .default: app.appending(path: iconsName, directoryHint: .isDirectory)
+        case .custom: directory(for: workspace.id, in: app).appending(path: iconsName, directoryHint: .isDirectory)
+        case .anonymous: nil
+        }
+    }
+
     private static let placesName = "Places"
+    private static let iconsName = "Icons"
 
     /// A workspace's own directory; never Default's, whose files sit in `app` itself.
     public static func directory(for id: UUID, in app: URL) -> URL {

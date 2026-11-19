@@ -53,8 +53,11 @@ final class BrowserModel {
     @ObservationIgnored private var controllers: [TabID: TabController] = [:]
     /// Restored or released tabs whose web view is not built yet; the load that builds one is not a visit.
     @ObservationIgnored private var restoredTabs: Set<TabID> = []
-    /// Decoded icons of Anonymous bookmarks, by link, with the bytes they were decoded from.
+    /// Decoded icons of pins and bookmarks, by link, with the bytes they were decoded from.
     @ObservationIgnored private var storedIcons: [UUID: (data: Data, image: NSImage)] = [:]
+    /// Where this workspace keeps its links' icons on disk (D2); nil for Anonymous, whose bookmarks keep theirs in
+    /// memory (`SavedLink.icon`), in layout renders without one, and once the workspace is being deleted.
+    @ObservationIgnored var icons: LinkIconCache?
     /// Released tabs' `interactionState`, in memory only, put back when the view is rebuilt.
     @ObservationIgnored private var savedStates: [TabID: Any] = [:]
     /// Where this workspace's resting tabs keep their place on disk (D5); nil for Anonymous, which keeps none, in
@@ -127,12 +130,13 @@ final class BrowserModel {
         workspace: UUID = Workspace.defaultID, store: StoreRef? = .global,
         restoring content: SessionSnapshot.WorkspaceContent? = nil,
         registry: WebViewRegistry = WebViewRegistry(), defaultLibrary: LinkLibrary = LinkLibrary(),
-        places: PlaceStore? = nil
+        places: PlaceStore? = nil, icons: LinkIconCache? = nil
     ) {
         workspaceID = workspace
         self.store = store
         self.registry = registry
         self.places = workspace == Workspace.anonymousID ? nil : places
+        self.icons = workspace == Workspace.anonymousID ? nil : icons
         if let content {
             let restored = content.restored(store: store)
             library = restored.library
@@ -147,6 +151,14 @@ final class BrowserModel {
         if tabs.tabs.isEmpty { appendBlanks([TabID()]) }
         lastContent = storedContent
         self.places?.prune(keeping: Set(tabs.tabs.map(\.id)))
+        if let directory = self.icons?.directory {
+            // Off the main actor: icons of links removed in a run that could not remove theirs go. Only files
+            // written before now, so an icon kept meanwhile stays; it never creates the directory, so a deletion
+            // removing it meanwhile is safe.
+            let links = Set((library.links(on: .pins) + library.links(on: .bookmarks)).map(\.id))
+            let listed = Date.now
+            Task.detached(priority: .utility) { LinkIconCache.prune(directory, keeping: links, before: listed) }
+        }
     }
 
     /// The store a new tab runs on: the workspace's own; in Anonymous a new browser of its own, except a WebKit popup,
@@ -577,6 +589,7 @@ final class BrowserModel {
             view.interactionState = state
         } else if load, let url = tab.url {
             if case .load(_, let y?) = onDisk { controller.restoreScroll(to: y, at: url) }
+            if let link = tab.link.flatMap(savedLink), link.url == url { controller.linkWillLoad() }
             controller.browserWillLoad()
             let navigation = view.load(URLRequest(url: url))
             if isRestoring { controller.restoreNavigation = navigation }
@@ -702,31 +715,42 @@ final class BrowserModel {
         old?.url != new.url && LodgePage.isLodge(new.url) && registry.webView(for: new.id) != nil
     }
 
-    /// Keeps the tab's icon; in Anonymous a bookmark's tab also stores it in the bookmark, for when it has no tab.
+    /// Shows the tab's icon. A link's tab on that link's own load also keeps it for the link, on disk (D2); in
+    /// Anonymous a bookmark's tab stores it in the bookmark instead, in memory, whatever page it is on.
     func setFavicon(_ image: NSImage?, for id: TabID) {
         guard let tab = tabs[id], favicons[id] !== image else { return }
         favicons[id] = image
-        if let image, let link = tab.link, isAnonymous, library.links(on: .bookmarks).contains(where: { $0.id == link }) {
-            storeIcon(image, in: link)
+        guard let image, let link = tab.link else { return }
+        if isAnonymous {
+            if library.links(on: .bookmarks).contains(where: { $0.id == link }) { storeIcon(image, in: link) }
+        } else if controllers[id]?.isOnLinkLoad == true {
+            keepIcon(image, for: link)
         }
     }
 
-    /// The row's icon: its open tab's favicon, else a shared pin's from Default, else the icon an Anonymous bookmark
-    /// stored.
+    /// The row's icon: its open tab's favicon, else a shared pin's from Default, else the icon the link keeps.
     func favicon(for item: SidebarItem) -> NSImage? {
         if let tab = item.tab, let image = favicons[tab.id] { return image }
         guard case .link(let link, let shelf, _) = item else { return nil }
         if shelf == .pins, let sharedPins { return sharedPins.pinFavicon(link.id) }
-        guard let data = link.icon else { return nil }
-        if let cached = storedIcons[link.id], cached.data == data { return cached.image }
+        return storedIcon(link.id, data: isAnonymous ? link.icon : icons?.icon(for: link.id))
+    }
+
+    /// The icon the link keeps on disk, its file read the first time and decoded once; nil when it keeps none.
+    func keptIcon(for link: UUID) -> NSImage? {
+        storedIcon(link, data: icons?.icon(for: link))
+    }
+
+    private func storedIcon(_ link: UUID, data: Data?) -> NSImage? {
+        guard let data else { return nil }
+        if let cached = storedIcons[link], cached.data == data { return cached.image }
         guard let cgImage = LinkIcon.image(from: data) else { return nil }
         let image = NSImage(cgImage: cgImage, size: .zero)
-        storedIcons[link.id] = (data, image)
+        storedIcons[link] = (data, image)
         return image
     }
 
-    /// Memory pressure (D4): the decoded bookmark icons go; each is decoded again from its stored bytes when next
-    /// drawn.
+    /// Memory pressure (D4): the decoded link icons go; each is decoded again from its kept bytes when next drawn.
     func dropRebuildableCaches() {
         storedIcons.removeAll()
     }
@@ -745,10 +769,24 @@ final class BrowserModel {
     }
 
     private func storeIcon(_ image: NSImage, in link: UUID) {
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-            let data = LinkIcon.png(from: cgImage)
-        else { return }
+        guard let data = Self.iconData(image) else { return }
         changeLibrary { $0.setIcon(link, data) }
+    }
+
+    /// Keeps `image` as the link's icon in `icons`, written only when its bytes differ from those kept.
+    private func keepIcon(_ image: NSImage, for link: UUID) {
+        guard let icons, savedLink(link) != nil, let data = Self.iconData(image) else { return }
+        do {
+            if try icons.write(data, for: link) { storedIcons[link] = (data, image) }
+        } catch {
+            Self.iconsLogger.error("Cannot keep a link's icon: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private static let iconsLogger = Logger(subsystem: "dev.lodge", category: "icons")
+
+    private static func iconData(_ image: NSImage) -> Data? {
+        image.cgImage(forProposedRect: nil, context: nil, hints: nil).flatMap(LinkIcon.png(from:))
     }
 
     func setProgress(_ progress: Double, for id: TabID) {
@@ -761,6 +799,11 @@ final class BrowserModel {
     }
 
     // MARK: Links
+
+    /// The pin or bookmark with `id` in this workspace's own library.
+    private func savedLink(_ id: UUID) -> SavedLink? {
+        library.links(on: .pins).first { $0.id == id } ?? library.links(on: .bookmarks).first { $0.id == id }
+    }
 
     /// A fresh tab on the link, in this workspace.
     func tab(for link: SavedLink) -> BrowserTab {
@@ -784,7 +827,14 @@ final class BrowserModel {
             return
         }
         let link = library.add(page.url, title: page.tab.displayTitle, to: shelf)
-        if isAnonymous, shelf == .bookmarks, let image = favicons[id] { storeIcon(image, in: link.id) }
+        if let image = favicons[id] {
+            // The tab shows the link's own URL, so its icon is the link's.
+            if isAnonymous {
+                if shelf == .bookmarks { storeIcon(image, in: link.id) }
+            } else {
+                keepIcon(image, for: link.id)
+            }
+        }
         if page.tab.link == nil { update(id) { $0.link = link.id } }
     }
 
@@ -804,10 +854,14 @@ final class BrowserModel {
         if let sharedPins { sharedPins.pin(from: link) } else { addPin(link.url, title: link.title) }
     }
 
-    /// Drops the link's row, or a folder with every row in it; an open tab of a removed link carries on as a
-    /// loose tab.
+    /// Drops the link's row, or a folder with every row in it, with the icons they keep; an open tab of a removed
+    /// link carries on as a loose tab.
     func removeLink(_ id: UUID) {
         let removed = Set(library.remove(id))
+        for link in removed {
+            icons?.remove(link)
+            storedIcons[link] = nil
+        }
         let loosened = tabs.tabs.filter { $0.link.map(removed.contains) == true }.map(\.id)
         guard !loosened.isEmpty else { return }
         changeTabs { tabs in

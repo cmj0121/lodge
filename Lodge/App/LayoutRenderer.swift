@@ -55,6 +55,7 @@
             checkPressureKeepsSessionStore()
             checkReleasedViewGoes()
             checkPlaces()
+            checkKeptIcons()
             checkFingerprint()
             checkAuth()
             checkPlainHTTP()
@@ -1447,6 +1448,110 @@
             report(anonymousName, waitUntil { anonymousStore.isGone && registry.existingDataStore(for: ref) == nil })
             autoreleasepool { coordinator.switchTo(Workspace.defaultID) }
             settle()
+        }
+
+        /// Kept link icons (#30), in a temporary app directory, printing ok or FAILED for each: with icons already in
+        /// Default's `Icons/` and no open tab, Default's pins and bookmarks and a custom workspace's shared pins draw
+        /// them, and a file for no link is pruned; the session file holds no icon; a pin's own load keeps its icon, a
+        /// later page in its tab does not change it; unpinning removes its file; Anonymous keeps none on disk. Pages
+        /// are `data:` URLs and icons are handed to the model as its loader would, so no request goes out.
+        private static func checkKeptIcons() {
+            func report(_ name: String, _ passed: Bool) { print("Kept icons: \(name): \(passed ? "ok" : "FAILED")") }
+            func waitUntil(_ done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(5)
+                while !autoreleasepool(invoking: done), Date.now < deadline {
+                    autoreleasepool { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) }
+                }
+                return autoreleasepool(invoking: done)
+            }
+            func icon(red: CGFloat) -> (image: NSImage, data: Data)? {
+                guard
+                    let context = CGContext(
+                        data: nil, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                else { return nil }
+                context.setFillColor(red: red, green: 0.3, blue: 0.6, alpha: 1)
+                context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+                guard let made = context.makeImage() else { return nil }
+                let image = NSImage(cgImage: made, size: .zero)
+                guard let drawn = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                    let data = LinkIcon.png(from: drawn)
+                else { return nil }
+                return (image, data)
+            }
+            func page(_ name: String) -> URL? { URL(string: "data:text/html,<title>\(name)</title>") }
+
+            let temporary = FileManager.default.temporaryDirectory.appending(
+                path: "LodgeIcons-\(UUID().uuidString)", directoryHint: .isDirectory)
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            let app = temporary.appending(path: "app", directoryHint: .isDirectory)
+            let cache = LinkIconCache(directory: WorkspaceFiles.iconsDirectory(for: .default, in: app)!)
+            let drawName = "Pins, bookmarks and shared pins draw their kept icons with no tab open"
+            guard let pin = LinkLibrary.sample.links(on: .pins).first,
+                let bookmark = LinkLibrary.sample.links(on: .bookmarks).first, let stored = icon(red: 0.9),
+                let first = icon(red: 0.1), let later = icon(red: 0.5),
+                (try? cache.write(stored.data, for: pin.id)) == true,
+                (try? cache.write(stored.data, for: bookmark.id)) == true,
+                (try? cache.write(stored.data, for: UUID())) == true
+            else { return report(drawName, false) }
+
+            let coordinator = WorkspaceCoordinator(
+                restoring: nil, session: nil, appDirectory: app, downloads: nil, defaultLibrary: .sample,
+                restDefaults: nil)
+            coordinator.bringForwardHook = { _ in }
+            coordinator.restAfter = .never
+            let home = coordinator.active
+            let homeDrawn =
+                home.favicon(for: .link(pin, .pins, nil)) != nil
+                && home.favicon(for: .link(bookmark, .bookmarks, nil)) != nil && home.tabs.tab(forLink: pin.id) == nil
+            let pruned = waitUntil {
+                let names = try? FileManager.default.contentsOfDirectory(
+                    atPath: cache.directory.path(percentEncoded: false))
+                return names?.count == 2
+            }
+            guard let work = try? coordinator.create(name: "Icons", symbol: "briefcase"),
+                let workModel = coordinator.model(for: work.id)
+            else { return report(drawName, false) }
+            let sharedDrawn = workModel.favicon(for: .link(pin, .pins, nil)) != nil
+            report(drawName, homeDrawn && sharedDrawn && pruned)
+            let session = (try? coordinator.snapshot.encoded()).map { String(decoding: $0, as: UTF8.self) } ?? ""
+            report(
+                "The session file holds no icon",
+                !session.isEmpty && !session.contains("\"icon\"")
+                    && !session.contains(stored.data.base64EncodedString()))
+
+            // A pin opened on its own URL keeps the icon its page shows; a later page in its tab does not change it.
+            coordinator.switchTo(Workspace.defaultID)
+            let pane = firstPane(coordinator)
+            let ownName = "A pin's own load keeps its icon"
+            guard let own = page("own-icon"), let elsewhere = page("elsewhere-icon") else {
+                return report(ownName, false)
+            }
+            let link = home.addPin(own, title: "Own")
+            pane.openLink(link)
+            guard let tab = home.tabs.tab(forLink: link.id),
+                waitUntil({ home.tabs[tab.id]?.isLoading == false && home.tabs[tab.id]?.title == "own-icon" })
+            else { return report(ownName, false) }
+            home.setFavicon(first.image, for: tab.id)
+            report(ownName, LinkIconCache(directory: cache.directory).icon(for: link.id) == first.data)
+            _ = home.load(elsewhere, in: tab.id)
+            let left = waitUntil {
+                home.tabs[tab.id]?.isLoading == false && home.tabs[tab.id]?.title == "elsewhere-icon"
+            }
+            home.setFavicon(later.image, for: tab.id)
+            report(
+                "A later page in a pin's tab leaves its kept icon",
+                left && home.tabs[tab.id]?.link == link.id
+                    && LinkIconCache(directory: cache.directory).icon(for: link.id) == first.data)
+
+            home.unpin(link.id)
+            report(
+                "Unpinning removes the pin's icon file",
+                !FileManager.default.fileExists(atPath: cache.url(for: link.id).path(percentEncoded: false)))
+            let anonymous = coordinator.model(for: Workspace.anonymousID)
+            report("Anonymous keeps no icons on disk", anonymous != nil && anonymous?.icons == nil)
+            autoreleasepool { home.close(tab.id) }
         }
 
         /// Places on disk (#26), in a temporary app directory: a tab that never sent a form rests with WebKit's state on

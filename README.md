@@ -41,6 +41,7 @@ one you are in uses resources.
 | Resting tabs          | Dimmed in the sidebar, noted resting; selecting it brings back its page, history, scroll |
 | Rest tabs after       | Settings › General: 5, 15, 30, 60 minutes or Never; 5 minutes by default, all workspaces |
 | Places on disk        | Back after relaunch with history and scroll; a tab that sent a form gets address, scroll |
+| Link icons            | Pins and bookmarks keep the icon their own address shows, beside the workspace's files   |
 | Low memory            | When macOS runs low, unseen tabs rest at once, oldest first; you stay signed in to sites |
 | Work in progress      | Unsent text, form uploads, playback, camera or mic, fullscreen, popups keep a page awake |
 | Asks before leaving   | A page that would ask before you leave is kept too, best effort; downloads always finish |

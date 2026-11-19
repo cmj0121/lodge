@@ -185,7 +185,9 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
             registry: registry,
             defaultLibrary: workspace.id == Workspace.defaultID ? defaultLibrary : LinkLibrary(),
             places: appDirectory.flatMap { WorkspaceFiles.placesDirectory(for: workspace, in: $0) }
-                .map { PlaceStore(directory: $0) })
+                .map { PlaceStore(directory: $0) },
+            icons: appDirectory.flatMap { WorkspaceFiles.iconsDirectory(for: workspace, in: $0) }
+                .map { LinkIconCache(directory: $0) })
         model.downloads = downloads
         model.placement = self
         if let store = historyStores[workspace.id] { model.historyRecorder = HistoryRecorder(store: store) }
@@ -841,7 +843,7 @@ extension WorkspaceCoordinator {
 protocol SharedPins: AnyObject {
     /// Default's pins, its model built (without web views) when needed.
     var pins: [SavedLink] { get }
-    /// The favicon of the pin's open tab in Default.
+    /// The favicon of the pin's open tab in Default, else the icon the pin keeps there.
     func pinFavicon(_ pin: UUID) -> NSImage?
     /// Pins a copy of the tab's page in Default, deduped by URL; the tab and the window stay as they are.
     func pin(from tab: BrowserTab)
@@ -861,7 +863,7 @@ extension WorkspaceCoordinator: SharedPins {
 
     func pinFavicon(_ pin: UUID) -> NSImage? {
         let model = defaultModel
-        return model.tabs.tab(forLink: pin).flatMap { model.favicons[$0.id] }
+        return model.tabs.tab(forLink: pin).flatMap { model.favicons[$0.id] } ?? model.keptIcon(for: pin)
     }
 
     func pin(from tab: BrowserTab) {
@@ -1045,8 +1047,9 @@ extension WorkspaceCoordinator {
         guard let model = models.removeValue(forKey: id) else { return }
         model.onContentChange = nil
         model.placement = nil
-        // removeFiles deletes its places; nothing may write one again meanwhile.
+        // removeFiles deletes its places and icons; nothing may write one again meanwhile.
         model.places = nil
+        model.icons = nil
         if let recorder = model.historyRecorder { deletingRecorders[id] = recorder }
         model.historyRecorder = nil
         registry.detach(tabs: model.tabs.tabs.map(\.id))
