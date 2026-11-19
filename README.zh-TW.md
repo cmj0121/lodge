@@ -27,8 +27,9 @@
 | Default workspace    | 內建的共用瀏覽器，永遠都在；pinned tab 屬於它，在每個 workspace 都能使用                |
 | 自訂 workspace       | 一個新的瀏覽器：每個網站都有自己的一份網站資料與登入                                    |
 | Anonymous workspace  | 永遠排在最後；每個 tab 都是獨立的瀏覽器，隨 tab 關閉消失，只留 bookmark                 |
-| Anonymous 外觀       | 身分不明的人像圖示；在其中時視窗轉為深炭黑、頁面維持系統外觀，網址列顯示 Anonymous 標記 |
+| Anonymous 外觀       | 身分不明的人像圖示；視窗一律為深炭黑，頁面依它的外觀，網址列顯示 Anonymous 標記         |
 | Workspace 顏色       | 在 workspace sheet 選八種顏色之一或不選；sidebar 與焦點框跟著上色                       |
+| Workspace 外觀       | 在 workspace bar 的選單選系統、淺色或深色，視窗與頁面跟著改；Anonymous 視窗維持深色     |
 | Sidebar 標題         | Default 和 Anonymous 在名稱下方附一行簡短說明；自訂 workspace 不顯示                    |
 | 獨立的身分           | 登入、cookie 和網站資料各自保存在產生它們的 workspace 裡                                |
 | 獨立的 fingerprint   | 各 workspace 對各網站一組穩定的 canvas、WebGL、音訊 fingerprint；Anonymous 每 tab 一組  |
@@ -82,6 +83,7 @@
 | 不涵蓋      | 網頁在 Lodge 接手前就從 frame 取走的方法                                                  |
 | 尚未涵蓋    | navigator、螢幕與字型的 fingerprint，留待之後的里程碑                                     |
 | 不涵蓋      | User-Agent：標示你安裝的 Safari 版本，每個 workspace 都相同                               |
+| 不涵蓋      | workspace 的外觀：頁面的 `prefers-color-scheme` 依它的設定，網站可藉此分辨 workspace      |
 | 不做        | 每個 workspace 各自的 User-Agent、proxy 或 VPN，阻擋追蹤器                                |
 | 不做        | 手動挑選或重設 workspace 的 fingerprint                                                   |
 

@@ -50,6 +50,9 @@ struct SettingsView: View {
                     Text("Resting tabs keep their place on this Mac: the address, scroll position and, for tabs that never sent a form, their back and forward history. Text in form fields and posted form data are never kept, and Anonymous keeps nothing.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                    Text("Each workspace's look — System, Light or Dark — is set from its menu in the workspace bar.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
                 Section("Search") {
                     Picker("Search with", selection: defaultEngine) {

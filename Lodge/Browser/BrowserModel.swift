@@ -572,6 +572,7 @@ final class BrowserModel {
         let onDisk = load && saved == nil ? places?.read(id)?.wake(at: tab.url) : nil
         let view = registry.make(
             for: id, store: tab.store, configuration: configuration, zoom: zoom[id] ?? PageZoom.actual, model: self)
+        WindowAppearance.track(view, workspace: workspaceID)
         update(id) { $0.isLive = true }
         // Built once the tab is listed, so the controller's initial KVO values reach it.
         let controller = TabController(

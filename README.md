@@ -27,8 +27,9 @@ one you are in uses resources.
 | Default workspace     | The built-in shared browser, always there; pinned tabs belong to it, at hand everywhere  |
 | Custom workspace      | A new browser: every site gets its own site data and sign-ins                            |
 | Anonymous workspace   | Always last; each tab is its own browser, gone with the tab; only bookmarks are kept     |
-| Anonymous look        | An unknown-person icon; windows go deep charcoal (not pages); the address shows a badge  |
+| Anonymous look        | An unknown-person icon; its windows are always deep charcoal; the address shows a badge  |
 | Workspace color       | Pick one of eight colors or none in the workspace sheet; it tints the sidebar and focus  |
+| Workspace look        | System, Light or Dark from its menu in the workspace bar; Anonymous's windows stay dark  |
 | Sidebar header        | Default and Anonymous show a one-line tagline under their name; custom ones show none    |
 | Own identity          | Sign-ins, cookies and site data stay in the workspace they were made in                  |
 | Own fingerprint       | Per workspace and site, stable: canvas, WebGL and audio; each Anonymous tab its own      |
@@ -84,6 +85,7 @@ the tab. The protection is on everywhere until you switch it off for a site on `
 | Not covered | Methods a page took from a frame before Lodge reached it                                              |
 | Not yet     | Navigator, screen and font fingerprints, for a later milestone                                        |
 | Not covered | The User-Agent, which names your installed Safari and is the same in every workspace                  |
+| Not covered | A workspace's look: its pages' `prefers-color-scheme` is its own, so a site can tell workspaces apart |
 | Not done    | A User-Agent, proxy or VPN per workspace, blocking trackers                                           |
 | Not done    | Picking or resetting a workspace's fingerprint by hand                                                |
 

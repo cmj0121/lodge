@@ -112,6 +112,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     ) {
         let list = snapshot?.workspaceList ?? WorkspaceList()
         workspaces = list
+        for workspace in list.workspaces { WindowAppearance.set(workspace.appearance, for: workspace.id) }
         selections = WindowSelections(active: list.resolve(snapshot?.windows.first?.activeWorkspace))
         let saved = snapshot?.windows ?? []
         let restoredWindows = (saved.isEmpty ? [.init(activeWorkspace: list.default.id)] : saved)
@@ -345,6 +346,13 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     func setColor(_ id: UUID, _ color: WorkspaceColor?) throws(WorkspaceList.EditError) {
         try workspaces.setColor(id, color)
         didChange()
+    }
+
+    /// Every window and page of the workspace takes the new look at once, with no reload.
+    func setAppearance(_ id: UUID, _ appearance: WorkspaceAppearance) throws(WorkspaceList.EditError) {
+        try workspaces.setAppearance(id, appearance)
+        didChange()
+        WindowAppearance.set(appearance, for: id)
     }
 
     /// What the workspace searches with right now, and what it can pick; Default's for an unknown workspace.
@@ -1035,6 +1043,7 @@ extension WorkspaceCoordinator {
         _ = try? workspaces.remove(id)
         search.drop(id)
         fingerprints.drop(id)
+        WindowAppearance.forget(id)
         if !pendingDeletions.contains(id) { pendingDeletions.append(id) }
     }
 

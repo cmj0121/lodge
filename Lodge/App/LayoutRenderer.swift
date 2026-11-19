@@ -38,6 +38,7 @@
             renderAnonymous(in: directory)
             renderTheme(in: directory)
             checkAppearance()
+            checkWorkspaceAppearance()
             checkTheme()
             checkDeletion(to: directory.appending(path: "layout-delete.png"))
             checkAnonymous()
@@ -2128,6 +2129,112 @@
 
             coordinator.switchTo(Workspace.defaultID)
             report("Leaving Anonymous gives the windows back", settle { hosts.allSatisfy { $0.appearance == nil } })
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+        }
+
+        /// Each workspace's own look through the real path, printed ok or FAILED for each: a page reports its
+        /// workspace's `prefers-color-scheme` whatever the app's look, System follows the app live, a change reaches
+        /// open pages with no reload, a switch gives the window its workspace's chrome, a page keeps its look in a
+        /// window of another, Anonymous's chrome stays dark in any look, and a removed workspace's look is
+        /// forgotten. Pages are `about:blank`, so no request goes out.
+        private static func checkWorkspaceAppearance() {
+            func report(_ name: String, _ passed: Bool) { print("Workspace look: \(name): \(passed ? "ok" : "FAILED")") }
+            func settle(until done: () -> Bool) -> Bool {
+                let deadline = Date.now.addingTimeInterval(3)
+                while !done(), Date.now < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) }
+                return done()
+            }
+            func value(_ script: String, in view: WKWebView?) -> Any? {
+                guard let view else { return nil }
+                var answer: Any?
+                var done = false
+                view.evaluateJavaScript(script) { value, _ in
+                    answer = value
+                    done = true
+                }
+                _ = settle { done }
+                return answer
+            }
+            func prefersDark(_ view: WKWebView?) -> Bool? {
+                value("matchMedia('(prefers-color-scheme: dark)').matches", in: view) as? Bool
+            }
+            func becomes(_ view: WKWebView?, dark: Bool) -> Bool { settle { prefersDark(view) == dark } }
+            let system = NSApp.appearance
+            NSApp.appearance = NSAppearance(named: .aqua)
+            defer { NSApp.appearance = system }
+
+            let coordinator = WorkspaceCoordinator(restoring: nil, session: nil, appDirectory: nil, downloads: nil)
+            coordinator.bringForwardHook = { _ in }
+            let window = coordinator.windows[0]
+            window.locationPrompt = nil
+            let hostWindow = host(root(coordinator, window), size: NSSize(width: 900, height: 600))
+            defer { hostWindow.close() }
+            /// The page the window shows in the active workspace, on `about:blank`.
+            func shownPage() -> WKWebView? {
+                guard let shown = coordinator.selections.shown(in: window.id) else { return nil }
+                let model = coordinator.active
+                model.update(shown) { $0.url = URL(string: "about:blank")! }
+                let view = model.view(for: shown)
+                _ = settle { view?.isLoading == false }
+                return view
+            }
+            guard let night = try? coordinator.create(name: "Night", symbol: "moon"),
+                (try? coordinator.setAppearance(night.id, .dark)) != nil
+            else { return report("a Dark workspace's page is dark in a light app", false) }
+            let registered = settle { window.nsWindow === hostWindow }
+            let nightPage = shownPage()
+            report(
+                "a Dark workspace's page is dark in a light app",
+                registered && coordinator.activeWorkspaceID == night.id && becomes(nightPage, dark: true)
+                    && nightPage?.appearance?.name == .darkAqua && hostWindow.appearance?.name == .darkAqua)
+
+            _ = value("window.marker = 42", in: nightPage)
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+            let stillDark = becomes(nightPage, dark: true)
+            try? coordinator.setAppearance(night.id, .light)
+            report(
+                "a Light workspace's page is light in a dark app, changed with no reload",
+                stillDark && becomes(nightPage, dark: false) && nightPage?.appearance?.name == .aqua
+                    && hostWindow.appearance?.name == .aqua
+                    && value("window.marker", in: nightPage) as? Int == 42)
+
+            let stray = NSWindow(
+                contentRect: NSRect(x: -10_000, y: -10_000, width: 400, height: 300), styleMask: [.titled],
+                backing: .buffered, defer: false)
+            stray.isReleasedWhenClosed = false
+            stray.appearance = NSAppearance(named: .darkAqua)
+            let container = WebViewContainer()
+            stray.contentView = container
+            container.show(nightPage)
+            report(
+                "a page keeps its own workspace's look in a window of another",
+                nightPage?.window === stray && nightPage?.effectiveAppearance.name == .aqua
+                    && becomes(nightPage, dark: false))
+            container.show(nil)
+            stray.close()
+
+            coordinator.switchTo(Workspace.defaultID)
+            let defaultPage = shownPage()
+            let followsDark = settle { hostWindow.appearance == nil } && becomes(defaultPage, dark: true)
+            NSApp.appearance = NSAppearance(named: .aqua)
+            report(
+                "a switch gives the window its workspace's look, and System follows the app live",
+                followsDark && becomes(defaultPage, dark: false))
+
+            try? coordinator.setAppearance(Workspace.anonymousID, .light)
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+            coordinator.switchTo(Workspace.anonymousID)
+            let anonymousPage = shownPage()
+            report(
+                "Anonymous's chrome stays dark while its page follows its own look",
+                settle { hostWindow.appearance?.name == .darkAqua } && becomes(anonymousPage, dark: false))
+            try? coordinator.setAppearance(Workspace.anonymousID, .system)
+            coordinator.switchTo(Workspace.defaultID)
+            let recorded = WindowAppearance.recorded(night.id) == .light
+            coordinator.removeFromList(night.id)
+            report(
+                "a removed workspace's look is forgotten",
+                recorded && WindowAppearance.recorded(night.id) == nil && coordinator.workspaces[night.id] == nil)
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
         }
 
