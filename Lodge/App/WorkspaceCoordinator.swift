@@ -112,6 +112,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     ) {
         let list = snapshot?.workspaceList ?? WorkspaceList()
         workspaces = list
+        for workspace in list.workspaces { WindowAppearance.set(workspace.appearance, for: workspace.id) }
         selections = WindowSelections(active: list.resolve(snapshot?.windows.first?.activeWorkspace))
         let saved = snapshot?.windows ?? []
         let restoredWindows = (saved.isEmpty ? [.init(activeWorkspace: list.default.id)] : saved)
@@ -185,7 +186,9 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
             registry: registry,
             defaultLibrary: workspace.id == Workspace.defaultID ? defaultLibrary : LinkLibrary(),
             places: appDirectory.flatMap { WorkspaceFiles.placesDirectory(for: workspace, in: $0) }
-                .map { PlaceStore(directory: $0) })
+                .map { PlaceStore(directory: $0) },
+            icons: appDirectory.flatMap { WorkspaceFiles.iconsDirectory(for: workspace, in: $0) }
+                .map { LinkIconCache(directory: $0) })
         model.downloads = downloads
         model.placement = self
         if let store = historyStores[workspace.id] { model.historyRecorder = HistoryRecorder(store: store) }
@@ -343,6 +346,13 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     func setColor(_ id: UUID, _ color: WorkspaceColor?) throws(WorkspaceList.EditError) {
         try workspaces.setColor(id, color)
         didChange()
+    }
+
+    /// Every window and page of the workspace takes the new look at once, with no reload.
+    func setAppearance(_ id: UUID, _ appearance: WorkspaceAppearance) throws(WorkspaceList.EditError) {
+        try workspaces.setAppearance(id, appearance)
+        didChange()
+        WindowAppearance.set(appearance, for: id)
     }
 
     /// What the workspace searches with right now, and what it can pick; Default's for an unknown workspace.
@@ -841,7 +851,7 @@ extension WorkspaceCoordinator {
 protocol SharedPins: AnyObject {
     /// Default's pins, its model built (without web views) when needed.
     var pins: [SavedLink] { get }
-    /// The favicon of the pin's open tab in Default.
+    /// The favicon of the pin's open tab in Default, else the icon the pin keeps there.
     func pinFavicon(_ pin: UUID) -> NSImage?
     /// Pins a copy of the tab's page in Default, deduped by URL; the tab and the window stay as they are.
     func pin(from tab: BrowserTab)
@@ -850,6 +860,11 @@ protocol SharedPins: AnyObject {
     /// Removes the pin from Default; Default's tab of it becomes loose.
     func unpin(_ id: UUID)
     func movePin(_ id: UUID, to index: Int)
+    /// Pins a copy of the link (a new id) in Default at `index`, keeping `icon` for it there; a URL already pinned
+    /// changes nothing.
+    func insertPin(_ link: SavedLink, at index: Int, icon: Data?)
+    /// The icon bytes the pin keeps in Default; nil when it keeps none.
+    func keptPinIcon(_ pin: UUID) -> Data?
     /// Switches every window to Default and opens the pin in `window`, or shows its open tab there.
     func openPin(_ link: SavedLink, from window: WindowState)
 }
@@ -861,7 +876,7 @@ extension WorkspaceCoordinator: SharedPins {
 
     func pinFavicon(_ pin: UUID) -> NSImage? {
         let model = defaultModel
-        return model.tabs.tab(forLink: pin).flatMap { model.favicons[$0.id] }
+        return model.tabs.tab(forLink: pin).flatMap { model.favicons[$0.id] } ?? model.keptIcon(for: pin)
     }
 
     func pin(from tab: BrowserTab) {
@@ -876,6 +891,12 @@ extension WorkspaceCoordinator: SharedPins {
     func unpin(_ id: UUID) { defaultModel.unpin(id) }
 
     func movePin(_ id: UUID, to index: Int) { defaultModel.movePin(id, to: index) }
+
+    func insertPin(_ link: SavedLink, at index: Int, icon: Data?) {
+        defaultModel.insertPin(SavedLink(url: link.url, title: link.title), at: index, icon: icon)
+    }
+
+    func keptPinIcon(_ pin: UUID) -> Data? { defaultModel.icons?.icon(for: pin) }
 
     func openPin(_ link: SavedLink, from window: WindowState) {
         guard windows.contains(where: { $0 === window }) else { return }
@@ -1033,6 +1054,7 @@ extension WorkspaceCoordinator {
         _ = try? workspaces.remove(id)
         search.drop(id)
         fingerprints.drop(id)
+        WindowAppearance.forget(id)
         if !pendingDeletions.contains(id) { pendingDeletions.append(id) }
     }
 
@@ -1045,8 +1067,9 @@ extension WorkspaceCoordinator {
         guard let model = models.removeValue(forKey: id) else { return }
         model.onContentChange = nil
         model.placement = nil
-        // removeFiles deletes its places; nothing may write one again meanwhile.
+        // removeFiles deletes its places and icons; nothing may write one again meanwhile.
         model.places = nil
+        model.icons = nil
         if let recorder = model.historyRecorder { deletingRecorders[id] = recorder }
         model.historyRecorder = nil
         registry.detach(tabs: model.tabs.tabs.map(\.id))

@@ -21,6 +21,8 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var gestures = NavigationGestures()
     /// The next main-frame action is a load the browser started (`browserWillLoad()`).
     private var nextLoadIsBrowserInitiated = false
+    /// Whether the tab is on its link's own load, whose icon the link keeps (D2).
+    private var ownLoad = LinkOwnLoad()
     /// A main-frame form submission is loading; it holds the page (`PageWork`) until that load ends.
     private var isFormPostLoading = false
     /// The scroll-restoring script (`PlaceScript`), until the load it was added for ends.
@@ -193,6 +195,15 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         nextLoadIsBrowserInitiated = true
     }
 
+    /// The browser is about to load the tab's link's own URL (D2): the page it lands on, redirects included, gives the
+    /// link its icon, until the tab navigates anywhere else.
+    func linkWillLoad() {
+        ownLoad.start()
+    }
+
+    /// The tab's page is its link's own, so the icon it shows is the one the link keeps.
+    var isOnLinkLoad: Bool { ownLoad.isOn }
+
     /// The tab wakes from a record (D5): the next load of `url` scrolls its main frame back to `y`, from a user script
     /// removed once that load ends.
     func restoreScroll(to y: Double, at url: URL) {
@@ -289,6 +300,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         cancelQueuedChallenges()
         navigationOrigin = webView?.url.map(Origin.init(url:))
         isNavigating = false
+        ownLoad.loadEnded()
     }
 
     /// Runs `change` on the challenges, telling the model when whether one holds the tab changes.
@@ -420,6 +432,10 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
         let browserInitiated = isMainFrame && nextLoadIsBrowserInitiated
         if isMainFrame { nextLoadIsBrowserInitiated = false }
+        if navigationAction.targetFrame?.isMainFrame == true {
+            // A load the browser starts has no type either, but is never a redirect.
+            ownLoad.navigationAction(isOther: navigationAction.navigationType == .other && !browserInitiated)
+        }
         if LodgePage.isLodge(navigationAction.request.url) {
             #if DEBUG
                 Self.lodgeRefusals += 1
@@ -575,11 +591,13 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         favicons.pageFinished(in: webView)
+        ownLoad.loadEnded()
         setFormPostLoading(false)
         endScrollRestore()
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        ownLoad.loadEnded()
         setFormPostLoading(false)
         endScrollRestore()
     }
@@ -592,6 +610,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         isNavigating = false
         seedMainFrame(at: webView.url)
         commitsNewDocument = false
+        ownLoad.loadEnded()
         setFormPostLoading(false)
         endScrollRestore()
     }
@@ -605,6 +624,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         cancelQueuedChallenges()
+        ownLoad.loadEnded()
         isNavigating = false
         setFormPostLoading(false)
         model?.resetWork(tab)

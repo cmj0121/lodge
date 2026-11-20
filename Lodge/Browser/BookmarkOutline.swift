@@ -10,6 +10,8 @@ struct BookmarkOutline: NSViewRepresentable {
     /// Lists the workspaces a bookmark's open tab can move or open in; the outline's menu cannot read the environment.
     let workspaces: WorkspaceCoordinator
     let nodes: [SidebarNode]
+    /// Told while a sidebar item is dragged over the outline, which SwiftUI's drop zones cannot see.
+    let dragPresence: SidebarDragPresence?
 
     static let rowHeight = SidebarRowLabel.Metrics.height
     static let rowSpacing: CGFloat = 2
@@ -20,6 +22,7 @@ struct BookmarkOutline: NSViewRepresentable {
 
     func makeNSView(context: Context) -> OutlineContainer {
         let container = OutlineContainer(outline: context.coordinator.outline)
+        context.coordinator.outline.dragPresence = dragPresence
         context.coordinator.update(nodes)
         return container
     }
@@ -27,6 +30,7 @@ struct BookmarkOutline: NSViewRepresentable {
     func updateNSView(_ container: OutlineContainer, context: Context) {
         context.coordinator.pane = pane
         context.coordinator.workspaces = workspaces
+        context.coordinator.outline.dragPresence = dragPresence
         context.coordinator.update(nodes)
     }
 
@@ -55,7 +59,6 @@ struct BookmarkOutline: NSViewRepresentable {
         /// notifications are not written back.
         private var isSyncing = false
 
-        private static let dragType = NSPasteboard.PasteboardType("dev.lodge.bookmark-node")
         private static let cellID = NSUserInterfaceItemIdentifier("BookmarkCell")
         private static let rowID = NSUserInterfaceItemIdentifier("BookmarkRow")
 
@@ -79,7 +82,7 @@ struct BookmarkOutline: NSViewRepresentable {
             outline.intercellSpacing = NSSize(width: 0, height: BookmarkOutline.rowSpacing)
             // Clicks leave the keyboard with the page, as the sidebar's other rows do.
             outline.refusesFirstResponder = true
-            outline.registerForDraggedTypes([Self.dragType])
+            outline.registerForDraggedTypes([SidebarDragItem.pasteboardType])
             outline.setDraggingSourceOperationMask(.move, forLocal: true)
             outline.draggingDestinationFeedbackStyle = .regular
             outline.dataSource = self
@@ -88,6 +91,8 @@ struct BookmarkOutline: NSViewRepresentable {
             outline.action = #selector(clicked(_:))
             let menu = NSMenu()
             menu.delegate = self
+            // Items are enabled as built, so Move to Pins can be shown disabled where the pins would refuse it.
+            menu.autoenablesItems = false
             outline.menu = menu
             outline.onVisibleRowsChange = { [weak self] in self?.refreshHover() }
         }
@@ -266,40 +271,96 @@ struct BookmarkOutline: NSViewRepresentable {
 
         // MARK: Drag
 
+        /// A bookmark or folder drags as a sidebar item of this workspace (D4), so the pins and loose tabs take it too.
         func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
-            guard let bookmark = id(item)?.bookmarkID else { return nil }
+            let dragged: SidebarDragItem
+            switch id(item) {
+            case .link(let link)?: dragged = SidebarDragItem(kind: .bookmark, id: link, workspace: model.workspaceID)
+            case .folder(let folder)?:
+                dragged = SidebarDragItem(kind: .folder, id: folder, workspace: model.workspaceID)
+            case .tab?, nil: return nil
+            }
+            guard let data = SidebarDragSession.begin(dragged).pasteboardData else { return nil }
             let writer = NSPasteboardItem()
-            writer.setString(bookmark.uuidString, forType: Self.dragType)
+            writer.setData(data, forType: SidebarDragItem.pasteboardType)
             return writer
         }
 
-        /// A drop onto a bookmark lands just after it; a folder moving into itself or below itself is refused.
+        /// A drop onto a bookmark takes its place: a row of the same folder moving up lands just before it, anything
+        /// else just after it, so a drop on a neighbour always moves. Whatever the sidebar drags is offered only where
+        /// the model takes it (`canDrop`): a folder moving into itself or below itself, another workspace's item, or
+        /// one no longer here is refused. While hovering, the live drag is read from this process, not the pasteboard.
         func outlineView(
             _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
             proposedChildIndex index: Int
         ) -> NSDragOperation {
-            guard let dragged = draggedID(info, in: outlineView) else { return [] }
+            guard let dragged = SidebarDragItem.hovering(pasteboard: info.draggingPasteboard, source: info.draggingSource)
+            else { return [] }
+            outline.dragPresence?.touch()
             var parent = id(item)
+            var childIndex = index
             if index == NSOutlineViewDropOnItemIndex, case .link? = parent, let place = places[parent!] {
                 parent = place.parent
-                outlineView.setDropItem(parent.flatMap { items[$0] }, dropChildIndex: place.index + 1)
+                childIndex = Self.onRowIndex(place, from: Self.rowID(dragged).flatMap { places[$0] })
+                outlineView.setDropItem(parent.flatMap { items[$0] }, dropChildIndex: childIndex)
             }
-            return model.library.canMoveBookmark(dragged, into: folderID(parent)) ? .move : []
+            guard model.canDrop(dragged, on: target(parent, childIndex)) else { return [] }
+            return Self.operation(info.draggingSourceOperationMask)
         }
 
         func outlineView(
             _ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int
         ) -> Bool {
-            guard let dragged = draggedID(info, in: outlineView) else { return false }
-            return model.moveBookmark(
-                dragged, into: folderID(id(item)), at: index == NSOutlineViewDropOnItemIndex ? nil : index)
+            outline.dragPresence?.end()
+            defer { SidebarDragSession.end() }
+            guard let dragged = SidebarDragItem(pasteboard: info.draggingPasteboard, source: info.draggingSource)
+            else {
+                SidebarDragSession.log("Outline drop refused: no live drag")
+                return false
+            }
+            let place = target(id(item), index)
+            let moved = model.drop(dragged, on: place)
+            SidebarDragSession.log("Outline drop \(dragged.kind.rawValue) \(dragged.id) on \(place): \(moved)")
+            return moved
         }
 
-        /// The bookmark being dragged, only when the drag started in `outlineView`: another app can put the same
-        /// pasteboard type on a drag of its own.
-        private func draggedID(_ info: NSDraggingInfo, in outlineView: NSOutlineView) -> UUID? {
-            guard (info.draggingSource as AnyObject?) === outlineView else { return nil }
-            return info.draggingPasteboard.string(forType: Self.dragType).flatMap(UUID.init(uuidString:))
+        /// A drag that started here ended, dropped anywhere or nowhere.
+        func outlineView(
+            _ outlineView: NSOutlineView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint,
+            operation: NSDragOperation
+        ) {
+            outline.dragPresence?.end()
+            SidebarDragSession.end()
+        }
+
+        /// Where a drop on the bookmark at `place` lands among its folder's children: just before it for a row of the
+        /// same folder below it, moving up; just after it otherwise.
+        static func onRowIndex(
+            _ place: (parent: SidebarItem.ID?, index: Int), from: (parent: SidebarItem.ID?, index: Int)?
+        ) -> Int {
+            if let from, from.parent == place.parent, from.index > place.index { return place.index }
+            return place.index + 1
+        }
+
+        /// The outline row a dragged bookmark or folder is, if it is one.
+        private static func rowID(_ item: SidebarDragItem) -> SidebarItem.ID? {
+            switch item.kind {
+            case .bookmark: .link(item.id)
+            case .folder: .folder(item.id)
+            case .pin, .tab: nil
+            }
+        }
+
+        /// The bookmarks place of a drop into folder `parent` (nil: the root) at `index`, on the folder itself
+        /// appending.
+        private func target(_ parent: SidebarItem.ID?, _ index: Int) -> SidebarDropTarget {
+            .bookmarks(folder: folderID(parent), index: index == NSOutlineViewDropOnItemIndex ? nil : index)
+        }
+
+        /// A move, in whatever form the drag's source offers one: the outline's own drags offer a move, SwiftUI's may
+        /// offer only a generic or copy operation.
+        private static func operation(_ mask: NSDragOperation) -> NSDragOperation {
+            [.move, .generic, .copy].first { mask.contains($0) } ?? []
         }
 
         // MARK: Context menu
@@ -323,6 +384,13 @@ struct BookmarkOutline: NSViewRepresentable {
                     ClosureMenuItem(String(localized: "Rename…")) { [model] in BookmarkPrompts.rename(link.id, title: link.title, model: model) })
                 menu.addItem(.separator())
                 menu.addItem(ClosureMenuItem(String(localized: "Pin")) { [model] in model.pin(bookmark: link) })
+                let move = SidebarDragItem(kind: .bookmark, id: link.id, workspace: model.workspaceID)
+                let pins = SidebarDropTarget.pins(index: model.pins.count)
+                let moveToPins = ClosureMenuItem(String(localized: "Move to Pins")) { [model] in
+                    model.drop(move, on: pins)
+                }
+                moveToPins.isEnabled = model.canDrop(move, on: pins)
+                menu.addItem(moveToPins)
                 menu.addItem(ClosureMenuItem(String(localized: "Remove from Bookmarks")) { [model] in model.removeLink(link.id) })
                 if let tab {
                     if tab.url != nil {
@@ -406,11 +474,33 @@ final class OutlineContainer: NSView {
 final class TreeOutlineView: NSOutlineView {
     /// Called whenever the rows shown may have changed: a scroll, a resize, a move, an expand or a reload.
     var onVisibleRowsChange: (() -> Void)?
+    /// Told while a sidebar item is dragged over the outline, every time AppKit updates the drag, so the sidebar's
+    /// drag-only places stay up as the pointer crosses it.
+    weak var dragPresence: SidebarDragPresence?
     private var scrollObserver: (any NSObjectProtocol)?
     /// Rows past each edge of the shown part that keep their views, so short scrolls find them ready.
     private static let overdraw: CGFloat = 400
 
     override func frameOfOutlineCell(atRow row: Int) -> NSRect { .zero }
+
+    private func isSidebarDrag(_ sender: any NSDraggingInfo) -> Bool {
+        sender.draggingPasteboard.availableType(from: [SidebarDragItem.pasteboardType]) != nil
+    }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        if isSidebarDrag(sender) { dragPresence?.touch() }
+        return super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        if isSidebarDrag(sender) { dragPresence?.touch() }
+        return super.draggingUpdated(sender)
+    }
+
+    override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        if let sender, isSidebarDrag(sender) { dragPresence?.leave() }
+        super.draggingExited(sender)
+    }
 
     /// Nothing shows before the outline is in a window, so no row views are built for it then.
     override var visibleRect: NSRect { window == nil ? .zero : super.visibleRect }

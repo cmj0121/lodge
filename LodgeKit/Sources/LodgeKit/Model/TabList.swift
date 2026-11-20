@@ -65,6 +65,15 @@ public struct TabList: Sendable, Equatable {
         tabs.removeAll { $0.id == id }
     }
 
+    /// Moves the tab to just before `before` (nil: to the end); unknown ids change nothing.
+    public mutating func move(_ id: TabID, before: TabID?) {
+        guard id != before, let from = tabs.firstIndex(where: { $0.id == id }),
+            before.map({ before in tabs.contains { $0.id == before } }) ?? true
+        else { return }
+        let tab = tabs.remove(at: from)
+        tabs.insert(tab, at: before.flatMap { before in tabs.firstIndex { $0.id == before } } ?? tabs.count)
+    }
+
     /// Applies `change` to the tab; an unknown id changes nothing.
     public mutating func update(_ id: TabID, _ change: (inout BrowserTab) -> Void) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }

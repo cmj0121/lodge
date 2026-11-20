@@ -535,6 +535,7 @@ final class DownloadManager: NSObject, WKDownloadDelegate {
         pendingRetries.begin(id, on: store)
         let config = WKWebViewConfiguration()
         config.websiteDataStore = dataStore
+        config.applicationNameForUserAgent = WebViewRegistry.userAgentApplicationName
         // A download outlives the view that started it.
         let view = WKWebView(frame: .zero, configuration: config)
         Task {

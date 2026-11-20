@@ -191,6 +191,46 @@
         }
       }
     },
+    "Appearance" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外觀"
+          }
+        }
+      }
+    },
+    "Appearance: Dark" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外觀：深色"
+          }
+        }
+      }
+    },
+    "Appearance: Light" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外觀：淺色"
+          }
+        }
+      }
+    },
+    "Appearance: System" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外觀：系統"
+          }
+        }
+      }
+    },
     "Ask where to save each file" : {
       "localizations" : {
         "zh-Hant" : {
@@ -531,6 +571,16 @@
         }
       }
     },
+    "Dark" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "深色"
+          }
+        }
+      }
+    },
     "Data folder" : {
       "localizations" : {
         "zh-Hant" : {
@@ -651,12 +701,32 @@
         }
       }
     },
+    "Drop here to pin" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拖放到這裡以釘選"
+          }
+        }
+      }
+    },
     "Each workspace gives every site its own fingerprint, the same on every visit. Each Anonymous tab gets its own, gone with the tab. Lodge never asks: when a site reads one, a fingerprint button shows in the address field." : {
       "localizations" : {
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "每個工作空間都給每個網站一組專屬的指紋，每次造訪都相同。每個 Anonymous 分頁都有自己的一組，分頁關閉就隨之消失。Lodge 從不詢問：網站讀取指紋時，網址列會出現指紋按鈕。"
+          }
+        }
+      }
+    },
+    "Each workspace's look — System, Light or Dark — is set from its menu in the workspace bar." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每個工作空間的外觀（系統、淺色或深色）可從工作空間列中該工作空間的選單設定。"
           }
         }
       }
@@ -1091,6 +1161,16 @@
         }
       }
     },
+    "Light" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "淺色"
+          }
+        }
+      }
+    },
     "Lodge" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1187,6 +1267,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上移"
+          }
+        }
+      }
+    },
+    "Move to Bookmarks" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移至書籤"
+          }
+        }
+      }
+    },
+    "Move to Pins" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移至釘選"
           }
         }
       }
@@ -2117,6 +2217,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "切換後，會重新載入此工作空間中這個網站的分頁。"
+          }
+        }
+      }
+    },
+    "System" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系統"
           }
         }
       }

@@ -148,4 +148,104 @@ import Testing
         let library = LinkLibrary()
         #expect(LinkShelf.allCases.allSatisfy { library.links(on: $0).isEmpty })
     }
+
+    // MARK: Moves between shelves (#33)
+
+    private func done(_ changed: Bool) -> Bool { changed }
+
+    private var reading: BookmarkFolder {
+        LinkLibrary.sample.bookmarks.children.compactMap { if case .folder(let f) = $0 { f } else { nil } }[0]
+    }
+
+    @Test func aBookmarkMovesToThePinsKeepingItsLink() {
+        var library = LinkLibrary.sample
+        let bookmark = library.links(on: .bookmarks)[1]
+        #expect(done(library.moveLinkToPins(bookmark.id, at: 1)))
+        #expect(library.links(on: .pins)[1] == bookmark)
+        #expect(library.links(on: .pins).count == 5)
+        #expect(!library.links(on: .bookmarks).contains(bookmark))
+    }
+
+    @Test func aBookmarkInAFolderMovesToThePinsAndTheIndexIsClamped() {
+        var library = LinkLibrary.sample
+        let nested = reading.links[0]
+        #expect(done(library.moveLinkToPins(nested.id, at: 99)))
+        #expect(library.links(on: .pins).last == nested)
+        #expect(library.folder(reading.id)?.children.isEmpty == true)
+    }
+
+    @Test func aPinMovesIntoAFolderKeepingItsLink() {
+        var library = LinkLibrary.sample
+        let pin = library.links(on: .pins)[2]
+        #expect(done(library.moveLinkToBookmarks(pin.id, into: reading.id, at: 0)))
+        #expect(library.folder(reading.id)?.links.first == pin)
+        #expect(!library.links(on: .pins).contains(pin))
+    }
+
+    @Test func aPinMovesToTheEndOfTheRootWithNoIndex() {
+        var library = LinkLibrary.sample
+        let pin = library.links(on: .pins)[0]
+        #expect(done(library.moveLinkToBookmarks(pin.id, into: library.bookmarks.id, at: nil)))
+        #expect(library.bookmarks.children.last == .link(pin))
+    }
+
+    @Test func refusedShelfMovesLeaveTheLibraryEqual() {
+        let sample = LinkLibrary.sample
+        let pin = sample.links(on: .pins)[0]
+        let bookmark = sample.links(on: .bookmarks)[0]
+        var library = sample
+        #expect(!done(library.moveLinkToPins(UUID(), at: 0)))
+        #expect(!done(library.moveLinkToPins(pin.id, at: 0)))
+        #expect(!done(library.moveLinkToPins(reading.id, at: 0)))
+        #expect(!done(library.moveLinkToBookmarks(UUID(), into: sample.bookmarks.id, at: nil)))
+        #expect(!done(library.moveLinkToBookmarks(bookmark.id, into: sample.bookmarks.id, at: nil)))
+        #expect(!done(library.moveLinkToBookmarks(reading.id, into: sample.bookmarks.id, at: nil)))
+        #expect(!done(library.moveLinkToBookmarks(pin.id, into: UUID(), at: nil)))
+        #expect(!done(library.moveLinkToBookmarks(pin.id, into: bookmark.id, at: nil)))
+        #expect(library == sample)
+    }
+
+    @Test func aMoveOntoAURLAlreadyThereIsRefused() {
+        var library = LinkLibrary()
+        let pin = library.add(a, title: "A", to: .pins)
+        let bookmark = library.add(a, title: "A", to: .bookmarks)
+        let before = library
+        #expect(!done(library.moveLinkToPins(bookmark.id, at: 0)))
+        #expect(!done(library.moveLinkToBookmarks(pin.id, into: library.bookmarks.id, at: 0)))
+        #expect(library == before)
+    }
+
+    @Test func insertingKeepsTheLinkAsItIsAtTheClampedPlace() {
+        var library = LinkLibrary.sample
+        let link = SavedLink(url: a, title: "A", icon: Data([1]))
+        #expect(done(library.insert(link, toPinsAt: -3)))
+        #expect(library.links(on: .pins).first == link)
+        let bookmark = SavedLink(url: b, title: "B")
+        #expect(done(library.insertBookmark(bookmark, into: reading.id, at: 0)))
+        #expect(library.folder(reading.id)?.links.first == bookmark)
+        let last = SavedLink(url: c, title: "C")
+        #expect(done(library.insertBookmark(last, into: library.bookmarks.id, at: nil)))
+        #expect(library.bookmarks.children.last == .link(last))
+    }
+
+    @Test func refusedInsertsLeaveTheLibraryEqual() {
+        let sample = LinkLibrary.sample
+        let pin = sample.links(on: .pins)[0]
+        let bookmark = sample.links(on: .bookmarks)[0]
+        var library = sample
+        #expect(!done(library.insert(SavedLink(url: pin.url, title: "Again"), toPinsAt: 0)))
+        #expect(!done(library.insert(bookmark, toPinsAt: 0)))
+        let again = SavedLink(url: bookmark.url, title: "Again")
+        #expect(!done(library.insertBookmark(again, into: sample.bookmarks.id, at: 0)))
+        #expect(!done(library.insertBookmark(pin, into: sample.bookmarks.id, at: 0)))
+        #expect(!done(library.insertBookmark(SavedLink(url: a, title: "A"), into: UUID(), at: 0)))
+        #expect(library == sample)
+    }
+
+    @Test func aURLInAnotherFolderCanStillBeInserted() {
+        var library = LinkLibrary.sample
+        let nested = reading.links[0]
+        let copy = SavedLink(url: nested.url, title: "Root copy")
+        #expect(done(library.insertBookmark(copy, into: library.bookmarks.id, at: 0)))
+    }
 }

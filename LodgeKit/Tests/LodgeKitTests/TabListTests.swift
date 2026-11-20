@@ -95,4 +95,20 @@ import Testing
         tab.title = ""
         #expect(tab.displayTitle == "nowhere")
     }
+
+    @Test(arguments: [(0, 3, [1, 2, 0, 3]), (3, 0, [3, 0, 1, 2]), (1, nil, [0, 2, 3, 1]), (2, 3, [0, 1, 2, 3])])
+    func moveLandsJustBeforeTheGivenTab(moved: Int, before: Int?, order: [Int]) {
+        var (list, ids) = list(4)
+        list.move(ids[moved], before: before.map { ids[$0] })
+        #expect(list.tabs.map(\.id) == order.map { ids[$0] })
+    }
+
+    @Test func movingUnknownTabsOrBeforeItselfChangesNothing() {
+        var (list, ids) = list(3)
+        let before = list
+        list.move(TabID(), before: ids[0])
+        list.move(ids[0], before: TabID())
+        list.move(ids[1], before: ids[1])
+        #expect(list == before)
+    }
 }

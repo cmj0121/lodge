@@ -27,8 +27,9 @@
 | Default workspace    | 內建的共用瀏覽器，永遠都在；pinned tab 屬於它，在每個 workspace 都能使用                |
 | 自訂 workspace       | 一個新的瀏覽器：每個網站都有自己的一份網站資料與登入                                    |
 | Anonymous workspace  | 永遠排在最後；每個 tab 都是獨立的瀏覽器，隨 tab 關閉消失，只留 bookmark                 |
-| Anonymous 外觀       | 身分不明的人像圖示；在其中時視窗轉為深炭黑、頁面維持系統外觀，網址列顯示 Anonymous 標記 |
+| Anonymous 外觀       | 身分不明的人像圖示；視窗一律為深炭黑，頁面依它的外觀，網址列顯示 Anonymous 標記         |
 | Workspace 顏色       | 在 workspace sheet 選八種顏色之一或不選；sidebar 與焦點框跟著上色                       |
+| Workspace 外觀       | 在 workspace bar 的選單選系統、淺色或深色，視窗與頁面跟著改；Anonymous 視窗維持深色     |
 | Sidebar 標題         | Default 和 Anonymous 在名稱下方附一行簡短說明；自訂 workspace 不顯示                    |
 | 獨立的身分           | 登入、cookie 和網站資料各自保存在產生它們的 workspace 裡                                |
 | 獨立的 fingerprint   | 各 workspace 對各網站一組穩定的 canvas、WebGL、音訊 fingerprint；Anonymous 每 tab 一組  |
@@ -40,6 +41,10 @@
 | 資源用在當下         | 一陣子沒看的 tab 與離開的 workspace 交還頁面資源；只喚醒畫面上的那個頁面                |
 | 休眠的 tab           | 休眠的 tab 保留原處：同一頁、上一頁下一頁與捲動位置；sidebar 以淡色顯示並標示休眠中     |
 | 分頁休眠時間         | 「設定」的「一般」：5、15、30 或 60 分鐘，或永不；預設 5 分鐘，套用到每個 workspace     |
+| 連結圖示             | Pin 與 bookmark 保留自己網址那一頁的圖示，存在 workspace 的資料旁；Anonymous 不寫入磁碟 |
+| Sidebar 拖放         | 展開或收合的 sidebar 都能拖 pin、bookmark、資料夾、tab，Anonymous 亦同；是移動非複製    |
+| 共用的 pin           | Default 的 pin 拖到別處就真的移走；bookmark 或 tab 拖到 pin 上，會在 Default 建 pin     |
+| 不用滑鼠移動         | Pin 有「移至書籤」、bookmark 有「移至釘選」、tab 有「上移」「下移」輔助使用動作         |
 | 進行中的工作         | 未送出的文字、表單上傳、播放、相機或麥克風、全螢幕、popup 都讓頁面保持清醒              |
 | 離開前詢問           | 會在離開前詢問的頁面也盡量保留；下載一定會完成                                          |
 | 內容不外流           | 判斷頁面有未送出的工作時，不讀取欄位內容，也不把任何東西送出頁面                        |
@@ -80,7 +85,9 @@
 | 不涵蓋      | 經 WebGL 讀回的 `createImageBitmap`、`getBufferSubData` 與 `captureStream`                |
 | 不涵蓋      | 網頁在 Lodge 接手前就從 frame 取走的方法                                                  |
 | 尚未涵蓋    | navigator、螢幕與字型的 fingerprint，留待之後的里程碑                                     |
-| 不做        | 更改 User-Agent、每個 workspace 各自的 proxy 或 VPN、阻擋追蹤器                           |
+| 不涵蓋      | User-Agent：標示你安裝的 Safari 版本，每個 workspace 都相同                               |
+| 不涵蓋      | workspace 的外觀：頁面的 `prefers-color-scheme` 依它的設定，網站可藉此分辨 workspace      |
+| 不做        | 每個 workspace 各自的 User-Agent、proxy 或 VPN，阻擋追蹤器                                |
 | 不做        | 手動挑選或重設 workspace 的 fingerprint                                                   |
 
 ## Credential 的限制

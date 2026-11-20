@@ -113,6 +113,9 @@ private struct WorkspaceIcon: View {
                 Button("Change Icon…") { edit(.changeIcon(workspace.id)) }
             }
             Button("Search Engine…", action: editSearch)
+            ForEach(WorkspaceAppearance.allCases, id: \.self) { choice in
+                Button(choice.actionName) { setAppearance(choice) }
+            }
             if !workspace.isFixed {
                 Button("Delete…") { WorkspacePrompts.delete(workspace, coordinator: coordinator) }
             }
@@ -125,6 +128,12 @@ private struct WorkspaceIcon: View {
                 Button("Change Icon…") { edit(.changeIcon(workspace.id)) }
             }
             Button("Search Engine…", action: editSearch)
+            Picker("Appearance", selection: Binding(get: { workspace.appearance }, set: setAppearance)) {
+                ForEach(WorkspaceAppearance.allCases, id: \.self) { choice in
+                    Text(choice.title).tag(choice)
+                }
+            }
+            .pickerStyle(.menu)
             if !workspace.isFixed {
                 Divider()
                 Button("Delete…") { WorkspacePrompts.delete(workspace, coordinator: coordinator) }
@@ -156,6 +165,29 @@ private struct WorkspaceIcon: View {
 
     private func move(by offset: Int) {
         if let index { coordinator.move(from: index, to: index + offset) }
+    }
+
+    private func setAppearance(_ appearance: WorkspaceAppearance) {
+        try? coordinator.setAppearance(workspace.id, appearance)
+    }
+}
+
+extension WorkspaceAppearance {
+    fileprivate var title: String {
+        switch self {
+        case .system: String(localized: "System")
+        case .light: String(localized: "Light")
+        case .dark: String(localized: "Dark")
+        }
+    }
+
+    /// The accessibility action that picks this look.
+    fileprivate var actionName: String {
+        switch self {
+        case .system: String(localized: "Appearance: System")
+        case .light: String(localized: "Appearance: Light")
+        case .dark: String(localized: "Appearance: Dark")
+        }
     }
 }
 

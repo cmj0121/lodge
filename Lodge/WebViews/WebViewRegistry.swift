@@ -22,6 +22,14 @@ final class WebViewRegistry {
     /// Called with an anonymous tab's store once it is dropped, so what was kept for it goes too.
     var storeDropped: @MainActor (StoreRef) -> Void = { _ in }
 
+    /// The installed Safari's version, read once; nil when Safari cannot be read.
+    static let installedSafariVersion =
+        Bundle(url: URL(filePath: "/Applications/Safari.app"))?.infoDictionary?["CFBundleShortVersionString"]
+        as? String
+    /// What every page's User-Agent ends in, so sites treat Lodge as the installed Safari (D1). A popup gets it with
+    /// the configuration WebKit copies from its opener.
+    static let userAgentApplicationName = SafariUserAgent.applicationName(safariVersion: installedSafariVersion)
+
     func webView(for tab: TabID) -> LodgeWebView? { views[tab] }
 
     /// A new web view for `tab` on `store`, or on `configuration` when WebKit hands one over in
@@ -176,6 +184,7 @@ final class WebViewRegistry {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = dataStore(for: ref)
         config.preferences.isElementFullscreenEnabled = true
+        config.applicationNameForUserAgent = Self.userAgentApplicationName
         #if DEBUG
             if let check = Self.selfCheckScheme { config.setURLSchemeHandler(check.handler, forURLScheme: check.name) }
         #endif

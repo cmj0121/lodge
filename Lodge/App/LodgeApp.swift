@@ -73,6 +73,6 @@ struct BrowserRoot: View {
             }
             .animation(.snappy(duration: 0.2), value: window.workspaceEditor)
             .background(
-                WindowRegistrar(coordinator: coordinator, window: window, workspace: coordinator.activeWorkspace.kind))
+                WindowRegistrar(coordinator: coordinator, window: window, workspace: coordinator.activeWorkspace))
     }
 }

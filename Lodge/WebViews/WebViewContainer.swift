@@ -12,7 +12,6 @@ final class WebViewContainer: NSView {
         if let current, current !== view, current.superview === self { current.removeFromSuperview() }
         current = view
         guard let view else { return }
-        WindowAppearance.pin(view)
         guard view.superview !== self else { return }
         view.removeFromSuperview()
         view.translatesAutoresizingMaskIntoConstraints = false
