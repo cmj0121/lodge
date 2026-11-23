@@ -19,6 +19,16 @@ import Foundation
 /// `document.styleSheets` too, but it is no DOM node, so no mutation shows it); and, per hop, one message to the parent
 /// of a random key and token. Nothing names Lodge. Nothing the page holds is reported: only flags, the video's size and its area.
 ///
+/// Controls (the mini player's, pulled by the app, never pushed): the frame that marked the video plays or pauses it,
+/// seeks it within its `seekable` ranges, flips its `muted`, and, in YouTube's top frame only, clicks the page's own
+/// next button; each call answers with the video's `Playback` (time, duration, seekable range, paused, muted, whether
+/// a next button shows, size). If the page swaps the video element while filled, the frame marks the new one in its
+/// place (the best video under the old one's parent while that parent is connected, else in the document), watching for that through `emptied` /
+/// `loadstart` and a `MutationObserver` on that parent, disconnected on unfill. What the page sees of controls is only
+/// what a user's own click on its player would do: `play()`, `pause()`, a `currentTime` or `muted` change, a click on
+/// its next button; and the fill's attribute moving to the new video. A page could still tell: that click is
+/// untrusted (`isTrusted` false), and the seek buttons land on exact ±5 s steps.
+///
 /// Limits: a video in a shadow root, or one the page hides under an ancestor's stacking context; a parent whose origin
 /// is opaque (a sandboxed frame) gets the hop with target origin `*`.
 public enum VideoPopOutScript {
@@ -202,8 +212,81 @@ public enum VideoPopOutScript {
     public static let fill = "return window.\(controlName) ? window.\(controlName).fill(key, nonce) : false;"
     public static let pass = "return window.\(controlName) ? window.\(controlName).pass(token, key, nonce) : false;"
     public static let unfill = "if (window.\(controlName)) { window.\(controlName).unfill(); } return true;"
-    /// Plays or pauses the video this frame marked while filling (the mini player's click); true when it had one.
-    public static let togglePlayback = "return window.\(controlName) ? window.\(controlName).toggle() : false;"
+    /// The mini player's controls, function bodies for `callAsyncJavaScript` in the frame that marked the video. Each
+    /// acts on the filled video (`current()`, re-picked when the page swapped it) and returns its `playback()`
+    /// (`Playback.from` decodes it), or null when the frame has none. `togglePlayback` plays or pauses; `seek`
+    /// (argument `by`, seconds, |by| ≤ 3600) and `seekTo` (argument `time`) move within `video.seekable`, doing
+    /// nothing when it is empty; `toggleMute` flips `muted` only; `next` clicks YouTube's own next button, only in the
+    /// top frame of `youtube.com` or a subdomain, and only while that button shows and is enabled.
+    public static let playback = "return window.\(controlName) ? window.\(controlName).playback() : null;"
+    public static let togglePlayback = "return window.\(controlName) ? window.\(controlName).toggle() : null;"
+    public static let seek = "return window.\(controlName) ? window.\(controlName).seek(by) : null;"
+    public static let seekTo = "return window.\(controlName) ? window.\(controlName).seekTo(time) : null;"
+    public static let toggleMute = "return window.\(controlName) ? window.\(controlName).toggleMute() : null;"
+    public static let next = "return window.\(controlName) ? window.\(controlName).next() : null;"
+
+    /// The filled video's playback, as a control call or `playback` returns it.
+    public struct Playback: Equatable, Sendable {
+        /// Seconds, ≥ 0, finite.
+        public var time: Double
+        /// Nil when unknown or not finite (live).
+        public var duration: Double?
+        /// The first start … last end of `video.seekable`; nil when empty.
+        public var seekable: ClosedRange<Double>?
+        public var isPaused: Bool
+        public var isMuted: Bool
+        public var hasNext: Bool
+        /// The video's size, 0 while unknown, at most `maximumSide`.
+        public var width: Int
+        public var height: Int
+
+        public var canSeek: Bool { duration != nil && seekable != nil }
+
+        /// A time, duration or seekable bound above this (about 115 days) reads as this, so a page's absurd one
+        /// (an MSE duration of 1e300) still converts to a whole number of seconds.
+        public static let maximumSeconds: Double = 10_000_000
+
+        public init(
+            time: Double, duration: Double?, seekable: ClosedRange<Double>?, isPaused: Bool, isMuted: Bool,
+            hasNext: Bool, width: Int, height: Int
+        ) {
+            self.time = time
+            self.duration = duration
+            self.seekable = seekable
+            self.isPaused = isPaused
+            self.isMuted = isMuted
+            self.hasNext = hasNext
+            self.width = width
+            self.height = height
+        }
+
+        /// Decodes `{time, duration, start, end, paused, muted, next, width, height}` exactly (9 keys); numbers
+        /// finite (duration/start/end may be -1 = none), time clamped to ≥ 0; start > end → seekable nil; else nil.
+        /// A size above `maximumSide` reads as `maximumSide`; a time above `maximumSeconds` as `maximumSeconds`.
+        public static func from(_ result: Any?) -> Playback? {
+            guard let body = result as? [String: Any], body.count == 9,
+                let time = number(body["time"]), let duration = number(body["duration"]),
+                let start = number(body["start"]), let end = number(body["end"]),
+                let width = number(body["width"]), let height = number(body["height"]),
+                let paused = body["paused"] as? Bool, let muted = body["muted"] as? Bool,
+                let next = body["next"] as? Bool,
+                [duration, start, end].allSatisfy({ $0 >= 0 || $0 == -1 }), width >= 0, height >= 0
+            else { return nil }
+            return Playback(
+                time: clamped(time), duration: duration == -1 ? nil : clamped(duration),
+                seekable: start == -1 || end == -1 || start > end ? nil : clamped(start)...clamped(end),
+                isPaused: paused, isMuted: muted, hasNext: next, width: Int(min(width, Double(maximumSide))),
+                height: Int(min(height, Double(maximumSide))))
+        }
+
+        private static func clamped(_ seconds: Double) -> Double { min(max(0, seconds), maximumSeconds) }
+
+        private static func number(_ value: Any?) -> Double? {
+            guard let value = value as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() else { return nil }
+            let number = value.doubleValue
+            return number.isFinite ? number : nil
+        }
+    }
 
     /// What the element marked by `selector` and its ancestors get while filled, so the panel shows that element
     /// alone, whole. It is fixed over the viewport, its video contained, nothing of its own clipping or moving it. Its
@@ -250,7 +333,8 @@ public enum VideoPopOutScript {
           const post = (message) => { try { handler.postMessage(message); } catch (_) {} };
           let last = '';
           let waiting = false;
-          // While filled: this fill's random attribute, its stylesheet and the elements it marked.
+          // While filled: this fill's random attribute, its stylesheet, the elements it marked and, in the video's own
+          // frame, the video, its parent when marked and the observer of that parent's subtree.
           let filled = null;
           // Tokens a child iframe posted, until the app passes them on or unfills.
           const pending = new Map();
@@ -264,9 +348,9 @@ public enum VideoPopOutScript {
             return null;
           };
           const rank = (c) => (c.isPlaying ? (c.isMuted ? 1 : 2) : 0) * 1e12 + c.area;
-          const best = () => {
+          const best = (root) => {
             let found = null;
-            for (const video of document.querySelectorAll('video')) {
+            for (const video of (root || document).querySelectorAll('video')) {
               const box = video.getBoundingClientRect();
               const area = box.width * box.height;
               if (!(area >= minArea)) { continue; }
@@ -303,10 +387,18 @@ public enum VideoPopOutScript {
               const sheet = new CSSStyleSheet();
               sheet.replaceSync(css.split('\\u0001').join('[' + attr + ']'));
               document.adoptedStyleSheets = document.adoptedStyleSheets.concat([sheet]);
-              filled = { attr: attr, sheet: sheet, marked: [] };
+              filled = { attr: attr, sheet: sheet, marked: [], video: null, container: null, observer: null };
             }
             el.setAttribute(filled.attr, '');
             filled.marked.push(el);
+            if (el.localName === 'video' && !filled.video) {
+              filled.video = el;
+              filled.container = el.parentElement || null;
+              if (filled.container && typeof MutationObserver === 'function') {
+                filled.observer = new MutationObserver(() => { current(); });
+                filled.observer.observe(filled.container, { childList: true, subtree: true });
+              }
+            }
             if (!isTop && isKey(key) && isToken(nonce)) {
               try { window.parent.postMessage({ [key]: nonce }, parentOrigin() || '*'); } catch (_) {}
             }
@@ -321,15 +413,82 @@ public enum VideoPopOutScript {
             pending.delete(token);
             return el && el.isConnected ? mark(el, key, nonce) : false;
           };
+          // The filled video; when the page replaced it, the best one in its old parent while that is connected (none
+          // there yet: null, until the next mutation or event), else in the document, marked in its place.
+          const current = () => {
+            if (!filled || !filled.video) { return null; }
+            const old = filled.video;
+            if (old.isConnected) { return old; }
+            const container = filled.container;
+            const found = container && container.isConnected ? best(container) : best();
+            if (!found) { return null; }
+            const video = found.video;
+            old.removeAttribute(filled.attr);
+            video.setAttribute(filled.attr, '');
+            filled.marked[filled.marked.indexOf(old)] = video;
+            filled.video = video;
+            return video;
+          };
+          const finite = (n) => typeof n === 'number' && isFinite(n);
+          const range = (v) => {
+            const s = v.seekable;
+            return s && s.length ? [s.start(0), s.end(s.length - 1)] : null;
+          };
+          // YouTube's own next button, in its top frame, while it shows and is enabled.
+          const nextButton = () => {
+            if (!isTop) { return null; }
+            let host = '';
+            try { host = String(location.hostname || ''); } catch (_) { return null; }
+            if (host !== 'youtube.com' && !host.endsWith('.youtube.com')) { return null; }
+            const b = document.querySelector('.ytp-next-button');
+            return b && b.isConnected && b.getClientRects().length > 0 && b.getAttribute('aria-disabled') !== 'true'
+              ? b : null;
+          };
+          const playback = () => {
+            const v = current();
+            if (!v) { return null; }
+            const r = range(v);
+            const ok = r && finite(r[0]) && finite(r[1]);
+            return { time: finite(v.currentTime) ? Math.max(0, v.currentTime) : 0,
+              duration: finite(v.duration) && v.duration >= 0 ? v.duration : -1,
+              start: ok && r[0] >= 0 ? r[0] : -1, end: ok && r[1] >= 0 ? r[1] : -1,
+              paused: !!(v.paused || v.ended), muted: !!v.muted, next: !!nextButton(),
+              width: Math.min(maxSide, v.videoWidth | 0), height: Math.min(maxSide, v.videoHeight | 0) };
+          };
+          const seekTo = (t) => {
+            const v = current();
+            if (!v) { return null; }
+            const r = range(v);
+            if (r && finite(t)) { v.currentTime = Math.min(r[1], Math.max(r[0], t)); }
+            return playback();
+          };
+          const seek = (by) => {
+            const v = current();
+            if (!v) { return null; }
+            return finite(by) && Math.abs(by) <= 3600 ? seekTo(v.currentTime + by) : playback();
+          };
           const toggle = () => {
-            const el = filled && filled.marked.find((e) => e.localName === 'video');
-            if (!el) { return false; }
-            if (el.paused || el.ended) { el.play().catch(() => {}); } else { el.pause(); }
-            return true;
+            const v = current();
+            if (!v) { return null; }
+            if (v.paused || v.ended) { v.play().catch(() => {}); } else { v.pause(); }
+            return playback();
+          };
+          const toggleMute = () => {
+            const v = current();
+            if (!v) { return null; }
+            v.muted = !v.muted;
+            return playback();
+          };
+          const next = () => {
+            if (!current()) { return null; }
+            const b = nextButton();
+            if (b) { b.click(); }
+            return playback();
           };
           const unfill = () => {
             pending.clear();
             if (!filled) { return; }
+            if (filled.observer) { filled.observer.disconnect(); }
             for (const el of filled.marked) { el.removeAttribute(filled.attr); }
             const sheet = filled.sheet;
             document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== sheet);
@@ -350,9 +509,13 @@ public enum VideoPopOutScript {
           for (const type of ['play', 'playing', 'pause', 'ended', 'volumechange', 'loadedmetadata', 'emptied', 'resize']) {
             document.addEventListener(type, schedule, options);
           }
+          for (const type of ['emptied', 'loadstart']) {
+            document.addEventListener(type, () => { if (filled) { current(); } }, options);
+          }
           window.addEventListener('pagehide', () => { last = ''; post({ doc: doc, gone: true }); }, options);
           window.addEventListener('pageshow', (e) => { if (e.persisted) { schedule(); } }, options);
-          window.\(controlName) = { fill: fill, pass: pass, unfill: unfill, toggle: toggle };
+          window.\(controlName) = { fill: fill, pass: pass, unfill: unfill, toggle: toggle, playback: playback,
+            seek: seek, seekTo: seekTo, toggleMute: toggleMute, next: next };
           schedule();
         })();
         """
