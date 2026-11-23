@@ -26,6 +26,10 @@
         /// deletes are removed once nothing of the check holds them.
         static func checkMiniPlayer() {
             func report(_ name: String, _ passed: Bool) { print("Mini player: \(name): \(passed ? "ok" : "FAILED")") }
+            report(
+                "a page's absurd time reads as the longest one, never trapping",
+                MiniPlayerControls.time(1e300) == "2777:46:40" && MiniPlayerControls.time(-1) == "0:00"
+                    && MiniPlayerControls.time(.infinity) == "0:00")
             let stores = autoreleasepool { checkMiniPlayerInWebKit() }
             var isEveryStoreRemoved = true
             for id in stores {
