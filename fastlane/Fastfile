@@ -116,9 +116,16 @@ desc "Fail unless every key publish needs is set, and well formed, in .env or th
 lane :check_env do
   problems = env_problems
   unless problems.empty?
-    stop!(["publish-check found #{problems.size} problem(s) in .env:", *problems.map { |problem| "  - #{problem}" }].join("\n"))
+    stop!([".env check found #{problems.size} problem(s) in .env:", *problems.map { |problem| "  - #{problem}" }].join("\n"))
   end
   UI.success("All required .env keys are set")
+end
+
+desc "Fail unless .env is ready and the tree can be released, before any platform uploads"
+lane :preflight do
+  check_env
+  require_releasable
+  UI.success("Ready to publish #{release_tag}")
 end
 
 PROJECT = "Lodge.xcodeproj".freeze
@@ -129,10 +136,7 @@ PBXPROJ_BACKUP = File.join(OUTPUT_DIR, "project.pbxproj.bak").freeze
 platform :mac do
   desc "Ship macOS: TestFlight pkg, then a notarized Developer ID DMG (on a GitHub Release when GITHUB_REPOSITORY is set), then a local tag"
   lane :publish do
-    require_clean_tree
-    require_head_on_origin_main
-    stop!("tag #{release_tag} already exists", "bump MARKETING_VERSION") if git_tag_exists(tag: release_tag)
-    require_new_github_release if github_release?
+    require_releasable
     build_number = next_build_number
     app_store(build_number: build_number)
     dmg = developer_id(build_number: build_number)
@@ -298,6 +302,14 @@ def next_build_number(platform: "osx")
     initial_build_number: 0,
     **asc_auth
   ).to_i + 1
+end
+
+# A release ships one commit, the one on origin/main, under a tag and GitHub release not yet taken.
+def require_releasable
+  require_clean_tree
+  require_head_on_origin_main
+  stop!("tag #{release_tag} already exists", "bump MARKETING_VERSION") if git_tag_exists(tag: release_tag)
+  require_new_github_release if github_release?
 end
 
 def require_clean_tree
