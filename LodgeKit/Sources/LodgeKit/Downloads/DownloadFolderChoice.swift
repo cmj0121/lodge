@@ -23,26 +23,35 @@ public struct FolderBookmarks: Sendable {
         self.name = name
     }
 
+    #if os(macOS)
+        private static let makeOptions: URL.BookmarkCreationOptions = .withSecurityScope
+        private static let resolveOptions: URL.BookmarkResolutionOptions = [.withSecurityScope, .withoutUI, .withoutMounting]
+    #else
+        /// iOS has no security-scoped bookmark options; its document-picker URLs carry their scope in the bookmark.
+        private static let makeOptions: URL.BookmarkCreationOptions = []
+        private static let resolveOptions: URL.BookmarkResolutionOptions = [.withoutUI, .withoutMounting]
+    #endif
+
     private static func recordedName(_ bookmark: Data) -> String? {
         URL.resourceValues(forKeys: [.nameKey], fromBookmarkData: bookmark)?.name
     }
 
     public static let live = FolderBookmarks(
         make: { folder in
-            try folder.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+            try folder.bookmarkData(options: makeOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
         },
         resolve: { bookmark in
             var isStale = false
             guard
                 let folder = try? URL(
-                    resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI, .withoutMounting],
+                    resolvingBookmarkData: bookmark, options: resolveOptions,
                     relativeTo: nil, bookmarkDataIsStale: &isStale)
             else { return .unavailable(name: recordedName(bookmark)) }
             guard isStale else { return .folder(folder, refreshed: nil) }
             let accessing = folder.startAccessingSecurityScopedResource()
             defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
             let refreshed = try? folder.bookmarkData(
-                options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+                options: makeOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
             return .folder(folder, refreshed: refreshed)
         },
         name: recordedName)

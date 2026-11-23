@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 /// The completion a field editor shows after the text typed, its added part selected. Putting it in and dropping it
@@ -138,3 +139,4 @@ open class CompletingTextView: NSTextView {
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
     }
 }
+#endif
