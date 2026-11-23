@@ -300,7 +300,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         }
     }
 
-    /// ⌘1–⌘9: 1 is Default, 2…9 the next workspaces in order; an empty slot does nothing.
+    /// ⌃1–⌃9: 1 is Default, 2…9 the next workspaces in order; an empty slot does nothing.
     func switchTo(slot: Int) {
         if let workspace = workspaces.workspace(forSlot: slot) { switchTo(workspace.id) }
     }
