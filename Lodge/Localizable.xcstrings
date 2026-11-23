@@ -261,6 +261,16 @@
         }
       }
     },
+    "Back 5 Seconds" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "倒退 5 秒"
+          }
+        }
+      }
+    },
     "Block further dialogs from this page" : {
       "localizations" : {
         "zh-Hant" : {
@@ -981,6 +991,16 @@
         }
       }
     },
+    "Forward 5 Seconds" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快轉 5 秒"
+          }
+        }
+      }
+    },
     "General" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1351,6 +1371,16 @@
         }
       }
     },
+    "Mute" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "靜音"
+          }
+        }
+      }
+    },
     "Name" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1447,6 +1477,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下一個"
+          }
+        }
+      }
+    },
+    "Next Video" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一部影片"
           }
         }
       }
@@ -1691,6 +1731,16 @@
         }
       }
     },
+    "Pause" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暫停"
+          }
+        }
+      }
+    },
     "Pin" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1717,6 +1767,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "釘選此分頁"
+          }
+        }
+      }
+    },
+    "Play" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "播放"
+          }
+        }
+      }
+    },
+    "Playback Position" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "播放位置"
           }
         }
       }
@@ -2497,6 +2567,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "無法取得"
+          }
+        }
+      }
+    },
+    "Unmute" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消靜音"
           }
         }
       }

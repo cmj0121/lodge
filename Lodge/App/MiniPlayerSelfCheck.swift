@@ -19,7 +19,11 @@
         /// the same document stays, as does a navigation that never commits (a 204, a failure), and committing another
         /// document goes back to its tab, shown nowhere, and closes the panel; a sandboxed iframe's video pops out too; switching workspace pops out and holds it, switching back returns it; Anonymous does the
         /// same; deleting a workspace whose tab is in the panel closes the panel, and deleting the active one pops
-        /// nothing out. The stores of the workspaces it deletes are removed once nothing of the check holds them.
+        /// nothing out. The player's controls: hovering shows them, next only when the page has one; ±5 s seeks within
+        /// the video, clamped; play/pause, and mute, which keeps a playing video playing; dragging the bar seeks once,
+        /// on letting go; next advances to the page's new video, which the panel keeps showing; and the controls take
+        /// their own clicks, the edges and the rest of the video staying the panel's. The stores of the workspaces it
+        /// deletes are removed once nothing of the check holds them.
         static func checkMiniPlayer() {
             func report(_ name: String, _ passed: Bool) { print("Mini player: \(name): \(passed ? "ok" : "FAILED")") }
             let stores = autoreleasepool { checkMiniPlayerInWebKit() }
@@ -159,9 +163,10 @@
             let pane = coordinator.pane(for: window)
 
             /// Opens `mode`'s page in a new tab of the window's workspace, shown, once loaded.
-            func open(_ mode: String) -> (id: TabID, view: LodgeWebView)? {
+            func open(_ mode: String, host: String = "top") -> (id: TabID, view: LodgeWebView)? {
                 let model = coordinator.active
-                let tab = BrowserTab(store: model.newTabStore(), url: URL(string: "\(VideoCheckScheme.name)://top/\(mode)"))
+                let tab = BrowserTab(
+                    store: model.newTabStore(), url: URL(string: "\(VideoCheckScheme.name)://\(host)/\(mode)"))
                 _ = model.append(tab, load: true)
                 coordinator.opened(tab.id, in: model, window: window)
                 guard let view = model.view(for: tab.id),
@@ -307,6 +312,172 @@
             } else {
                 report(alone, false)
             }
+
+            /// The player's controls on the `seek` page (a silent 30 s file) and the `next` page (one with YouTube's next
+            /// button, which swaps in a 20 s video), clicked as a click on them would, the bar dragged by mouse events
+            /// sent to it alone.
+            func checkControls() {
+                let shows = "hovering the panel shows the player's controls, next hidden on a page without one"
+                guard let seek = open("seek"), reported(seek.id, playing: true) else { return report(shows, false) }
+                leave()
+                guard inPanel(seek), let controls = player.controlBar, let panel = seek.view.window else {
+                    return report(shows, false)
+                }
+                func time() -> Double? {
+                    pageValue(seek.view, "String(document.getElementById('v').currentTime)").flatMap(Double.init)
+                }
+                func set(_ script: String) {
+                    _ = pageValue(seek.view, "(() => { const v = document.getElementById('v'); \(script); return 'ok'; })()")
+                }
+                func press(_ button: NSButton) {
+                    controls.reveal()
+                    button.performClick(nil)
+                    settle(0.4)
+                }
+                func isPaused() -> Bool? {
+                    pageValue(seek.view, "String(document.getElementById('v').paused)").map { $0 == "true" }
+                }
+                func isMuted() -> Bool { pageValue(seek.view, "String(document.getElementById('v').muted)") == "true" }
+                controls.reveal()
+                let shown = waitUntil(3) { controls.playback?.canSeek == true }
+                report(
+                    shows,
+                    shown && controls.playback?.duration.map { abs($0 - 30) < 0.5 } == true
+                        && [controls.backButton, controls.playButton, controls.forwardButton, controls.muteButton]
+                            .allSatisfy { !$0.isHidden } && !controls.bar.isHidden && !controls.elapsedLabel.isHidden
+                        && controls.nextButton.isHidden && controls.playback?.hasNext == false)
+
+                set("v.currentTime = 10")
+                press(controls.forwardButton)
+                let forward = time()
+                press(controls.backButton)
+                press(controls.backButton)
+                let back = time()
+                set("v.currentTime = 1")
+                press(controls.backButton)
+                let start = time()
+                set("v.currentTime = 28")
+                press(controls.forwardButton)
+                let end = time()
+                let seeks = forward.map { (14.8...16.2).contains($0) } == true && back.map { (4.8...7).contains($0) } == true
+                    && start.map { (0...0.8).contains($0) } == true && end.map { (29.5...30.01).contains($0) } == true
+                if !seeks { print("Mini player: seeks \(String(describing: [forward, back, start, end]))") }
+                report("±5 s seeks the video, clamped to its start and end", seeks)
+                set("v.currentTime = 5; v.play()")
+                _ = waitUntil(3) { isPaused() == false }
+
+                press(controls.playButton)
+                let paused = waitUntil(3) { isPaused() == true }
+                press(controls.playButton)
+                report("the play button pauses and plays", paused && waitUntil(3) { isPaused() == false })
+
+                press(controls.muteButton)
+                let muted = waitUntil(3) { isMuted() } && isPaused() == false && controls.playback?.isMuted == true
+                press(controls.muteButton)
+                settle(0.5)
+                report(
+                    "mute toggles, and a playing video keeps playing after unmuting",
+                    muted && !isMuted() && isPaused() == false && controls.playback?.isMuted == false)
+
+                set("v.currentTime = 2")
+                controls.reveal()
+                controls.layoutSubtreeIfNeeded()
+                let frame = panel.frame
+                let bar = controls.bar
+                func event(_ type: NSEvent.EventType, at fraction: Double, in view: NSView? = nil) -> NSEvent? {
+                    let view = view ?? bar
+                    let point = view.convert(NSPoint(x: view.bounds.width * fraction, y: view.bounds.midY), to: nil)
+                    return NSEvent.mouseEvent(
+                        with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+                }
+                event(.leftMouseDown, at: 0.25).map(bar.mouseDown)
+                event(.leftMouseDragged, at: 0.5).map(bar.mouseDragged)
+                settle(0.6)
+                let during = time()
+                let held = controls.scrub.map { abs($0 - 15) < 0.01 } == true
+                    && controls.elapsedLabel.stringValue == "0:15" && controls.playback?.time == 15
+                event(.leftMouseUp, at: 0.5).map(bar.mouseUp)
+                report(
+                    "dragging the bar moves it alone, then seeks once on letting go, the video still playing",
+                    held && during.map { $0 < 5 } == true && waitUntil(3) { time().map { abs($0 - 15) < 1 } == true }
+                        && controls.scrub == nil && isPaused() == false && panel.frame == frame)
+
+                controls.reveal()
+                event(.leftMouseDown, at: 0.6).map(bar.mouseDown)
+                settle(3)
+                let keptWhileScrubbing = controls.isRevealed && player.isPolling
+                event(.leftMouseUp, at: 0.6).map(bar.mouseUp)
+                let hidAfterScrub = !controls.isRevealed && !player.isPolling
+                controls.reveal()
+                let edge = 3 / controls.bounds.width
+                event(.leftMouseDown, at: edge, in: controls).map(controls.mouseDown)
+                settle(3)
+                let keptWhileResizing = controls.isRevealed && player.isPolling
+                event(.leftMouseUp, at: edge, in: controls).map(controls.mouseUp)
+                report(
+                    "a scrub or resize ending with the pointer outside hides the controls and stops asking for playback",
+                    keptWhileScrubbing && hidAfterScrub && keptWhileResizing && !controls.isRevealed
+                        && !player.isPolling && isPaused() == false && panel.frame == frame)
+
+                controls.reveal()
+                controls.layoutSubtreeIfNeeded()
+                let superview = controls.superview
+                func center(_ view: NSView) -> NSPoint {
+                    controls.convert(NSPoint(x: view.frame.midX, y: view.frame.midY), to: superview)
+                }
+                let bounds = controls.bounds
+                let buttons: [NSView] = [
+                    controls.playButton, controls.backButton, controls.forwardButton, controls.muteButton,
+                    controls.closeButton, bar,
+                ]
+                report(
+                    "the controls take their own clicks; the edges and the rest of the video stay the panel's",
+                    buttons.allSatisfy { controls.hitTest(center($0)) === $0 }
+                        && controls.hitTest(controls.convert(NSPoint(x: bounds.midX, y: 3), to: superview)) === controls
+                        && controls.hitTest(controls.convert(NSPoint(x: bounds.width * 0.1, y: bounds.midY), to: superview))
+                            === controls
+                        && controls.hitTest(center(controls.elapsedLabel)) === controls)
+                pane.select(seek.id)
+                settle()
+                coordinator.active.close(seek.id)
+
+                let advances = "next shows on a page with one and advances it, the panel showing the new video"
+                guard let next = open("next", host: "www.youtube.com"), reported(next.id, playing: true) else {
+                    return report(advances, false)
+                }
+                leave()
+                controls.reveal()
+                let offered = inPanel(next) && waitUntil(3) { controls.playback?.hasNext == true }
+                    && !controls.nextButton.isHidden
+                if let narrow = next.view.window {
+                    let wide = narrow.frame
+                    narrow.setContentSize(NSSize(width: MiniPlayer.minWidth, height: MiniPlayer.minWidth * 9 / 16))
+                    controls.reveal()
+                    controls.layoutSubtreeIfNeeded()
+                    let inside = controls.bounds.insetBy(dx: 8, dy: 8)
+                    let shown: [NSView] = [
+                        controls.closeButton, controls.backButton, controls.playButton, controls.forwardButton,
+                        controls.nextButton, controls.muteButton, controls.bar,
+                    ]
+                    report(
+                        "at the narrowest, every control stays clear of the edges, the times dropped",
+                        controls.bounds.width == MiniPlayer.minWidth && shown.allSatisfy { !$0.isHidden }
+                            && shown.allSatisfy { inside.contains($0.frame) } && controls.elapsedLabel.isHidden)
+                    narrow.setFrame(wide, display: false)
+                }
+                press(controls.nextButton)
+                let swapped = "String(!!document.getElementById('v2') && !document.getElementById('v2').paused)"
+                report(
+                    advances,
+                    offered && waitUntil(3) { pageValue(next.view, swapped) == "true" }
+                        && waitUntil(3) { isFilled(next.view, "#v2") } && inPanel(next)
+                        && waitUntil(3) { controls.playback?.duration.map { abs($0 - 20) < 0.5 } == true })
+                pane.select(next.id)
+                settle()
+                coordinator.active.close(next.id)
+            }
+            checkControls()
 
             pane.select(sound.id)
             settle()
@@ -484,7 +655,8 @@
     }
 
     /// Layout self-checks only: a local `lodge-video:` scheme serving the mini player check's pages. `top` serves a
-    /// page per mode (`still` has no video), `frame` the video page a `framed` page holds in a cross-origin iframe. The video is a canvas's
+    /// page per mode (`still` has no video; `seek` and `next`, served on any host, play a silent file with a duration,
+    /// and `next` has a YouTube-style next button that swaps the video), `frame` the video page a `framed` page holds in a cross-origin iframe. The video is a canvas's
     /// `captureStream`, with no sound track.
     @MainActor
     final class VideoCheckScheme: NSObject, WKURLSchemeHandler {
@@ -529,6 +701,36 @@
                     const v = document.getElementById('v');
                     v.srcObject = document.getElementById('c').captureStream(20);
                     v.play().catch(() => {});
+                    </script>
+                    """
+                } else if mode == "seek" || mode == "next" {
+                    """
+                    <div id=box><video id=v playsinline style='width:640px;height:360px'></video></div>
+                    <a class=ytp-next-button href='#next' style='display:\(mode == "next" ? "inline-block" : "none")'>next</a>
+                    <script>
+                    const wav = (seconds) => {
+                      const rate = 8000, n = rate * seconds, b = new DataView(new ArrayBuffer(44 + n));
+                      const text = (at, t) => { for (let i = 0; i < t.length; i++) { b.setUint8(at + i, t.charCodeAt(i)); } };
+                      text(0, 'RIFF'); b.setUint32(4, 36 + n, true); text(8, 'WAVE'); text(12, 'fmt ');
+                      b.setUint32(16, 16, true); b.setUint16(20, 1, true); b.setUint16(22, 1, true);
+                      b.setUint32(24, rate, true); b.setUint32(28, rate, true); b.setUint16(32, 1, true);
+                      b.setUint16(34, 8, true); text(36, 'data'); b.setUint32(40, n, true);
+                      for (let i = 0; i < n; i++) { b.setUint8(44 + i, 128); }
+                      return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+                    };
+                    const v = document.getElementById('v');
+                    v.src = wav(30);
+                    v.play().catch(() => {});
+                    document.querySelector('.ytp-next-button').addEventListener('click', (e) => {
+                      e.preventDefault();
+                      const n = document.createElement('video');
+                      n.id = 'v2';
+                      n.playsInline = true;
+                      n.style.cssText = 'width:640px;height:360px';
+                      n.src = wav(20);
+                      document.getElementById('box').replaceChild(n, document.getElementById('v'));
+                      n.play().catch(() => {});
+                    });
                     </script>
                     """
                 } else if mode == "framed" || mode == "sandboxed" {
