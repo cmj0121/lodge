@@ -65,6 +65,7 @@
             checkAuth()
             checkPlainHTTP()
             checkUserAgent()
+            checkMiniPlayer()
             renderSettings(in: directory)
             renderProtection(in: directory)
             renderAuth(in: directory)

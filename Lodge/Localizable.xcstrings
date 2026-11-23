@@ -1231,6 +1231,26 @@
         }
       }
     },
+    "Mini Player" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "迷你播放器"
+          }
+        }
+      }
+    },
+    "Mini Player — %@" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "迷你播放器 — %@"
+          }
+        }
+      }
+    },
     "Move Down" : {
       "localizations" : {
         "zh-Hant" : {

@@ -238,8 +238,9 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     /// The one place the view's user scripts are set (D7), since removing any drops every world's: the fingerprint
     /// patch seeded with `seed` for `site` in the page world (none for nil: the site is excepted or has no registrable
-    /// domain; a document whose top frame is on another site gets a throwaway seed), the fingerprint relay (D4) and
-    /// the work script (D3) in their own worlds in every frame, and the scroll-restoring script while one is pending.
+    /// domain; a document whose top frame is on another site gets a throwaway seed), the fingerprint relay (D4), the
+    /// work script (D3) and the video probe (#36) in their own worlds in every frame, and the scroll-restoring script
+    /// while one is pending.
     func installScripts(seed: String?, site: String?) {
         guard let controller = webView?.configuration.userContentController else { return }
         controller.removeAllUserScripts()
@@ -258,6 +259,10 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
             WKUserScript(
                 source: PageWorkScript.source, injectionTime: .atDocumentStart, forMainFrameOnly: false,
                 in: .world(name: PageWorkScript.worldName)))
+        controller.addUserScript(
+            WKUserScript(
+                source: VideoPopOutScript.source, injectionTime: .atDocumentEnd, forMainFrameOnly: false,
+                in: .world(name: VideoPopOutScript.worldName)))
         if let scrollRestore { controller.addUserScript(scrollRestore) }
     }
 
@@ -583,6 +588,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
         }
         seedMainFrame(at: webView.url)
         favicons.pageCommitted(webView.url)
+        model?.mainFrameLeavesDocument(tab)
         model?.resetWork(tab)
         if commitsNewDocument { model?.resetFingerprintReads(tab) }
         commitsNewDocument = false
