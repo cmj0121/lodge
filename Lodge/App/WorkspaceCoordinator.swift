@@ -526,10 +526,16 @@ extension WorkspaceCoordinator: WindowPlacement {
         NSApp.activate()
     }
 
-    /// The app is quitting: the windows that close from here on stay in the session.
+    /// The app is quitting: the windows that close from here on stay in the session, and the mini player closes.
     func prepareForQuit() {
         isQuitting = true
+        miniPlayer.close()
     }
+
+    #if DEBUG
+        /// Layout self-checks: the app carries on after a check of `prepareForQuit`.
+        func cancelQuitForSelfCheck() { isQuitting = false }
+    #endif
 
     /// The app is quitting: every built workspace's tabs still awake keep their place on disk (D5), as resting ones
     /// already do; Anonymous keeps none.
@@ -642,6 +648,8 @@ extension WorkspaceCoordinator: WindowPlacement {
             model.didSelect(nil, previous: shown, previousStillShown: selections.shownTabs.contains(shown))
         }
         if lastActiveBrowserWindow === window { lastActiveBrowserWindow = windows.first }
+        // The panel's tab was left in this window: closing it, the last window too (Lodge keeps running, D5), closes
+        // the panel.
         if miniPlayerWindow == window.id { miniPlayer.close() }
         model.remove(Set(change.close))
         stampRest()

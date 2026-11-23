@@ -121,12 +121,12 @@
         }
       }
     },
-    "A video playing with sound moves to a small floating window and goes back when you return to its tab. Closing the window pauses it." : {
+    "A video playing with sound moves to a small floating window showing only the video, and goes back when you return to its tab. Its close button pauses it." : {
       "localizations" : {
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "有聲播放中的影片會移到一個浮動小視窗，回到它的分頁時再移回去。關閉視窗會暫停影片。"
+            "value" : "有聲播放中的影片會移到只顯示影片的浮動小視窗，回到它的分頁時再移回去。按它的關閉按鈕會暫停影片。"
           }
         }
       }
@@ -457,6 +457,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "關閉（Esc）"
+          }
+        }
+      }
+    },
+    "Close Mini Player" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關閉迷你播放器"
           }
         }
       }

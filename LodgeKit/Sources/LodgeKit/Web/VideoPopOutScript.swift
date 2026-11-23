@@ -202,20 +202,31 @@ public enum VideoPopOutScript {
     public static let fill = "return window.\(controlName) ? window.\(controlName).fill(key, nonce) : false;"
     public static let pass = "return window.\(controlName) ? window.\(controlName).pass(token, key, nonce) : false;"
     public static let unfill = "if (window.\(controlName)) { window.\(controlName).unfill(); } return true;"
+    /// Plays or pauses the video this frame marked while filling (the mini player's click); true when it had one.
+    public static let togglePlayback = "return window.\(controlName) ? window.\(controlName).toggle() : false;"
 
-    /// What the element marked by `selector` and its ancestors get while filled. The ancestors lose what would make
-    /// them the containing block of a fixed element, or hold it under their siblings; the root stops scrolling.
+    /// What the element marked by `selector` and its ancestors get while filled, so the panel shows that element
+    /// alone, whole. It is fixed over the viewport, its video contained, nothing of its own clipping or moving it. Its
+    /// ancestors lose everything that would make one of them its containing block or clip it, or trap it in a stacking
+    /// context: transforms (the individual `translate`, `rotate` and `scale` too), filters, containment, container
+    /// queries, `content-visibility`, clip paths, masks, opacity, isolation, blending and overflow. Every other
+    /// element is hidden (a page's own `visibility: visible` included) and the root is black and stops scrolling.
     static func css(_ selector: String) -> String {
         """
         \(selector){position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;\
         max-width:none!important;max-height:none!important;min-width:0!important;min-height:0!important;\
-        margin:0!important;padding:0!important;border:0!important;transform:none!important;\
-        z-index:2147483647!important;object-fit:contain!important;background:#000!important;\
-        visibility:visible!important;opacity:1!important}\
-        :has(\(selector)){transform:none!important;filter:none!important;\
-        backdrop-filter:none!important;contain:none!important;perspective:none!important;will-change:auto!important;\
+        margin:0!important;padding:0!important;border:0!important;transform:none!important;translate:none!important;\
+        rotate:none!important;scale:none!important;clip-path:none!important;mask:none!important;filter:none!important;\
+        z-index:2147483647!important;object-fit:contain!important;object-position:50% 50%!important;\
+        background:#000!important;visibility:visible!important;opacity:1!important}\
+        :has(\(selector)){transform:none!important;translate:none!important;rotate:none!important;\
+        scale:none!important;filter:none!important;backdrop-filter:none!important;contain:none!important;\
+        container-type:normal!important;content-visibility:visible!important;perspective:none!important;\
+        will-change:auto!important;clip-path:none!important;mask:none!important;opacity:1!important;\
+        isolation:auto!important;mix-blend-mode:normal!important;overflow:visible!important;\
         z-index:2147483647!important}\
-        html:has(\(selector)),html:has(\(selector)) body{overflow:hidden!important}
+        html:has(\(selector)) *:not(\(selector)){visibility:hidden!important}\
+        html:has(\(selector)),html:has(\(selector)) body{overflow:hidden!important;background:#000!important}
         """
     }
 
@@ -310,6 +321,12 @@ public enum VideoPopOutScript {
             pending.delete(token);
             return el && el.isConnected ? mark(el, key, nonce) : false;
           };
+          const toggle = () => {
+            const el = filled && filled.marked.find((e) => e.localName === 'video');
+            if (!el) { return false; }
+            if (el.paused || el.ended) { el.play().catch(() => {}); } else { el.pause(); }
+            return true;
+          };
           const unfill = () => {
             pending.clear();
             if (!filled) { return; }
@@ -335,7 +352,7 @@ public enum VideoPopOutScript {
           }
           window.addEventListener('pagehide', () => { last = ''; post({ doc: doc, gone: true }); }, options);
           window.addEventListener('pageshow', (e) => { if (e.persisted) { schedule(); } }, options);
-          window.\(controlName) = { fill: fill, pass: pass, unfill: unfill };
+          window.\(controlName) = { fill: fill, pass: pass, unfill: unfill, toggle: toggle };
           schedule();
         })();
         """

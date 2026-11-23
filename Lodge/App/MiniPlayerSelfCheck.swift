@@ -9,8 +9,10 @@
         /// `VideoCheckScheme`, a canvas `captureStream` as the video, so nothing goes out and nothing is heard (the
         /// stream has no sound track). The browser window is never ordered in and the panel opens far off screen, so
         /// nothing shows and nothing takes focus. Checked: a playing video's tab reports it; leaving the tab moves its
-        /// view to the panel still playing and filling it, held awake, the panel titled with the page's site, nothing
-        /// the page can see naming Lodge; showing the tab brings it back still playing;
+        /// view to the panel still playing and filling it, held awake, the panel a borderless widget titled with the
+        /// page's site, with Lodge's own close button and site caption, resizing at the video's aspect ratio, nothing
+        /// the page can see naming Lodge; showing the tab brings it back still playing; a video in a transformed,
+        /// clipped player under page chrome shows alone and whole, and the page's layout comes back exactly;
         /// a muted or paused video stays; a video in a cross-origin iframe pops out with its iframe filling the page and
         /// its own video filling the iframe, the top page told nothing naming Lodge; closing the panel pauses and
         /// leaves the tab, closing the tab or its window closes the panel; the page in the panel changing its URL in
@@ -36,6 +38,14 @@
             }
             report("the deleted workspaces' stores are removed", isEveryStoreRemoved)
         }
+
+        /// The `tube` page's video's box and its player's, as the page lays them out.
+        private static let videoBox = """
+            (() => {
+              const r = (e) => { const b = e.getBoundingClientRect(); return [b.x, b.y, b.width, b.height].join(','); };
+              return r(document.getElementById('v')) + ' ' + r(document.getElementById('player'));
+            })()
+            """
 
         /// `checkMiniPlayer` in WebKit; returns the workspaces whose store deleting them left behind.
         private static func checkMiniPlayerInWebKit() -> [UUID] {
@@ -81,6 +91,46 @@
                     })()
                     """
                 return pageValue(view, script, in: frame) == "true"
+            }
+
+            /// What the view shows is the `tube` page's video frame alone and whole: its white border at every edge,
+            /// its four coloured quadrants where they belong, and none of the page's magenta chrome anywhere.
+            func showsOnlyTheCheckVideo(_ view: WKWebView) -> Bool {
+                var bitmap: NSBitmapImageRep?
+                var done = false
+                view.takeSnapshot(with: nil) { image, _ in
+                    MainActor.assumeIsolated {
+                        bitmap = image?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+                            .map(NSBitmapImageRep.init(cgImage:))
+                        done = true
+                    }
+                }
+                guard waitUntil(3, { done }), let bitmap, bitmap.pixelsWide > 0 else { return false }
+                typealias RGB = (r: Double, g: Double, b: Double)
+                func color(_ x: Double, _ y: Double) -> RGB {
+                    let c = bitmap.colorAt(
+                        x: Int(x * Double(bitmap.pixelsWide - 1)), y: Int(y * Double(bitmap.pixelsHigh - 1))
+                    )?.usingColorSpace(.sRGB)
+                    return (Double(c?.redComponent ?? 0), Double(c?.greenComponent ?? 0), Double(c?.blueComponent ?? 0))
+                }
+                func isWhite(_ c: RGB) -> Bool { c.r > 0.75 && c.g > 0.75 && c.b > 0.75 }
+                func isMagenta(_ c: RGB) -> Bool { c.r > 0.6 && c.b > 0.6 && c.g < 0.4 }
+                func hue(_ c: RGB) -> String {
+                    if c.r > 0.6, c.g > 0.6, c.b < 0.4 { return "yellow" }
+                    if c.r > 0.6, c.g < 0.4, c.b < 0.4 { return "red" }
+                    if c.g > 0.6, c.r < 0.4, c.b < 0.4 { return "green" }
+                    if c.b > 0.6, c.r < 0.4, c.g < 0.4 { return "blue" }
+                    return "other"
+                }
+                let edges = [(0.008, 0.5), (0.992, 0.5), (0.5, 0.012), (0.5, 0.988)]
+                let border = edges.allSatisfy { isWhite(color($0.0, $0.1)) }
+                let quadrants = hue(color(0.25, 0.25)) == "red" && hue(color(0.75, 0.25)) == "green"
+                    && hue(color(0.25, 0.75)) == "blue" && hue(color(0.75, 0.75)) == "yellow"
+                let grid = (0...10).flatMap { x in (0...10).map { y in color(Double(x) / 10, Double(y) / 10) } }
+                if !(border && quadrants) || grid.contains(where: isMagenta) {
+                    print("Mini player: snapshot \(edges.map { color($0.0, $0.1) }) \(hue(color(0.25, 0.25)))")
+                }
+                return border && quadrants && !grid.contains(where: isMagenta)
             }
 
             let scheme = VideoCheckScheme()
@@ -160,9 +210,28 @@
             report("the tab in the panel is held awake", held(coordinator.active, sound.id) && inPanel(sound))
             let title = sound.view.window?.title ?? ""
             report(
-                "the panel's title names the page's site",
+                "the panel's title and accessibility label name the page's site",
                 title == MiniPlayer.title(for: sound.view.url) && title.hasSuffix(" top")
-                    && title != String(localized: "Mini Player"))
+                    && title != String(localized: "Mini Player")
+                    && sound.view.window?.accessibilityLabel() == title)
+            if let panel = sound.view.window {
+                report(
+                    "the panel is one borderless widget, its own close button and site caption shown as it opens",
+                    !panel.styleMask.contains(.titled) && panel.standardWindowButton(.closeButton) == nil
+                        && !panel.canBecomeKey && player.areControlsShown && player.closeButton?.isHidden == false
+                        && player.caption == MiniPlayer.site(of: sound.view.url) && player.caption == "top")
+                let start = panel.frame
+                player.resize(from: start, edges: .right, by: CGVector(dx: 160, dy: 0))
+                let wider = panel.frame
+                player.resize(from: wider, edges: [.left, .bottom], by: CGVector(dx: 160, dy: 90))
+                report(
+                    "dragging an edge resizes it at the video's aspect ratio, the opposite edges staying put",
+                    wider.width == start.width + 160 && wider.minX == start.minX && wider.maxY == start.maxY
+                        && abs(wider.width / wider.height - 16.0 / 9) < 0.01
+                        && panel.frame.size == start.size && panel.frame.maxX == wider.maxX
+                        && panel.frame.maxY == wider.maxY && waitUntil(3) { isFilled(sound.view) })
+                panel.setFrame(start, display: false)
+            }
 
             pane.select(sound.id)
             settle()
@@ -220,13 +289,32 @@
                 report("a video in a sandboxed iframe pops out, its iframe filling the page", false)
             }
 
+            let alone = "a video in a transformed, clipped player under page chrome shows alone and whole in the panel"
+            if let tube = open("tube"), reported(tube.id, playing: true) {
+                let before = pageValue(tube.view, Self.videoBox)
+                leave()
+                report(
+                    alone,
+                    inPanel(tube) && waitUntil(3) { isFilled(tube.view) }
+                        && waitUntil(5) { showsOnlyTheCheckVideo(tube.view) })
+                pane.select(tube.id)
+                settle()
+                report(
+                    "the page's layout comes back exactly",
+                    before != nil && tube.view.window === hostWindow
+                        && waitUntil(3) { pageValue(tube.view, Self.videoBox) == before })
+                coordinator.active.close(tube.id)
+            } else {
+                report(alone, false)
+            }
+
             pane.select(sound.id)
             settle()
             sound.view.evaluateJavaScript("document.getElementById('v').play()")
             _ = isPlaying(sound.view) && reported(sound.id, playing: true)
             leave()
             let panel = sound.view.window
-            panel?.performClose(nil)
+            player.closeButton?.performClick(nil)
             settle()
             report(
                 "closing the panel pauses the video and leaves the tab",
@@ -361,15 +449,34 @@
 
             coordinator.switchTo(Workspace.defaultID)
             settle()
+            if let quitting = open("sound"), reported(quitting.id, playing: true) {
+                leave()
+                let wasIn = inPanel(quitting)
+                coordinator.prepareForQuit()
+                settle()
+                report(
+                    "quitting closes the panel and gives the view back to its tab",
+                    wasIn && player.tab == nil && quitting.view.window == nil
+                        && coordinator.registry.webView(for: quitting.id) === quitting.view)
+                coordinator.cancelQuitForSelfCheck()
+                coordinator.active.close(quitting.id)
+                settle()
+            } else {
+                report("quitting closes the panel and gives the view back to its tab", false)
+            }
+            let lastWindow = "closing the last window, the one the tab was left in, closes the panel and gives the view back"
             if let last = open("sound"), reported(last.id, playing: true) {
                 leave()
                 let wasIn = inPanel(last)
                 hostWindow.close()
                 isHostOpen = false
                 settle()
-                report("closing the window the tab was left in closes the panel", wasIn && player.tab == nil)
+                report(
+                    lastWindow,
+                    wasIn && coordinator.windows.isEmpty && player.tab == nil && last.view.window == nil
+                        && coordinator.registry.webView(for: last.id) === last.view)
             } else {
-                report("closing the window the tab was left in closes the panel", false)
+                report(lastWindow, false)
             }
             if let made { _ = delete(made) }
             return deletedStores
@@ -395,6 +502,35 @@
             let body: String =
                 if mode == "still" {
                     ""
+                } else if mode == "tube" {
+                    """
+                    <header style='position:fixed;top:0;left:0;right:0;height:56px;background:#f0f;z-index:2020'></header>
+                    <div style='opacity:0.99;isolation:isolate;padding-top:56px'>
+                    <div id=player style='position:relative;width:640px;height:300px;overflow:hidden;contain:strict;\
+                    transform:translateZ(0);translate:12px 0;container-type:size'>
+                    <video id=v playsinline style='position:absolute;left:-90px;top:-40px;width:820px;height:460px;\
+                    object-fit:cover'></video>
+                    <div style='position:absolute;inset:0;background:rgba(255,0,255,.6);z-index:10'></div>
+                    </div>
+                    <aside style='height:1400px;background:#f0f;visibility:visible'></aside>
+                    </div>
+                    <canvas id=c width=320 height=180 style='display:none'></canvas>
+                    <script>
+                    const g = document.getElementById('c').getContext('2d');
+                    const paint = () => {
+                      g.fillStyle = '#fff'; g.fillRect(0, 0, 320, 180);
+                      g.fillStyle = '#f00'; g.fillRect(10, 10, 150, 80);
+                      g.fillStyle = '#0f0'; g.fillRect(160, 10, 150, 80);
+                      g.fillStyle = '#00f'; g.fillRect(10, 90, 150, 80);
+                      g.fillStyle = '#ff0'; g.fillRect(160, 90, 150, 80);
+                    };
+                    paint();
+                    setInterval(paint, 50);
+                    const v = document.getElementById('v');
+                    v.srcObject = document.getElementById('c').captureStream(20);
+                    v.play().catch(() => {});
+                    </script>
+                    """
                 } else if mode == "framed" || mode == "sandboxed" {
                     "<iframe src='\(Self.name)://frame/sound' \(mode == "sandboxed" ? "sandbox='allow-scripts'" : "")"
                         + " style='width:700px;height:420px;border:0'></iframe>"

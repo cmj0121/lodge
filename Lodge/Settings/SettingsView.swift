@@ -53,7 +53,7 @@ struct SettingsView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Toggle("Keep a playing video in a mini player when I leave its tab", isOn: $popsOutVideo)
-                    Text("A video playing with sound moves to a small floating window and goes back when you return to its tab. Closing the window pauses it.")
+                    Text("A video playing with sound moves to a small floating window showing only the video, and goes back when you return to its tab. Its close button pauses it.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Text("Each workspace's look — System, Light or Dark — is set from its menu in the workspace bar.")
