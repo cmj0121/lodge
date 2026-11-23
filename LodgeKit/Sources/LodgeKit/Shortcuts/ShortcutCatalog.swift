@@ -1,11 +1,11 @@
 public enum ShortcutID: String, CaseIterable, Sendable {
     case newTab, newWindow, closeTab, openLocation, reload, find, bookmarkTab, toggleDownloads, zoomIn, zoomOut,
         actualSize, shortcutHelp, workspace1, workspace2, workspace3, workspace4, workspace5, workspace6, workspace7,
-        workspace8, workspace9
+        workspace8, workspace9, pin1, pin2, pin3, pin4, pin5, pin6, pin7, pin8, pin9
 }
 
 extension ShortcutID {
-    /// ⌘1 is Default, ⌘2–⌘9 the next eight workspaces in order.
+    /// ⌃1 is Default, ⌃2–⌃9 the next eight workspaces in order.
     public static let workspaceSlots: [ShortcutID] = [
         .workspace1, .workspace2, .workspace3, .workspace4, .workspace5, .workspace6, .workspace7, .workspace8,
         .workspace9,
@@ -18,6 +18,18 @@ extension ShortcutID {
 
     public static func workspace(slot: Int) -> ShortcutID? {
         workspaceSlots.indices.contains(slot - 1) ? workspaceSlots[slot - 1] : nil
+    }
+
+    /// ⌘1–⌘9 open the sidebar's first nine pins in order, the shared Default pins when pins are shared.
+    public static let pinSlots: [ShortcutID] = [.pin1, .pin2, .pin3, .pin4, .pin5, .pin6, .pin7, .pin8, .pin9]
+
+    /// 1…9 for a pin slot, nil for every other shortcut.
+    public var pinSlot: Int? {
+        Self.pinSlots.firstIndex(of: self).map { $0 + 1 }
+    }
+
+    public static func pin(slot: Int) -> ShortcutID? {
+        pinSlots.indices.contains(slot - 1) ? pinSlots[slot - 1] : nil
     }
 }
 
@@ -114,7 +126,13 @@ public enum ShortcutCatalog {
             let slot = index + 1
             return Shortcut(
                 id, String(localized: "Workspace \(slot)", bundle: .module), .workspaces,
-                KeyCombo(Character("\(slot)")),
+                KeyCombo(Character("\(slot)"), .control),
+                note: slot == 1 ? String(localized: "⌃2–⌃9 next", bundle: .module) : nil, isListed: slot == 1)
+        }
+        + ShortcutID.pinSlots.enumerated().map { index, id in
+            let slot = index + 1
+            return Shortcut(
+                id, String(localized: "Pin \(slot)", bundle: .module), .bookmarks, KeyCombo(Character("\(slot)")),
                 note: slot == 1 ? String(localized: "⌘2–⌘9 next", bundle: .module) : nil, isListed: slot == 1)
         }
 
