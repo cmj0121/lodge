@@ -171,14 +171,14 @@ Lodge 以 WebKit 為底，passkey、service worker 和 extension 隨 Apple 對�
      `mac_installer_distribution` 或 `developer_id` 其中之一。
 4. 先在 App Store Connect 為 bundle ID（`APP_IDENTIFIER`）建立 app record；上傳前它必須已經存在。
 
-接著發佈：
+接著執行 `make publish`。在上傳任何東西之前，它會先檢查 `.env`（列出缺少的 key，兩種登入方式都不完整時列出
+各自缺少的項目），並確認工作目錄乾淨、`HEAD` 等於 `origin/main`，且 tag 與 GitHub release 尚未存在；
+接著執行 `make test`，再跑 iOS/iPadOS lane 與下面的 macOS 發佈。
 
-| 指令                 | 作用                                                                      |
-| -------------------- | ------------------------------------------------------------------------- |
-| `make publish-check` | 檢查 `.env`；列出缺少的 key，兩種登入方式都不完整時，列出各自缺少的項目   |
-| `make publish`       | 執行 `make test` 和 `.env` 檢查，再跑 iOS/iPadOS lane 與下面的 macOS 發佈 |
-
-`Lodge.xcodeproj` 還沒有對應 target 時，iOS 和 iPadOS lane 會略過。macOS lane（`mac publish`）：
+iOS 和 iPadOS lane 會 build universal 的 `LodgeiOS` target（iPhone 與 iPad 共用一個 build）並上傳到
+TestFlight；第一次執行時，match 需要 `MATCH_READONLY=false` 才能建立 iOS App Store profile。想先在本機試用，
+`make run PLATFORM=ios` 會 build 並在 Simulator 開啟（用 `IOS_SIM="iPad Air 11-inch (M4)"` 指定其他裝置）。
+macOS lane（`mac publish`）：
 
 1. 要求工作目錄乾淨且 `HEAD` 等於 `origin/main`：先 commit 並 push；
 2. 把 Mac App Store pkg 上傳到 TestFlight；

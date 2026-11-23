@@ -175,14 +175,14 @@ Set it up once:
      `appstore`, `mac_installer_distribution` or `developer_id`.
 4. Create the app record for the bundle ID (`APP_IDENTIFIER`) in App Store Connect; the upload needs it to exist first.
 
-Then publish:
+Then run `make publish`. Before anything uploads, it checks `.env` (naming missing keys, and what each sign-in way lacks
+when neither is complete) and that the tree is clean with `HEAD` at `origin/main`, under a tag and GitHub release not yet
+taken; then it runs `make test`, the iOS/iPadOS lanes and the macOS publish below.
 
-| Command              | What it does                                                                                 |
-| -------------------- | -------------------------------------------------------------------------------------------- |
-| `make publish-check` | Checks `.env`; names missing keys, and what each sign-in way lacks when neither is complete  |
-| `make publish`       | Runs `make test` and the `.env` check, then the iOS/iPadOS lanes and the macOS publish below |
-
-The iOS and iPadOS lanes skip while `Lodge.xcodeproj` has no such target. The macOS lane (`mac publish`):
+The iOS and iPadOS lanes build the universal `LodgeiOS` target (one build for iPhone and iPad) and upload it to
+TestFlight; on the first run, match needs `MATCH_READONLY=false` to create the iOS App Store profile. To try the app
+locally first, `make run PLATFORM=ios` builds it and opens it in the Simulator (`IOS_SIM="iPad Air 11-inch (M4)"` picks
+another device). The macOS lane (`mac publish`):
 
 1. requires a clean tree with `HEAD` at `origin/main`: commit and push first;
 2. uploads the Mac App Store pkg to TestFlight;
