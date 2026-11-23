@@ -14,6 +14,8 @@ struct SettingsView: View {
     @Environment(\.downloadSettings) private var injected
     /// Bumped after the folder panel closes, so the menu redraws even when the selection did not change.
     @State private var menuRevision = 0
+    /// Read by `BrowserModel.popsOut` at each leave, so a change applies to the next one.
+    @AppStorage(VideoPopOut.settingKey) private var popsOutVideo = VideoPopOut.enabledByDefault
     private let defaultBrowser = DefaultBrowserStatus.shared
 
     private static let appModel = DownloadSettingsModel()
@@ -48,6 +50,10 @@ struct SettingsView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Text("Resting tabs keep their place on this Mac: the address, scroll position and, for tabs that never sent a form, their back and forward history. Text in form fields and posted form data are never kept, and Anonymous keeps nothing.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Toggle("Keep a playing video in a mini player when I leave its tab", isOn: $popsOutVideo)
+                    Text("A video playing with sound moves to a small floating window and goes back when you return to its tab. Closing the window pauses it.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Text("Each workspace's look — System, Light or Dark — is set from its menu in the workspace bar.")

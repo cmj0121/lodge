@@ -121,6 +121,16 @@
         }
       }
     },
+    "A video playing with sound moves to a small floating window and goes back when you return to its tab. Closing the window pauses it." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有聲播放中的影片會移到一個浮動小視窗，回到它的分頁時再移回去。關閉視窗會暫停影片。"
+          }
+        }
+      }
+    },
     "About" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1137,6 +1147,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "其分頁會關閉，書籤、瀏覽紀錄、登入狀態與網站資料都會刪除。此動作無法復原。"
+          }
+        }
+      }
+    },
+    "Keep a playing video in a mini player when I leave its tab" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "離開分頁時，讓正在播放的影片在迷你播放器中繼續播放"
           }
         }
       }
