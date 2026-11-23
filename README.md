@@ -52,6 +52,18 @@ one you are in uses resources.
 | Nothing leaves        | Telling a page has unsent work reads no field contents and sends nothing out of the page |
 | Light to use          | Idle workspaces stay quiet, switching is quick, and you pick up where you left off       |
 | Several windows       | ⌘N opens a window on the same workspaces; each shows its own tab and returns on relaunch |
+| Workspace keys        | ⌃1 is Default, ⌃2–⌃9 the next; macOS wins if Mission Control's Switch to Desktop has it  |
+| Pin keys              | ⌘1–⌘9 open the sidebar's first nine pins as a click would; the Bookmarks menu lists them |
+| Mini player           | Leaving its tab floats only a video playing with sound, whole; muted or paused ones stay |
+| Using it              | Drag the video to move it, an edge to resize, click to pause; hover for × and its site   |
+| Player controls       | Hover for −5s, play/pause, +5s and Next video (YouTube, top page only)                   |
+| Seek and mute         | Elapsed time, a bar to click or drag to seek, total time, mute                           |
+| Live video            | Live or unseekable video hides ±5s, the bar and the times                                |
+| Narrow panel          | A narrow mini player hides the times first; drag, edge resize and click to pause stay    |
+| Back to its tab       | Showing the tab again brings the video back into its page, still playing                 |
+| Closing it            | Its × pauses the video; closing its tab or last window, or quitting, closes it too       |
+| Mini player switch    | Settings › General turns it off or on, on by default; a video already out stays out      |
+| Not system PiP        | macOS WebKit gives other browsers Picture in Picture only via a private switch; unused   |
 | Lodge pages           | `lodge://settings`, `history`, `protection` open as tabs, one per workspace; sites can't |
 | Settings tab          | ⌘, or the gear: General, Search, Fingerprint, Downloads, About (version, macOS, folder)  |
 | Search engine         | Each workspace searches with its own; pick it under Search Engine… in the workspace menu |
