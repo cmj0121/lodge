@@ -51,6 +51,10 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     #endif
 
     @ObservationIgnored let registry: WebViewRegistry
+    /// The one mini player (#36), for every workspace's tabs.
+    @ObservationIgnored let miniPlayer = MiniPlayer()
+    /// The window the mini player's tab was left in; closing it closes the mini player.
+    @ObservationIgnored private var miniPlayerWindow: WindowID?
     @ObservationIgnored private var models: [UUID: BrowserModel] = [:]
     @ObservationIgnored private var dormant: [UUID: SessionSnapshot.WorkspaceContent]
     /// Every non-Anonymous workspace's fingerprint key and exceptions, read from the session and written back with
@@ -145,6 +149,14 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
             if let store { registry.hold(download: id, on: store) } else { registry.releaseHold(download: id) }
         }
         registry.storeDropped = { [weak downloads] store in downloads?.forget(store: store) }
+        miniPlayer.didRelease = { [weak self] tab in
+            guard let self else { return }
+            miniPlayerWindow = nil
+            model(holding: tab)?.holdStateChanged(tab)
+        }
+        miniPlayer.didFindFrameGone = { [weak self] tab, frame in
+            self?.model(holding: tab)?.videoFrameIsGone(frame, in: tab)
+        }
         let model = active
         let tabs = model.selectionTabs
         var restored = selections
@@ -191,6 +203,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
                 .map { LinkIconCache(directory: $0) })
         model.downloads = downloads
         model.placement = self
+        model.miniPlayer = miniPlayer
         if let store = historyStores[workspace.id] { model.historyRecorder = HistoryRecorder(store: store) }
         models[workspace.id] = model
         if workspace.id == Workspace.defaultID {
@@ -256,9 +269,12 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
 
     /// Every window leaves the active workspace and takes a tab of `target`; the blanks the windows owned there
     /// close unless `closingBlanks` is false (the workspace is being deleted). A workspace no window has shown yet
-    /// starts the key window on the tab it was restored with.
+    /// starts the key window on the tab it was restored with. Unless the workspace is being deleted, the first window,
+    /// key first, whose tab plays a video with sound moves it to the mini player; a tab of `target` the mini player
+    /// holds that a window now shows comes back.
     private func enter(_ target: Workspace, closingBlanks: Bool) {
         let old = active
+        let left = windows.compactMap { window in selections.shown(in: window.id).map { (window, $0) } }
         for window in windows { window.closeTransientSurfaces() }
         let model = model(of: target)
         let leaving = old.selectionTabs
@@ -273,6 +289,11 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         selections = next
         if closingBlanks { old.remove(Set(change.close)) }
         old.isShown = false
+        // A workspace being deleted keeps no video going.
+        for (window, tab) in closingBlanks ? left : [] {
+            if popOut(tab, of: old, from: window) { break }
+        }
+        takeBackShownVideo()
         show(model)
         stampRest()
         showActiveHistory()
@@ -300,7 +321,7 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         }
     }
 
-    /// ⌘1–⌘9: 1 is Default, 2…9 the next workspaces in order; an empty slot does nothing.
+    /// ⌃1–⌃9: 1 is Default, 2…9 the next workspaces in order; an empty slot does nothing.
     func switchTo(slot: Int) {
         if let workspace = workspaces.workspace(forSlot: slot) { switchTo(workspace.id) }
     }
@@ -505,10 +526,16 @@ extension WorkspaceCoordinator: WindowPlacement {
         NSApp.activate()
     }
 
-    /// The app is quitting: the windows that close from here on stay in the session.
+    /// The app is quitting: the windows that close from here on stay in the session, and the mini player closes.
     func prepareForQuit() {
         isQuitting = true
+        miniPlayer.close()
     }
+
+    #if DEBUG
+        /// Layout self-checks: the app carries on after a check of `prepareForQuit`.
+        func cancelQuitForSelfCheck() { isQuitting = false }
+    #endif
 
     /// The app is quitting: every built workspace's tabs still awake keep their place on disk (D5), as resting ones
     /// already do; Anonymous keeps none.
@@ -621,6 +648,9 @@ extension WorkspaceCoordinator: WindowPlacement {
             model.didSelect(nil, previous: shown, previousStillShown: selections.shownTabs.contains(shown))
         }
         if lastActiveBrowserWindow === window { lastActiveBrowserWindow = windows.first }
+        // The panel's tab was left in this window: closing it, the last window too (Lodge keeps running, D5), closes
+        // the panel.
+        if miniPlayerWindow == window.id { miniPlayer.close() }
         model.remove(Set(change.close))
         stampRest()
         didChange()
@@ -687,13 +717,17 @@ extension WorkspaceCoordinator: WindowPlacement {
             _ = selections.closing(tabs, in: order)
             return
         }
-        updateSelections { $0.closing(tabs, in: order) }
+        updateSelections(popsOut: false) { $0.closing(tabs, in: order) }
     }
 
     /// Runs `change` on the active workspace's selections: the blanks it asks for are appended first, then every
-    /// window whose tab changed hides find and shows its new tab, and the session is saved.
+    /// window whose tab changed hides find and shows its new tab, and the session is saved. The mini player gives back
+    /// a tab a window now shows; unless `popsOut` is false (the tabs left are closing), the first tab left that no
+    /// window shows any more and plays a video with sound moves to it.
     @discardableResult
-    private func updateSelections(_ change: (inout WindowSelections) -> SelectionChange) -> SelectionChange {
+    private func updateSelections(
+        popsOut: Bool = true, _ change: (inout WindowSelections) -> SelectionChange
+    ) -> SelectionChange {
         let before = selections
         var next = before
         let result = change(&next)
@@ -702,16 +736,45 @@ extension WorkspaceCoordinator: WindowPlacement {
         selections = next
         guard selections != before else { return result }
         let shown = selections.shownTabs
+        takeBackShownVideo()
+        var isPoppedOut = !popsOut
         for window in windows {
             let previous = before.shown(in: window.id)
             let tab = selections.shown(in: window.id)
             guard tab != previous else { continue }
             window.dismissFind()
+            if !isPoppedOut, let previous { isPoppedOut = popOut(previous, of: model, from: window) }
             model.didSelect(tab, previous: previous, previousStillShown: previous.map(shown.contains) == true)
         }
         stampRest()
         didChange()
         return result
+    }
+}
+
+// MARK: Mini player
+
+extension WorkspaceCoordinator {
+    /// Moves the view of `tab`, just left in `window`, to the mini player when no window shows the tab and it plays a
+    /// video with sound (D3, D4); true when it moved.
+    private func popOut(_ tab: TabID, of model: BrowserModel, from window: WindowState) -> Bool {
+        guard !selections.shownTabs.contains(tab), model.popsOut(tab), let view = registry.webView(for: tab),
+            let frame = model.videoFrame(of: tab)
+        else { return false }
+        let video = model.video(of: tab)
+        miniPlayer.show(
+            view: view, for: tab, frame: frame, aspect: NSSize(width: video.width, height: video.height),
+            on: window.nsWindow?.screen)
+        miniPlayerWindow = window.id
+        return true
+    }
+
+    /// A window shows the tab the mini player holds again: the mini player gives its view back for that window.
+    private func takeBackShownVideo() {
+        guard let tab = miniPlayer.tab,
+            VideoPopOut.shouldReturn(isTabShown: selections.shownTabs.contains(tab), isInMiniPlayer: true)
+        else { return }
+        miniPlayer.takeBack()
     }
 }
 
@@ -1070,6 +1133,7 @@ extension WorkspaceCoordinator {
         // removeFiles deletes its places and icons; nothing may write one again meanwhile.
         model.places = nil
         model.icons = nil
+        if let tab = miniPlayer.tab, model.tabs[tab] != nil { miniPlayer.close() }
         if let recorder = model.historyRecorder { deletingRecorders[id] = recorder }
         model.historyRecorder = nil
         registry.detach(tabs: model.tabs.tabs.map(\.id))

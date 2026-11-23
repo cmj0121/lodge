@@ -91,6 +91,13 @@ struct BrowserPane {
         }
     }
 
+    /// ⌘1–⌘9: opens the sidebar's pin in row `slot` as a click on it does; an empty slot does nothing.
+    func openPin(slot: Int) {
+        guard let pin = model.sidebar.pin(slot: slot) else { return }
+        closeFloatingSurfaces()
+        activate(.link(pin))
+    }
+
     /// Shows the link's open tab, else the tab showing its Lodge page, else opens a fresh tab on the link's URL
     /// here, loaded unless `load` is false (layout renders, so no request goes out). The tab keeps the link while it
     /// navigates on the web. A `lodge:` link naming no page opens nothing.

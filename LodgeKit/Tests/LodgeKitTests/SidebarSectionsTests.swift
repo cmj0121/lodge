@@ -60,6 +60,21 @@ import Testing
         #expect(sections.loose == [.tab(second)])
     }
 
+    @Test func pinSlotsNameThePinsInSidebarOrderOpenOrNotAndNothingPastTheLast() {
+        var list = TabList()
+        list.open(BrowserTab(link: open.id))
+        let sections = SidebarSections(pins: [pin, open], bookmarks: root(bookmark), tabs: list)
+        #expect(sections.pin(slot: 1) == pin)
+        #expect(sections.pin(slot: 2) == open)
+        #expect(sections.pin(slot: 3) == nil)
+        #expect(sections.pin(slot: 0) == nil)
+    }
+
+    @Test func sharedPinsFillTheSlotsToo() {
+        let sections = SidebarSections(pins: [pin], bookmarks: root(), tabs: TabList(), pinsAreShared: true)
+        #expect(sections.pin(slot: 1) == pin)
+    }
+
     @Test func tabForLinkFindsTheTabOpenedFromIt() {
         var list = TabList()
         let tab = BrowserTab(link: pin.id)

@@ -701,6 +701,16 @@
         }
       }
     },
+    "Pin %lld": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "釘選 %lld"
+          }
+        }
+      }
+    },
     "Pink": {
       "localizations": {
         "zh-Hant": {
@@ -1117,6 +1127,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "「%@」是 App 或腳本，仍要打開嗎？"
+          }
+        }
+      }
+    },
+    "⌃2–⌃9 next": {
+      "localizations": {
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌃2–⌃9 依序類推"
           }
         }
       }

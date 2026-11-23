@@ -74,6 +74,11 @@ final class BrowserModel {
     @ObservationIgnored private var popupOpeners: [TabID: TabID] = [:]
     /// Each tab's unsent work (typed text, a form POST in flight) as its page reports it; gone with the tab or its view.
     @ObservationIgnored private var work: [TabID: PageWork] = [:]
+    /// Each tab's frames' last reports of a video (#36), by document, with the frame that sent each, at most
+    /// `Reports.capacity`; gone with the document, the main frame's document, the view or the tab.
+    @ObservationIgnored private var videos: [TabID: VideoPopOutScript.Reports<WKFrameInfo>] = [:]
+    /// The app's one mini player, set by the coordinator; a tab whose view it holds is held awake.
+    @ObservationIgnored weak var miniPlayer: MiniPlayer?
     /// Whether each tab's current document would ask before it is left: "no" stands for the document, "yes" only for
     /// `beforeUnloadReprobe` (the probe runs the page's handlers and counts as user activation, so it is not run on
     /// every retry). Gone with the document, the view or the tab.
@@ -237,8 +242,8 @@ final class BrowserModel {
     /// The tabs that have a web view, in tab order.
     var liveTabs: [TabID] { tabs.tabs.compactMap { registry.webView(for: $0.id) != nil ? $0.id : nil } }
 
-    /// A tab's capture, fullscreen or unsent work changed: a held background workspace tries its release again now, or
-    /// once the pass running now ends.
+    /// A tab's capture, fullscreen, unsent work or place in the mini player changed: a held background workspace
+    /// tries its release again now, or once the pass running now ends.
     func holdStateChanged(_ id: TabID) {
         guard !isShown, releaseRetryTask != nil || viewRelease.isRunning else { return }
         Task { await releaseViews() }
@@ -254,9 +259,11 @@ final class BrowserModel {
         return await asksBeforeLeaving(id, view)
     }
 
-    /// The holds known without asking the page; a sign-in challenge waiting for its sheet is one.
+    /// The holds known without asking the page; a sign-in challenge waiting for its sheet is one, and so is the mini
+    /// player holding the tab's view.
     private func isHeldNow(_ id: TabID) -> Bool {
         guard let view = registry.webView(for: id) else { return false }
+        if miniPlayer?.tab == id { return true }
         if view.cameraCaptureState != .none || view.microphoneCaptureState != .none { return true }
         if view.fullscreenState != .notInFullscreen { return true }
         if let opener = popupOpeners[id], registry.webView(for: opener) != nil { return true }
@@ -292,6 +299,50 @@ final class BrowserModel {
         beforeUnloadProbing.remove(id)
     }
 
+    // MARK: Video pop-out
+
+    /// A frame of the tab showing `view` reported its document's video, or that its document went, or relayed a
+    /// fill hop to the mini player (#36).
+    func didReceiveVideo(_ message: VideoPopOutScript.Message, in frame: WKFrameInfo, from view: WKWebView) {
+        guard let id = tabs.tabs.first(where: { registry.webView(for: $0.id) === view })?.id else { return }
+        if case .hop(_, let token, let origin) = message {
+            miniPlayer?.relay(token: token, from: origin, in: frame, of: view)
+            return
+        }
+        videos[id, default: .init()].apply(message, from: frame)
+        if videos[id]?.isEmpty == true { videos[id] = nil }
+    }
+
+    /// The tab's video: the best of its frames' reports.
+    func video(of id: TabID) -> VideoPopOutScript.State { videos[id]?.best?.report.state ?? .none }
+
+    /// The frame holding the tab's video, for the mini player to fill.
+    func videoFrame(of id: TabID) -> WKFrameInfo? { videos[id]?.best?.frame }
+
+    /// The frame no longer exists (a script call to it failed so): its report goes.
+    func videoFrameIsGone(_ frame: WKFrameInfo, in id: TabID) {
+        videos[id]?.removeAll { $0 === frame }
+        if videos[id]?.isEmpty == true { videos[id] = nil }
+    }
+
+    /// The tab's main frame committed another document: a tab in the mini player goes back, shown nowhere, so the
+    /// panel never floats a page the video was not on (#36). A navigation that never commits (a 204, a download, a
+    /// failure) leaves it playing in the panel.
+    func mainFrameLeavesDocument(_ id: TabID) {
+        if miniPlayer?.tab == id { miniPlayer?.close() }
+    }
+
+    /// Leaving the tab moves its view to the mini player (D4): it has a view and a video playing with sound, and
+    /// Settings has pop-out on.
+    func popsOut(_ id: TabID) -> Bool {
+        let video = video(of: id)
+        let isEnabled =
+            UserDefaults.standard.object(forKey: VideoPopOut.settingKey) as? Bool ?? VideoPopOut.enabledByDefault
+        return registry.webView(for: id) != nil
+            && VideoPopOut.shouldPopOut(
+                isPlaying: video.isPlaying, isMuted: video.isMuted, hasVideo: video.hasVideo, isEnabled: isEnabled)
+    }
+
     // MARK: Unsent work
 
     /// A frame of the tab showing `view` reported its unsent work.
@@ -305,9 +356,11 @@ final class BrowserModel {
         changeWork(id) { $0.formPost(inFlight: inFlight) }
     }
 
-    /// The tab's main frame committed a new document, or its web content process ended: its documents' work drops.
+    /// The tab's main frame committed a new document, or its web content process ended: its documents' work and
+    /// video drop.
     func resetWork(_ id: TabID) {
         forgetBeforeUnload(id)
+        videos[id] = nil
         changeWork(id) { $0.reset() }
     }
 
@@ -338,6 +391,7 @@ final class BrowserModel {
         controllers[id] = nil
         let state = registry.release(id)
         work[id] = nil
+        videos[id] = nil
         resetFingerprintReads(id)
         forgetBeforeUnload(id)
         if tab.url != nil, let state { savedStates[id] = state }
@@ -685,6 +739,8 @@ final class BrowserModel {
             places?.remove(id)
             popupOpeners[id] = nil
             work[id] = nil
+            videos[id] = nil
+            if miniPlayer?.tab == id { miniPlayer?.close() }
             rest.forget(id)
             forgetBeforeUnload(id)
             if protectionTargets[id] != nil { protectionTargets[id] = nil }

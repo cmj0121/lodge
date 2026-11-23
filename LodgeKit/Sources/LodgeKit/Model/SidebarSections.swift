@@ -112,6 +112,12 @@ public struct SidebarSections: Equatable, Sendable {
         loose = tabs.tabs.filter { !paired.contains($0.id) }.map(SidebarItem.tab)
     }
 
+    /// The pin in row `slot` (1-based) of the pins the sidebar shows, shared or not; nil past the last.
+    public func pin(slot: Int) -> SavedLink? {
+        guard pins.indices.contains(slot - 1), case .link(let link, _, _) = pins[slot - 1] else { return nil }
+        return link
+    }
+
     /// The pins stepping and closing go through: none while they are shared.
     private var ownPins: [SidebarItem] { pinsAreShared ? [] : pins }
 

@@ -108,6 +108,15 @@ struct BrowserCommands: Commands {
                 if let model = pane?.model { BookmarkTransfer.exportBookmarks(from: model, on: browserWindow) }
             }
             .disabled(noPane)
+            if let pane, !pane.model.sidebar.pins.isEmpty {
+                Divider()
+                ForEach(1...ShortcutID.pinSlots.count, id: \.self) { slot in
+                    if pane.model.sidebar.pin(slot: slot) != nil {
+                        Button(ShortcutCatalog[.pin(slot: slot)!].title) { pane.openPin(slot: slot) }
+                            .shortcut(.pin(slot: slot)!, enabled: isBrowserWindow == true)
+                    }
+                }
+            }
         }
         CommandMenu("Workspaces") {
             Button("New Workspace…") { pane?.showWorkspaceEditor(.create) }

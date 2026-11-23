@@ -17,7 +17,8 @@ import Testing
             (.zoomOut, "Zoom Out", .view, "⌘-"),
             (.actualSize, "Actual Size", .view, "⌘0"),
             (.shortcutHelp, "Keyboard Shortcuts", .help, "⌘/"),
-        ] + (1...9).map { n in (ShortcutID.workspaceSlots[n - 1], "Workspace \(n)", .workspaces, "⌘\(n)") }
+        ] + (1...9).map { n in (ShortcutID.workspaceSlots[n - 1], "Workspace \(n)", .workspaces, "⌃\(n)") }
+            + (1...9).map { n in (ShortcutID.pinSlots[n - 1], "Pin \(n)", .bookmarks, "⌘\(n)") }
         let all = ShortcutCatalog.all
         #expect(all.count == expected.count)
         for (shortcut, (id, title, menu, display)) in zip(all, expected) {
@@ -44,7 +45,8 @@ import Testing
 
     @Test func everyPrimaryComboIsCommandPlusOneKey() {
         for shortcut in ShortcutCatalog.all {
-            #expect(shortcut.combo.modifiers == .command)
+            let expected: KeyCombo.Modifiers = shortcut.id.workspaceSlot == nil ? .command : .control
+            #expect(shortcut.combo.modifiers == expected)
         }
     }
 
@@ -67,7 +69,7 @@ import Testing
         #expect(grouped[0].shortcuts.map(\.id) == [.newTab, .newWindow, .closeTab, .openLocation])
         #expect(grouped[1].shortcuts.map(\.id) == [.find])
         #expect(grouped[2].shortcuts.map(\.id) == [.reload, .toggleDownloads, .zoomIn, .zoomOut, .actualSize])
-        #expect(grouped[3].shortcuts.map(\.id) == [.bookmarkTab])
+        #expect(grouped[3].shortcuts.map(\.id) == [.bookmarkTab, .pin1])
         #expect(grouped[4].shortcuts.map(\.id) == [.workspace1])
         #expect(grouped[5].shortcuts.map(\.id) == [.shortcutHelp])
         #expect(grouped.allSatisfy { !$0.shortcuts.isEmpty })
@@ -80,11 +82,12 @@ import Testing
         #expect(ShortcutCatalog[.shortcutHelp].yieldsToPage)
     }
 
-    @Test func onlyShortcutHelpAndWorkspace1CarryANote() {
-        for shortcut in ShortcutCatalog.all where ![.shortcutHelp, .workspace1].contains(shortcut.id) {
+    @Test func onlyShortcutHelpWorkspace1AndPin1CarryANote() {
+        for shortcut in ShortcutCatalog.all where ![.shortcutHelp, .workspace1, .pin1].contains(shortcut.id) {
             #expect(shortcut.note == nil)
         }
-        #expect(ShortcutCatalog[.workspace1].note == "⌘2–⌘9 next")
+        #expect(ShortcutCatalog[.workspace1].note == "⌃2–⌃9 next")
+        #expect(ShortcutCatalog[.pin1].note == "⌘2–⌘9 next")
         #expect(ShortcutCatalog[.shortcutHelp].note == "outside the page")
     }
 
@@ -102,8 +105,31 @@ import Testing
         for (index, id) in ShortcutID.workspaceSlots.enumerated() {
             #expect(id.workspaceSlot == index + 1)
             #expect(ShortcutID.workspace(slot: index + 1) == id)
-            #expect(ShortcutCatalog[id].combo == KeyCombo(Character("\(index + 1)")))
+            #expect(ShortcutCatalog[id].combo == KeyCombo(Character("\(index + 1)"), .control))
         }
+    }
+
+    @Test func pinSlotsRunOneToNineInOrder() {
+        #expect(ShortcutID.pinSlots == [.pin1, .pin2, .pin3, .pin4, .pin5, .pin6, .pin7, .pin8, .pin9])
+        for (index, id) in ShortcutID.pinSlots.enumerated() {
+            #expect(id.pinSlot == index + 1)
+            #expect(ShortcutID.pin(slot: index + 1) == id)
+            #expect(ShortcutCatalog[id].combo == KeyCombo(Character("\(index + 1)")))
+            #expect(ShortcutCatalog[id].menu == .bookmarks)
+        }
+    }
+
+    @Test func pinSlotMappingRejectsOutOfRangeAndNonPinIDs() {
+        #expect(ShortcutID.pin(slot: 0) == nil)
+        #expect(ShortcutID.pin(slot: 10) == nil)
+        #expect(ShortcutID.pin(slot: -1) == nil)
+        for id in ShortcutID.allCases where !ShortcutID.pinSlots.contains(id) {
+            #expect(id.pinSlot == nil)
+        }
+    }
+
+    @Test func newWindowKeepsCommandN() {
+        #expect(ShortcutCatalog[.newWindow].combo == KeyCombo("n"))
     }
 
     @Test func slotMappingRejectsOutOfRangeAndNonWorkspaceIDs() {
@@ -115,8 +141,8 @@ import Testing
         }
     }
 
-    @Test func onlyWorkspace1IsListedAmongTheSlots() {
-        let hidden = Set(ShortcutID.workspaceSlots.dropFirst())
+    @Test func onlyTheFirstWorkspaceAndPinSlotsAreListed() {
+        let hidden = Set(ShortcutID.workspaceSlots.dropFirst() + ShortcutID.pinSlots.dropFirst())
         for shortcut in ShortcutCatalog.all {
             #expect(shortcut.isListed == !hidden.contains(shortcut.id))
         }
@@ -125,7 +151,7 @@ import Testing
     }
 
     @Test func workspaceKeysCollideWithNeitherActualSizeNorAliases() {
-        let others = ShortcutCatalog.all.filter { $0.menu != .workspaces }.flatMap { [$0.combo] + $0.aliases }
+        let others = ShortcutCatalog.all.filter { $0.id.workspaceSlot == nil }.flatMap { [$0.combo] + $0.aliases }
         for id in ShortcutID.workspaceSlots {
             #expect(!others.contains(ShortcutCatalog[id].combo))
         }

@@ -4,7 +4,8 @@ import SwiftUI
 import WebKit
 
 /// Hosts at most one registry-owned web view; showing another one reparents it here. A view another window's
-/// container has taken since is never pulled back out of it by this one letting go.
+/// container has taken since is never pulled back out of it by this one letting go, and a view in the mini player is
+/// never taken from it: the mini player gives it back first (`MiniPlayer.takeBack()`).
 final class WebViewContainer: NSView {
     private weak var current: WKWebView?
 
@@ -12,7 +13,7 @@ final class WebViewContainer: NSView {
         if let current, current !== view, current.superview === self { current.removeFromSuperview() }
         current = view
         guard let view else { return }
-        guard view.superview !== self else { return }
+        guard view.superview !== self, !(view.window is MiniPlayerPanel) else { return }
         view.removeFromSuperview()
         view.translatesAutoresizingMaskIntoConstraints = false
         addSubview(view)

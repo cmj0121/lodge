@@ -192,8 +192,9 @@ final class WebViewRegistry {
         return config
     }
 
-    /// Registers, once per content controller, the work script's handler (D3) and the fingerprint relay's (D4), each in
-    /// its script's content world, both reporting to `model`. Removing user scripts keeps them.
+    /// Registers, once per content controller, the work script's handler (D3), the fingerprint relay's (D4) and the
+    /// video probe's (#36), each in its script's content world, all reporting to `model`. Removing user scripts keeps
+    /// them.
     private static func addHandlers(to controller: WKUserContentController, model: BrowserModel) {
         controller.add(
             PageWorkHandler(model: model), contentWorld: .world(name: PageWorkScript.worldName),
@@ -201,6 +202,9 @@ final class WebViewRegistry {
         controller.add(
             FingerprintHandler(model: model), contentWorld: .world(name: FingerprintScript.worldName),
             name: FingerprintScript.handlerName)
+        controller.add(
+            VideoHandler(model: model), contentWorld: .world(name: VideoPopOutScript.worldName),
+            name: VideoPopOutScript.handlerName)
     }
 
     /// The store's data store, cached until `forget(store:)` or, for an anonymous tab's, until its last holder goes.
@@ -251,5 +255,21 @@ private final class FingerprintHandler: NSObject, WKScriptMessageHandler {
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let view = message.webView, let api = FingerprintScript.api(from: message.body) else { return }
         model?.didReadFingerprint(api, from: view)
+    }
+}
+
+/// Hands the video probe's reports (#36), from any frame, with that frame, to the model of the tab whose view sent
+/// them, held weakly like `PageWorkHandler`'s.
+@MainActor
+private final class VideoHandler: NSObject, WKScriptMessageHandler {
+    private weak var model: BrowserModel?
+
+    init(model: BrowserModel) {
+        self.model = model
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let view = message.webView, let video = VideoPopOutScript.message(from: message.body) else { return }
+        model?.didReceiveVideo(video, in: message.frameInfo, from: view)
     }
 }

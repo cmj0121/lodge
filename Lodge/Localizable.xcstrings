@@ -121,6 +121,16 @@
         }
       }
     },
+    "A video playing with sound moves to a small floating window showing only the video, and goes back when you return to its tab. Its close button pauses it." : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有聲播放中的影片會移到只顯示影片的浮動小視窗，回到它的分頁時再移回去。按它的關閉按鈕會暫停影片。"
+          }
+        }
+      }
+    },
     "About" : {
       "localizations" : {
         "zh-Hant" : {
@@ -247,6 +257,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "上一頁"
+          }
+        }
+      }
+    },
+    "Back 5 Seconds" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "倒退 5 秒"
           }
         }
       }
@@ -447,6 +467,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "關閉（Esc）"
+          }
+        }
+      }
+    },
+    "Close Mini Player" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關閉迷你播放器"
           }
         }
       }
@@ -961,6 +991,16 @@
         }
       }
     },
+    "Forward 5 Seconds" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快轉 5 秒"
+          }
+        }
+      }
+    },
     "General" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1141,6 +1181,16 @@
         }
       }
     },
+    "Keep a playing video in a mini player when I leave its tab" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "離開分頁時，讓正在播放的影片在迷你播放器中繼續播放"
+          }
+        }
+      }
+    },
     "Keyboard Shortcuts" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1231,6 +1281,26 @@
         }
       }
     },
+    "Mini Player" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "迷你播放器"
+          }
+        }
+      }
+    },
+    "Mini Player — %@" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "迷你播放器 — %@"
+          }
+        }
+      }
+    },
     "Move Down" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1297,6 +1367,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "移至工作空間"
+          }
+        }
+      }
+    },
+    "Mute" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "靜音"
           }
         }
       }
@@ -1397,6 +1477,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "下一個"
+          }
+        }
+      }
+    },
+    "Next Video" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一部影片"
           }
         }
       }
@@ -1641,6 +1731,16 @@
         }
       }
     },
+    "Pause" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暫停"
+          }
+        }
+      }
+    },
     "Pin" : {
       "localizations" : {
         "zh-Hant" : {
@@ -1667,6 +1767,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "釘選此分頁"
+          }
+        }
+      }
+    },
+    "Play" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "播放"
+          }
+        }
+      }
+    },
+    "Playback Position" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "播放位置"
           }
         }
       }
@@ -2447,6 +2567,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "無法取得"
+          }
+        }
+      }
+    },
+    "Unmute" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消靜音"
           }
         }
       }
