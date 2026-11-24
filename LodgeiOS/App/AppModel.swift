@@ -74,6 +74,11 @@ final class AppModel {
         save()
     }
 
+    /// ⌃1–⌃9: 1 is Default, 2…9 the next workspaces in order; an empty slot does nothing.
+    func switchTo(slot: Int) {
+        if let workspace = workspaces.workspace(forSlot: slot) { switchTo(workspace.id) }
+    }
+
     func createWorkspace(name: String, symbol: String, color: WorkspaceColor?, appearance: WorkspaceAppearance) throws(
         WorkspaceList.EditError
     ) {
@@ -240,6 +245,17 @@ final class AppModel {
         } else {
             newTab(pin.url, link: pin.id, title: pin.title)
         }
+    }
+
+    /// Pin `slot` (1-based) of Default's pins; nil past the last.
+    func pin(slot: Int) -> SavedLink? {
+        pins.indices.contains(slot - 1) ? pins[slot - 1] : nil
+    }
+
+    /// ⌘1–⌘9: selects pin `slot`'s open tab in the workspace on screen or opens it, as a tap on it does; an empty
+    /// slot does nothing.
+    func openPin(slot: Int) {
+        if let pin = pin(slot: slot) { openPin(pin) }
     }
 
     func canPin(_ tab: BrowserTab) -> Bool {
