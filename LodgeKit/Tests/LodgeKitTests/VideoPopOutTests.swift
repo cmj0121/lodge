@@ -25,6 +25,20 @@ import Testing
         #expect(!VideoPopOut.shouldReturn(isTabShown: false, isInMiniPlayer: false))
     }
 
+    @Test func leavingPictureInPictureWhileTheTabIsAwayRestoresAPlayingVideoAndClosesAPausedOne() {
+        #expect(VideoPopOut.exit(mode: .inline, isPaused: false, isTabShown: false) == .restore)
+        #expect(VideoPopOut.exit(mode: .fullscreen, isPaused: false, isTabShown: false) == .restore)
+        #expect(VideoPopOut.exit(mode: .inline, isPaused: true, isTabShown: false) == .close)
+    }
+
+    @Test func stillInPictureInPictureOrOnScreenIsNoExit() {
+        for isPaused in [false, true] {
+            #expect(VideoPopOut.exit(mode: .pictureInPicture, isPaused: isPaused, isTabShown: false) == PiPExit.none)
+            #expect(VideoPopOut.exit(mode: .pictureInPicture, isPaused: isPaused, isTabShown: true) == PiPExit.none)
+            #expect(VideoPopOut.exit(mode: .inline, isPaused: isPaused, isTabShown: true) == PiPExit.none)
+        }
+    }
+
     @Test func isOnByDefaultUnderItsSettingKey() {
         #expect(VideoPopOut.settingKey == "popOutPlayingVideo")
         #expect(VideoPopOut.enabledByDefault)

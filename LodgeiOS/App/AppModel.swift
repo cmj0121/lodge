@@ -31,10 +31,19 @@ final class AppModel {
     @ObservationIgnored private var rest: [UUID: TabRest] = [:]
     @ObservationIgnored private let session: SessionStore
     @ObservationIgnored private(set) lazy var pool = WebViewPool(model: self)
+    /// A tab's playing video kept in Picture in Picture while the tab is away.
+    @ObservationIgnored private(set) lazy var pictureInPicture: PictureInPicture = {
+        let controller = PictureInPicture(pool: pool) {
+            UserDefaults.standard.object(forKey: VideoPopOut.settingKey) as? Bool ?? VideoPopOut.enabledByDefault
+        }
+        controller.onRestore = { [weak self] tab in self?.restorePictureInPicture(tab) }
+        return controller
+    }()
     @ObservationIgnored private var restTimer: Task<Void, Never>?
 
     init(session: SessionStore = SessionStore()) {
         self.session = session
+        pool.pictureInPicture = pictureInPicture
         if let snapshot = session.load() { restore(snapshot) }
         finishPendingDeletions()
         startRestTimer()
@@ -68,10 +77,12 @@ final class AppModel {
         let id = workspaces.resolve(id)
         guard id != activeID else { return }
         let left = activeID
+        if let tab = selection[left] { pictureInPicture.leaving(tab) }
         activeID = id
         stampShown()
         pool.releaseBackground(tabs[left]?.tabs.map(\.id) ?? []) { [weak self] in self?.activeID != left }
         save()
+        if let tab = selection[id] { pictureInPicture.shown(tab) }
     }
 
     /// ⌃1–⌃9: 1 is Default, 2…9 the next workspaces in order; an empty slot does nothing.
@@ -179,9 +190,18 @@ final class AppModel {
 
     func select(_ id: TabID) {
         guard tabs[activeID]?[id] != nil else { return }
+        if let left = selection[activeID], left != id { pictureInPicture.leaving(left) }
         selection[activeID] = id
         stampShown()
         save()
+        pictureInPicture.shown(id)
+    }
+
+    /// The user asked for the Picture in Picture video back: its workspace and tab come on screen.
+    private func restorePictureInPicture(_ tab: TabID) {
+        guard let workspace = workspaceID(of: tab) else { return }
+        switchTo(workspace)
+        select(tab)
     }
 
     func close(_ id: TabID) {
@@ -197,6 +217,7 @@ final class AppModel {
         if selection[workspace] == id {
             let next = index.map { min($0, list.tabs.count - 1) }.flatMap { $0 >= 0 ? list.tabs[$0].id : nil }
             selection[workspace] = next
+            if workspace == activeID, let next { pictureInPicture.shown(next) }
         }
         stampShown()
         save()
