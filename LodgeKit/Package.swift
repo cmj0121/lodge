@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "LodgeKit",
     defaultLocalization: "en",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v26), .iOS(.v26)],
     products: [
         .library(name: "LodgeKit", targets: ["LodgeKit"])
     ],

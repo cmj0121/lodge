@@ -80,6 +80,10 @@
 | Credential           | 網站要求使用者名稱與密碼時會跳出 sheet 詢問；目前還不會儲存或自動填入                   |
 | 英文與繁體中文       | 跟隨 macOS，或 Language & Region › Applications 裡 Lodge 的設定；workspace 名稱維持英文 |
 | 三個平台             | Mac、iPhone、iPad 共用同一套規則，各自用最適合的方式操作                                |
+| iPhone 控制列        | 上一頁、下一頁、新 tab、tab、workspace 浮在玻璃膠囊上；沒有 tab 時不顯示數量            |
+| iPhone 網址列        | 網址列也是玻璃；頁面捲到膠囊下方，固定的頁尾停在它上方                                  |
+| iPad sidebar         | 一直顯示在頁面旁；按 sidebar.left 按鈕或 ⌃⌘S 收合成字母圖塊的窄欄                       |
+| iPad 窄欄            | 先列 pin 再列 tab；重開後維持收合狀態；寬度不到 700pt 時自動顯示窄欄                    |
 | 清楚的承諾           | 每個 workspace 的網站資料與登入各自分開，Lodge 就照這樣說明                             |
 
 ## Fingerprint 的限制
@@ -171,14 +175,14 @@ Lodge 以 WebKit 為底，passkey、service worker 和 extension 隨 Apple 對�
      `mac_installer_distribution` 或 `developer_id` 其中之一。
 4. 先在 App Store Connect 為 bundle ID（`APP_IDENTIFIER`）建立 app record；上傳前它必須已經存在。
 
-接著發佈：
+接著執行 `make publish`。在上傳任何東西之前，它會先檢查 `.env`（列出缺少的 key，兩種登入方式都不完整時列出
+各自缺少的項目），並確認工作目錄乾淨、`HEAD` 等於 `origin/main`，且 tag 與 GitHub release 尚未存在；
+接著執行 `make test`，再跑 iOS/iPadOS lane 與下面的 macOS 發佈。
 
-| 指令                 | 作用                                                                      |
-| -------------------- | ------------------------------------------------------------------------- |
-| `make publish-check` | 檢查 `.env`；列出缺少的 key，兩種登入方式都不完整時，列出各自缺少的項目   |
-| `make publish`       | 執行 `make test` 和 `.env` 檢查，再跑 iOS/iPadOS lane 與下面的 macOS 發佈 |
-
-`Lodge.xcodeproj` 還沒有對應 target 時，iOS 和 iPadOS lane 會略過。macOS lane（`mac publish`）：
+iOS 和 iPadOS lane 會 build universal 的 `LodgeiOS` target（iPhone 與 iPad 共用一個 build）並上傳到
+TestFlight；第一次執行時，match 需要 `MATCH_READONLY=false` 才能建立 iOS App Store profile。想先在本機試用，
+`make run PLATFORM=ios` 會 build 並在 Simulator 開啟（用 `IOS_SIM="iPad Air 11-inch (M4)"` 指定其他裝置）。
+macOS lane（`mac publish`）：
 
 1. 要求工作目錄乾淨且 `HEAD` 等於 `origin/main`：先 commit 並 push；
 2. 把 Mac App Store pkg 上傳到 TestFlight；
