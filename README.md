@@ -82,6 +82,10 @@ one you are in uses resources.
 | Credentials           | A site that asks for a name and password gets a sheet; nothing is saved or filled yet    |
 | English and 繁體中文  | Follows macOS or Language & Region › Applications; workspace names stay English          |
 | Three platforms       | Mac, iPhone and iPad share one set of rules, each with the controls that suit it         |
+| iPhone controls       | Back, forward, new tab, tabs, workspace float in a glass capsule; the count hides at 0   |
+| iPhone address        | The address field is glass too; the page scrolls under the capsule, footers stay above   |
+| iPad sidebar          | Always beside the page; the sidebar.left button or ⌃⌘S folds it to a rail of letters     |
+| iPad rail             | Pins, then tabs; kept across launches; below 700pt wide the rail shows on its own        |
 | Clear promise         | Each workspace keeps its own site data and sign-ins, and Lodge says exactly that         |
 
 ## Fingerprint limits

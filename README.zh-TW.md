@@ -80,6 +80,10 @@
 | Credential           | 網站要求使用者名稱與密碼時會跳出 sheet 詢問；目前還不會儲存或自動填入                   |
 | 英文與繁體中文       | 跟隨 macOS，或 Language & Region › Applications 裡 Lodge 的設定；workspace 名稱維持英文 |
 | 三個平台             | Mac、iPhone、iPad 共用同一套規則，各自用最適合的方式操作                                |
+| iPhone 控制列        | 上一頁、下一頁、新 tab、tab、workspace 浮在玻璃膠囊上；沒有 tab 時不顯示數量            |
+| iPhone 網址列        | 網址列也是玻璃；頁面捲到膠囊下方，固定的頁尾停在它上方                                  |
+| iPad sidebar         | 一直顯示在頁面旁；按 sidebar.left 按鈕或 ⌃⌘S 收合成字母圖塊的窄欄                       |
+| iPad 窄欄            | 先列 pin 再列 tab；重開後維持收合狀態；寬度不到 700pt 時自動顯示窄欄                    |
 | 清楚的承諾           | 每個 workspace 的網站資料與登入各自分開，Lodge 就照這樣說明                             |
 
 ## Fingerprint 的限制
