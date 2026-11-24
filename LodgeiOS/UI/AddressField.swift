@@ -43,7 +43,7 @@ struct AddressField: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 40)
-        .background(.fill.tertiary, in: .capsule)
+        .controlGlass()
         .onAppear { text = resting(tab) }
         .onChange(of: tab?.url) { if !isEditing { text = resting(model.selectedTab) } }
         .onChange(of: tab?.id) {

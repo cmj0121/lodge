@@ -55,48 +55,40 @@ private struct SplitLayout: View {
     }
 }
 
-/// iPhone: the address field, the page, then a row of controls under it.
+/// iPhone: the address field above the page, and one glass capsule of controls floating over its foot, in reach of a
+/// thumb. The page scrolls under the capsule but ends above it.
 private struct CompactLayout: View {
     @Environment(AppModel.self) private var model
     @State private var showsTabs = false
+    @State private var barHeight: CGFloat = 0
+    @State private var bottomSafeArea: CGFloat = 0
 
     var body: some View {
-        PageView()
+        PageView(obscuredBottom: barHeight + Self.barGap + bottomSafeArea)
+            .overlay(alignment: .bottom) {
+                ControlBar {
+                    HStack(spacing: 0) {
+                        BackButton().controlSlot()
+                        ForwardButton().controlSlot()
+                        Button("New Tab", systemImage: "plus") { model.newTab() }.controlSlot()
+                        TabsButton { showsTabs = true }.controlSlot()
+                        WorkspaceMenu().controlSlot()
+                    }
+                    .padding(.horizontal, 6)
+                    .controlGlass()
+                }
+                .padding(.horizontal, 16)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
+                .padding(.bottom, Self.barGap)
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { bottomSafeArea = $0 }
             .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 6) {
-                    AddressField()
+                    ControlBar { AddressField() }
                         .padding(.horizontal)
                     LoadProgress()
                 }
                 .padding(.top, 4)
-                .background(.bar)
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                VStack(spacing: 8) {
-                    HStack {
-                        NavigationButtons()
-                        Spacer()
-                        Button("New Tab", systemImage: "plus") { model.newTab() }
-                        Spacer()
-                        Button {
-                            showsTabs = true
-                        } label: {
-                            Label("Tabs", systemImage: "square.on.square")
-                                .overlay(alignment: .center) {
-                                    Text(model.activeTabs.count, format: .number)
-                                        .font(.caption2.bold())
-                                        .offset(x: 2, y: 2)
-                                }
-                        }
-                        Spacer()
-                        WorkspaceMenu()
-                    }
-                    .labelStyle(.iconOnly)
-                    .imageScale(.large)
-                    .padding(.horizontal, 24)
-                }
-                .padding(.vertical, 8)
-                .background(.bar)
             }
             .sheet(isPresented: $showsTabs) {
                 NavigationStack {
@@ -119,16 +111,25 @@ private struct CompactLayout: View {
                 .presentationDetents([.medium, .large])
             }
     }
+
+    /// The space between the capsule and the home indicator.
+    private static let barGap: CGFloat = 4
 }
 
 /// The selected tab's page, or the start page for a blank tab (or none).
 struct PageView: View {
     @Environment(AppModel.self) private var model
+    /// How far up from its foot floating chrome covers the page.
+    var obscuredBottom: CGFloat = 0
 
     var body: some View {
         if let tab = model.selectedTab, tab.url != nil || tab.isLive {
-            WebViewHost(tab: tab.id, pool: model.pool)
+            WebViewHost(tab: tab.id, pool: model.pool, obscuredBottom: obscuredBottom)
                 .id(tab.id)
+                .ignoresSafeArea(.container, edges: .bottom)
+        } else if obscuredBottom > 0 {
+            StartPage()
+                .safeAreaPadding(.bottom, obscuredBottom)
                 .ignoresSafeArea(.container, edges: .bottom)
         } else {
             StartPage()
@@ -147,22 +148,6 @@ struct LoadProgress: View {
             .frame(height: 2)
             .opacity(tab?.isLoading == true ? 1 : 0)
             .animation(.default, value: tab?.isLoading)
-    }
-}
-
-struct NavigationButtons: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let tab = model.selectedTab
-        let view = tab.flatMap { model.pool.hasView($0.id) ? model.pool.view(for: $0.id) : nil }
-        HStack(spacing: 20) {
-            Button("Back", systemImage: "chevron.backward") { view?.goBack() }
-                .disabled(tab?.canGoBack != true)
-            Button("Forward", systemImage: "chevron.forward") { view?.goForward() }
-                .disabled(tab?.canGoForward != true)
-        }
-        .labelStyle(.iconOnly)
     }
 }
 
