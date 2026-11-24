@@ -14,8 +14,13 @@ struct LodgeiOSApp: App {
                     if ExternalLink.accepts(url) { model.newTab(url) }
                 }
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .background { model.flush() }
+        .onChange(of: scenePhase) { old, phase in
+            switch phase {
+            case .inactive where old == .active: model.pictureInPicture.appResigning(shown: model.selectedTab?.id)
+            case .active: model.pictureInPicture.appActive(shown: model.selectedTab?.id)
+            case .background: model.flush()
+            default: break
+            }
         }
         .commands {
             CommandMenu("Workspaces") {

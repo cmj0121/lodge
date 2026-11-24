@@ -118,7 +118,8 @@ final class PictureInPicture {
     }
 
     /// The scene goes from `.active` to `.inactive` (D4): the shown tab's video playing with sound goes into Picture
-    /// in Picture where it is, its view staying in its container.
+    /// in Picture where it is, its view staying in its container. No timeout: nothing is parked or switched, and a
+    /// suspended app could take a late PiP report for a refusal; `appActive` ends the hold either way.
     func appResigning(shown: TabID?) {
         guard let shown, shown != tab, let view = pool.existingView(for: shown), view.window != nil,
             let best = poppable(shown, view)
@@ -168,6 +169,7 @@ final class PictureInPicture {
         isPresenting = false
         activateAudio()
         run(.pictureInPicture, in: frame, of: view, generation: generation)
+        guard isAway else { return }
         deadline = Task { [weak self] in
             try? await Task.sleep(for: Self.timeout)
             guard !Task.isCancelled else { return }
