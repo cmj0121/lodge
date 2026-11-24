@@ -25,24 +25,21 @@ struct RootView: View {
     }
 }
 
-/// iPad: workspaces, pins and tabs in the sidebar; the page and its toolbar beside it.
+/// iPad: workspaces, pins and tabs in the sidebar, always on screen; the page and its glass bar beside it.
 private struct SplitLayout: View {
-    @Environment(AppModel.self) private var model
+    @State private var isNarrow = false
 
     var body: some View {
-        NavigationSplitView {
-            TabsPanel()
-                .navigationTitle(model.active.name)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { WorkspaceMenu() }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("New Tab", systemImage: "plus") { model.newTab() }
-                    }
-                }
-        } detail: {
+        HStack(spacing: 0) {
+            Sidebar(isNarrow: isNarrow)
+            Divider().ignoresSafeArea()
             VStack(spacing: 0) {
-                HStack(spacing: 12) {
+                ControlBar {
                     NavigationButtons()
+                        .font(.system(size: 17, weight: .medium))
+                        .padding(.horizontal, 16)
+                        .frame(height: 40)
+                        .controlGlass()
                     AddressField()
                 }
                 .padding(.horizontal)
@@ -50,9 +47,12 @@ private struct SplitLayout: View {
                 LoadProgress()
                 PageView()
             }
-            .toolbar(.hidden, for: .navigationBar)
         }
+        .onGeometryChange(for: Bool.self) { $0.size.width < Self.narrowWidth } action: { isNarrow = $0 }
     }
+
+    /// Narrower than an iPad mini in portrait: a Stage Manager or Split View sliver, too tight for the full panel.
+    private static let narrowWidth: CGFloat = 700
 }
 
 /// iPhone: the address field above the page, and one glass capsule of controls floating over its foot, in reach of a

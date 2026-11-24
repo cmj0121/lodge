@@ -9,8 +9,7 @@ struct TabsPanel: View {
 
     var body: some View {
         let selected = model.selectedTab?.id
-        let pinIDs = Set(model.pins.map(\.id))
-        let loose = model.activeTabs.filter { tab in tab.link.map { !pinIDs.contains($0) } ?? true }
+        let loose = model.looseTabs
         List {
             if let summary = model.active.summary {
                 Text(summary)
@@ -52,7 +51,7 @@ struct TabsPanel: View {
                         onPick()
                     } label: {
                         Row(
-                            title: tab.url == nil && tab.title.isEmpty ? String(localized: "New Tab") : tab.displayTitle,
+                            title: model.title(for: tab),
                             subtitle: tab.url?.host(percentEncoded: false), symbol: "globe", isOpen: true)
                     }
                     .listRowBackground(tab.id == selected ? Color.accentColor.opacity(0.18) : nil)
@@ -72,6 +71,19 @@ struct TabsPanel: View {
             }
         }
         .listStyle(.sidebar)
+    }
+}
+
+extension AppModel {
+    /// The workspace's open tabs that no pin shows.
+    var looseTabs: [BrowserTab] {
+        let pinIDs = Set(pins.map(\.id))
+        return activeTabs.filter { tab in tab.link.map { !pinIDs.contains($0) } ?? true }
+    }
+
+    /// What a tab is called in the sidebar: "New Tab" for a blank one, else its page's title.
+    func title(for tab: BrowserTab) -> String {
+        tab.url == nil && tab.title.isEmpty ? String(localized: "New Tab") : tab.displayTitle
     }
 }
 

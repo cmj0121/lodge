@@ -101,6 +101,16 @@
         }
       }
     },
+    "Collapse Sidebar" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "收合側邊欄"
+          }
+        }
+      }
+    },
     "Color" : {
       "localizations" : {
         "zh-Hant" : {
@@ -187,6 +197,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "編輯工作空間…"
+          }
+        }
+      }
+    },
+    "Expand Sidebar" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "展開側邊欄"
           }
         }
       }
