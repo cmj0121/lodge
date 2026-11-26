@@ -21,7 +21,7 @@ import os
 /// the silent switch and stop Music), and inactive again once no tab is held.
 @MainActor
 final class PictureInPicture {
-    private static let logger = Logger(subsystem: "dev.lodge", category: "web")
+    private static let logger = Logger(subsystem: "dev.lodge", category: "pip")
     private static let world = WKContentWorld.world(name: VideoPopOutScript.worldName)
     /// How long WebKit has to report Picture in Picture after a request.
     static let timeout: Duration = .seconds(1)
@@ -71,6 +71,9 @@ final class PictureInPicture {
             if reports[tab]?.isEmpty == true { reports[tab] = nil }
             return
         }
+        Self.logger.info(
+            "mode \(mode.rawValue, privacy: .public) paused=\(isPaused) held=\(tab == self.tab) requested=\(self.isRequested) presenting=\(self.isPresenting) away=\(self.isAway)"
+        )
         guard tab == self.tab else { return }
         if mode == .pictureInPicture {
             guard isRequested else {
@@ -97,7 +100,9 @@ final class PictureInPicture {
     /// The tab is about to leave the screen; call before the selection or the workspace changes, while its view is
     /// still in its window.
     func leaving(_ tab: TabID) {
-        guard let view = pool.existingView(for: tab), let window = view.window else { return }
+        let view = pool.existingView(for: tab)
+        Self.logger.info("leaving: view=\(view != nil) window=\(view?.window != nil) held=\(tab == self.tab)")
+        guard let view, let window = view.window else { return }
         if tab == self.tab {
             park(view, in: window)
             isAway = true
@@ -121,6 +126,10 @@ final class PictureInPicture {
     /// in Picture where it is, its view staying in its container. No timeout: nothing is parked or switched, and a
     /// suspended app could take a late PiP report for a refusal; `appActive` ends the hold either way.
     func appResigning(shown: TabID?) {
+        let view = shown.flatMap(pool.existingView(for:))
+        Self.logger.info(
+            "appResigning: shown=\(shown != nil) held=\(shown != nil && shown == self.tab) view=\(view != nil) window=\(view?.window != nil)"
+        )
         guard let shown, shown != tab, let view = pool.existingView(for: shown), view.window != nil,
             let best = poppable(shown, view)
         else { return }
@@ -130,6 +139,7 @@ final class PictureInPicture {
 
     /// The scene is `.active` again (D4): the held tab, still shown, takes its video back inline.
     func appActive(shown: TabID?) {
+        Self.logger.info("appActive: held=\(self.tab != nil) shownHeld=\(shown != nil && shown == self.tab) away=\(self.isAway)")
         guard let tab, tab == shown, !isAway else { return }
         present(.inline, tab)
         letGo()
@@ -149,12 +159,18 @@ final class PictureInPicture {
     /// The frame of the tab's best video when it should pop out, dropping reports from an earlier view of the tab.
     private func poppable(_ tab: TabID, _ view: WKWebView) -> WKFrameInfo? {
         reports[tab]?.removeAll { $0.webView !== view }
-        guard let best = reports[tab]?.best else { return nil }
+        guard let best = reports[tab]?.best else {
+            Self.logger.info("poppable: no video report for the tab")
+            return nil
+        }
         let state = best.report.state
-        guard
-            VideoPopOut.shouldPopOut(
-                isPlaying: state.isPlaying, isMuted: state.isMuted, hasVideo: state.hasVideo, isEnabled: isEnabled())
-        else { return nil }
+        let enabled = isEnabled()
+        let pops = VideoPopOut.shouldPopOut(
+            isPlaying: state.isPlaying, isMuted: state.isMuted, hasVideo: state.hasVideo, isEnabled: enabled)
+        Self.logger.info(
+            "poppable: playing=\(state.isPlaying) muted=\(state.isMuted) video=\(state.hasVideo) enabled=\(enabled) mainFrame=\(best.frame.isMainFrame) host=\(best.frame.securityOrigin.host, privacy: .public) -> \(pops)"
+        )
+        guard pops else { return nil }
         return best.frame
     }
 
@@ -167,6 +183,7 @@ final class PictureInPicture {
         isRequested = false
         sawPictureInPicture = false
         isPresenting = false
+        Self.logger.info("hold \(generation): away=\(isAway) inWindow=\(view.window != nil) parked=\(view.superview === self.parking)")
         activateAudio()
         run(.pictureInPicture, in: frame, of: view, generation: generation)
         guard isAway else { return }
@@ -187,7 +204,8 @@ final class PictureInPicture {
     /// The hold `generation`'s PiP request was refused or never reported.
     private func refused(_ generation: Int) {
         guard let tab, generation == self.generation, !isPresenting else { return }
-        Self.logger.info("Picture in Picture did not start; the tab is let go")
+        Self.logger.info(
+            "Picture in Picture did not start (requested=\(self.isRequested) away=\(self.isAway)); the tab is let go")
         unpark(tab)
         letGo()
     }
@@ -226,6 +244,15 @@ final class PictureInPicture {
             VideoPopOutScript.present, arguments: ["mode": mode.rawValue], in: frame, in: Self.world
         ) { [weak self] result in
             MainActor.assumeIsolated {
+                switch result {
+                case .success(let value):
+                    Self.logger.info(
+                        "present \(mode.rawValue, privacy: .public) -> \(String(describing: value), privacy: .public) (generation \(generation))"
+                    )
+                case .failure(let error):
+                    Self.logger.error(
+                        "present \(mode.rawValue, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                }
                 guard let self, mode == .pictureInPicture else { return }
                 guard (try? result.get()) as? Bool == true else { return self.refused(generation) }
                 guard generation == self.generation, self.tab != nil else { return }
@@ -265,6 +292,7 @@ final class PictureInPicture {
             try session.setCategory(.playback, mode: .moviePlayback)
             try session.setActive(true)
             isAudioActive = true
+            Self.logger.info("audio active (.playback)")
         } catch {
             Self.logger.error("Cannot activate audio for Picture in Picture: \(error.localizedDescription, privacy: .public)")
         }
