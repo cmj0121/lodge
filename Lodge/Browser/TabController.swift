@@ -57,6 +57,8 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// The main frame's navigation has started and neither committed nor ended: a challenge from `navigationOrigin`
     /// is for it, not for the committed page.
     private var isNavigating = false
+    /// Times the main-frame load under way (D3).
+    private let pageLoad = PageLoadSignpost()
     /// The user cancelled a sheet since the last commit: challenges not for the main frame's navigation are rejected
     /// with no sheet until the next one.
     private var refusesOtherChallenges = false
@@ -564,6 +566,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         cancelQueuedChallenges()
+        pageLoad.begin(navigation)
         navigationOrigin = webView.url.map(Origin.init(url:))
         isNavigating = true
         model?.update(tab) { $0.hasCrashed = false }
@@ -596,6 +599,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        pageLoad.end(navigation)
         favicons.pageFinished(in: webView)
         ownLoad.loadEnded()
         setFormPostLoading(false)
@@ -603,6 +607,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        pageLoad.end(navigation)
         ownLoad.loadEnded()
         setFormPostLoading(false)
         endScrollRestore()
@@ -611,6 +616,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(
         _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error
     ) {
+        pageLoad.end(navigation)
         cancelQueuedChallenges()
         navigationOrigin = webView.url.map(Origin.init(url:))
         isNavigating = false
@@ -629,6 +635,7 @@ final class TabController: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        pageLoad.end()
         cancelQueuedChallenges()
         ownLoad.loadEnded()
         isNavigating = false

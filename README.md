@@ -200,6 +200,28 @@ exists, and, with the release on, when the GitHub Release `v<version>` exists. A
 Changing `APP_IDENTIFIER` from `dev.lodge.Lodge` gives the app a new sandbox container, so the saved session does not
 carry over.
 
+## Measure performance
+
+`make perf` shows CPU and memory footprint for every running Lodge and the WebKit helpers it is responsible for: one
+row per process with its kind, CPU % (100 = one core) and footprint, plus a total, refreshed every second. It runs
+`swift run --package-path LodgeKit -c release lodge-perf`, a dev tool outside the sandbox and never linked into the app;
+pass options through `ARGS`, for example `make perf ARGS="--once"` to print one table and exit, `--interval S` for
+seconds between tables, or `--pid N` to watch one copy of Lodge. When macOS does not say which helpers belong to Lodge,
+it lists every WebKit helper of the same user and marks the table "unattributed". Without a running Lodge it says so
+and exits 1.
+
+Debug builds add Debug → Resource Monitor: a window with Lodge's own CPU and footprint, updated each second, and live
+web views, held tabs, the mini player and its site, and workspaces loaded, updated every five seconds. It samples only
+while some of the window is on screen. Every five seconds it logs the same summary at debug level under subsystem
+`dev.lodge`, category `perf`; follow it with
+`log stream --level debug --predicate 'subsystem == "dev.lodge" && category == "perf"'`. The sandbox hides the WebKit
+helpers from the app, so use `make perf` for those.
+
+Every build signposts its hot paths under the same `dev.lodge` / `perf`: intervals `switchWorkspace`, `selectTab`,
+`buildView`, `releaseView`, `releaseViews`, `miniPlayerShow`, `miniPlayerTakeBack`, `miniPlayerClose` and `pageLoad`,
+and a `memoryPressure` event. Record Lodge in Instruments with the os_signpost instrument to time
+them.
+
 ## DDD (Dream-Driven Development)
 
 This project follows DDD (dream-driven development): every feature is built from what I dream of and need.

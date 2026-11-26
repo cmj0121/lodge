@@ -11,6 +11,7 @@ final class MemoryPressureWatcher {
         source.setEventHandler { [weak coordinator, source] in
             MainActor.assumeIsolated {
                 guard let coordinator, let level = MemoryPressureLevel(source.data) else { return }
+                Performance.signposter.emitEvent("memoryPressure")
                 Task { await coordinator.relieve(level) }
             }
         }

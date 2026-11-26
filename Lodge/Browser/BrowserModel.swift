@@ -199,6 +199,8 @@ final class BrowserModel {
         releaseRetryTask?.cancel()
         releaseRetryTask = nil
         guard !isShown, viewRelease.begin() else { return }
+        let span = Performance.begin("releaseViews")
+        defer { span.end() }
         var isAnyHeld: Bool
         repeat {
             isAnyHeld = await release(candidates: tabs.tabs.map(\.id)) { _ in self.isShown }
@@ -367,6 +369,8 @@ final class BrowserModel {
     #if DEBUG
         /// Layout self-checks: whether the tab's page reports unsent work.
         func hasUnsentWork(_ id: TabID) -> Bool { work[id]?.isHeld == true }
+        /// Resource Monitor: how many tabs a hold known without asking the page keeps (`isHeldNow`).
+        var heldNowCount: Int { tabs.tabs.count { isHeldNow($0.id) } }
     #endif
 
     /// Changes the tab's work, telling `holdStateChanged` when whether it holds changes.
@@ -383,6 +387,8 @@ final class BrowserModel {
     /// memory for the view to be rebuilt, and on disk (`places`) for a relaunch.
     private func release(_ id: TabID) {
         guard registry.webView(for: id) != nil else { return }
+        let span = Performance.begin("releaseView")
+        defer { span.end() }
         // A resting tab comes back on the page it showed, as after Go Back, and keeps that page's place.
         goBackFromPlainHTTP(id)
         guard let tab = tabs[id] else { return }
@@ -619,6 +625,8 @@ final class BrowserModel {
     ) -> LodgeWebView? {
         guard let tab = tabs[id], !LodgePage.isLodge(tab.url) else { return nil }
         if let view = registry.webView(for: id) { return view }
+        let span = Performance.begin("buildView")
+        defer { span.end() }
         let isRestoring = restoredTabs.remove(id) != nil
         let saved = savedStates.removeValue(forKey: id)
         // Only WebKit's own state from memory carries a sent form along; every other view starts clean.

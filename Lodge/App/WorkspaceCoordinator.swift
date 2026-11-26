@@ -48,6 +48,8 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         @ObservationIgnored var bringForwardHook: ((WindowState) -> Void)?
         /// Self-checks only: called in place of bringing the windows forward, so a check never activates the app.
         @ObservationIgnored var bringAllForwardOverride: (() -> Void)?
+        /// Resource Monitor: the workspaces whose model is built.
+        var loadedModels: [BrowserModel] { Array(models.values) }
     #endif
 
     @ObservationIgnored let registry: WebViewRegistry
@@ -263,6 +265,8 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
     /// there (D3), and the workspace it replaces gives up its web views. An unknown or already active workspace
     /// changes nothing.
     func switchTo(_ id: UUID) {
+        let span = Performance.begin("switchWorkspace")
+        defer { span.end() }
         guard let target = workspaces[id], target.id != activeWorkspaceID else { return }
         enter(target, closingBlanks: true)
     }
@@ -677,6 +681,8 @@ extension WorkspaceCoordinator: WindowPlacement {
 
     /// Shows the tab in the window (D4); another window showing it is left as it is, and so is this window.
     func select(_ tab: TabID, in window: WindowState) -> SelectOutcome {
+        let span = Performance.begin("selectTab")
+        defer { span.end() }
         let tabs = active.selectionTabs
         var outcome = SelectOutcome.unknown
         updateSelections {

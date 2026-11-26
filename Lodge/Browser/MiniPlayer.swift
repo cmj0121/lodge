@@ -54,6 +54,8 @@ final class MiniPlayer: NSObject {
     /// known; a tab already here is closed first. The panel opens in the bottom-right corner of `screen` and never
     /// takes focus.
     func show(view: WKWebView, for tab: TabID, frame: WKFrameInfo, aspect: NSSize? = nil, on screen: NSScreen? = nil) {
+        let span = Performance.begin("miniPlayerShow")
+        defer { span.end() }
         if self.tab != nil { close() }
         let panel = self.panel ?? makePanel()
         self.panel = panel
@@ -130,6 +132,8 @@ final class MiniPlayer: NSObject {
     /// take; nil when the panel holds none.
     @discardableResult
     func takeBack() -> WKWebView? {
+        let span = Performance.begin("miniPlayerTakeBack")
+        defer { span.end() }
         guard let tab else { return nil }
         let view = self.view
         detach()
@@ -139,6 +143,8 @@ final class MiniPlayer: NSObject {
 
     /// Pauses the video and closes the panel; the view goes back to its tab, shown nowhere until the tab is.
     func close() {
+        let span = Performance.begin("miniPlayerClose")
+        defer { span.end() }
         guard let tab else { return }
         view?.pauseAllMediaPlayback()
         detach()

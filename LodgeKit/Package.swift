@@ -6,7 +6,8 @@ let package = Package(
     defaultLocalization: "en",
     platforms: [.macOS(.v26), .iOS(.v26)],
     products: [
-        .library(name: "LodgeKit", targets: ["LodgeKit"])
+        .library(name: "LodgeKit", targets: ["LodgeKit"]),
+        .executable(name: "lodge-perf", targets: ["LodgePerf"]),
     ],
     dependencies: [
         .package(url: "https://github.com/scinfu/SwiftSoup.git", .upToNextMajor(from: "2.7.0")),
@@ -22,6 +23,7 @@ let package = Package(
                 .product(name: "TLDExtractSwift", package: "TLDExtractSwift"),
             ],
             resources: [.process("Resources")]),
+        .executableTarget(name: "LodgePerf", dependencies: ["LodgeKit"]),
         .testTarget(name: "LodgeKitTests", dependencies: ["LodgeKit"]),
     ]
 )
