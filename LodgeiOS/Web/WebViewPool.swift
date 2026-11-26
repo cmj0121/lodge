@@ -22,6 +22,8 @@ final class WebViewPool {
     private var observers: [TabID: [NSKeyValueObservation]] = [:]
     private var stores: [StoreRef: WKWebsiteDataStore] = [:]
     private lazy var delegate = WebViewDelegate(pool: self)
+    /// Told every frame's video reports, asked before any release, and told of a tab closing.
+    weak var pictureInPicture: PictureInPicture?
 
     init(model: AppModel) {
         self.model = model
@@ -34,6 +36,9 @@ final class WebViewPool {
     func liveTabs(in tabs: [BrowserTab]) -> [TabID] { tabs.map(\.id).filter { views[$0] != nil } }
 
     func tab(of view: WKWebView) -> TabID? { views.first { $0.value === view }?.key }
+
+    /// The tab's web view, when it has one; never builds one.
+    func existingView(for id: TabID) -> WKWebView? { views[id] }
 
     /// The tab's web view, built (and its page restored or loaded) when it has none.
     func view(for id: TabID) -> WKWebView {
@@ -78,6 +83,11 @@ final class WebViewPool {
         config.allowsInlineMediaPlayback = true
         config.allowsPictureInPictureMediaPlayback = true
         config.preferences.isElementFullscreenEnabled = true
+        let world = WKContentWorld.world(name: VideoPopOutScript.worldName)
+        config.userContentController.addUserScript(
+            WKUserScript(
+                source: VideoPopOutScript.source, injectionTime: .atDocumentEnd, forMainFrameOnly: false, in: world))
+        config.userContentController.add(VideoHandler(pool: self), contentWorld: world, name: VideoPopOutScript.handlerName)
         return config
     }
 
@@ -111,9 +121,9 @@ final class WebViewPool {
         }
     }
 
-    /// Gives up the tab's view, keeping where it was.
+    /// Gives up the tab's view, keeping where it was; a tab held in Picture in Picture keeps it.
     func release(_ id: TabID) {
-        guard let view = views[id] else { return }
+        guard pictureInPicture?.isHolding(id) != true, let view = views[id] else { return }
         states[id] = view.interactionState
         drop(id)
         model?.update(id) { $0.isLive = false }
@@ -121,6 +131,7 @@ final class WebViewPool {
 
     /// Gives up the tab's view and where it was: the tab is closing.
     func destroy(_ id: TabID) {
+        pictureInPicture?.closing(id)
         states[id] = nil
         drop(id)
     }
@@ -134,8 +145,8 @@ final class WebViewPool {
         view.removeFromSuperview()
     }
 
-    /// A workspace left the screen: its tabs give up their views, but for one playing media, which is asked again
-    /// in 30 seconds while `stillBackground` holds (as on the Mac, `ViewRelease`).
+    /// A workspace left the screen: its tabs give up their views, but for one playing media or held in Picture in
+    /// Picture, which is asked again in 30 seconds while `stillBackground` holds (as on the Mac, `ViewRelease`).
     func releaseBackground(_ ids: [TabID], stillBackground: @escaping @MainActor () -> Bool) {
         Task { [weak self] in
             var held: [TabID] = []
@@ -144,7 +155,8 @@ final class WebViewPool {
                 guard let view = self.views[id] else { continue }
                 let playing = await view.requestMediaPlaybackState() == .playing
                 guard stillBackground() else { return }
-                switch ViewRelease.step(isShown: false, hasView: self.views[id] != nil, isHeld: playing) {
+                let isHeld = playing || self.pictureInPicture?.isHolding(id) == true
+                switch ViewRelease.step(isShown: false, hasView: self.views[id] != nil, isHeld: isHeld) {
                 case .skip: continue
                 case .hold: held.append(id)
                 case .release: self.release(id)
@@ -196,6 +208,28 @@ final class WebViewPool {
     fileprivate func close(_ view: WKWebView) {
         guard let id = tab(of: view) else { return }
         model?.close(id)
+    }
+
+    fileprivate func didReceiveVideo(_ message: VideoPopOutScript.Message, in frame: WKFrameInfo, from view: WKWebView) {
+        guard let id = tab(of: view) else { return }
+        pictureInPicture?.receive(message, frame: frame, from: id)
+    }
+}
+
+/// Hands the video probe's messages (`VideoPopOutScript`), from any frame, with that frame, to the pool for the tab
+/// whose view sent them. The content controller keeps its handlers alive as long as the configuration, so the pool is
+/// held weakly.
+@MainActor
+private final class VideoHandler: NSObject, WKScriptMessageHandler {
+    private weak var pool: WebViewPool?
+
+    init(pool: WebViewPool) {
+        self.pool = pool
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let view = message.webView, let video = VideoPopOutScript.message(from: message.body) else { return }
+        pool?.didReceiveVideo(video, in: message.frameInfo, from: view)
     }
 }
 

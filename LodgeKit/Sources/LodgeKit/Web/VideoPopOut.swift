@@ -14,4 +14,20 @@ public enum VideoPopOut {
     public static func shouldReturn(isTabShown: Bool, isInMiniPlayer: Bool) -> Bool {
         isTabShown && isInMiniPlayer
     }
+
+    /// A `.presentation` message for the tab in Picture in Picture. Leaving PiP (mode not `.pictureInPicture`) while
+    /// the tab is not shown: still playing → `.restore`, paused → `.close`. While shown, or still in PiP → `.none`.
+    public static func exit(mode: VideoPopOutScript.PresentationMode, isPaused: Bool, isTabShown: Bool) -> PiPExit {
+        guard mode != .pictureInPicture, !isTabShown else { return .none }
+        return isPaused ? .close : .restore
+    }
+}
+
+/// What a Picture in Picture video's leaving it means for its tab (iOS, `VideoPopOut.exit`).
+public enum PiPExit: Equatable, Sendable {
+    /// The user asked for the video back: show its workspace and tab.
+    case restore
+    /// The user closed it: the tab stays where it is.
+    case close
+    case none
 }

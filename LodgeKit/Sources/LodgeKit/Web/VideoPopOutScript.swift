@@ -29,6 +29,12 @@ import Foundation
 /// its next button; and the fill's attribute moving to the new video. A page could still tell: that click is
 /// untrusted (`isTrusted` false), and the seek buttons land on exact ±5 s steps.
 ///
+/// Picture in Picture (iOS, where WKWebView has no mini player): the app asks the best video's frame to `present` its
+/// video in a presentation mode, and every frame reports its videos' mode changes (`Message.presentation`) on WebKit's
+/// `webkitpresentationmodechanged`: entering PiP at once, leaving it 250 ms later, so a pause that closing PiP makes
+/// has landed by then. The page sees only
+/// what a user's tap on its video's own PiP button would do.
+///
 /// Limits: a video in a shadow root, or one the page hides under an ancestor's stacking context; a parent whose origin
 /// is opaque (a sandboxed frame) gets the hop with target origin `*`.
 public enum VideoPopOutScript {
@@ -75,6 +81,13 @@ public enum VideoPopOutScript {
         }
     }
 
+    /// A video's `webkitPresentationMode`.
+    public enum PresentationMode: String, Sendable {
+        case inline
+        case pictureInPicture = "picture-in-picture"
+        case fullscreen
+    }
+
     public enum Message: Equatable, Sendable {
         /// The document's best video now; sent once when the document loads, then on every change.
         case report(Report)
@@ -82,10 +95,13 @@ public enum VideoPopOutScript {
         case gone(document: String)
         /// While filling: one of the document's iframes, of `origin`, posted it `token`.
         case hop(document: String, token: String, origin: String)
+        /// One of the document's videos changed its presentation mode to `mode`; `isPaused` as it was then, or, for a
+        /// mode leaving PiP, 250 ms later.
+        case presentation(document: String, mode: PresentationMode, isPaused: Bool)
     }
 
-    /// Decodes `{doc, hasVideo, isPlaying, isMuted, width, height, area}`, `{doc, gone: true}` or
-    /// `{doc, hop, from}`; anything else is nil. A size above `maximumSide` reads as `maximumSide`.
+    /// Decodes `{doc, hasVideo, isPlaying, isMuted, width, height, area}`, `{doc, gone: true}`, `{doc, hop, from}`
+    /// or `{doc, mode, paused}` (`mode` a `PresentationMode` raw value); anything else is nil. A size above `maximumSide` reads as `maximumSide`.
     public static func message(from body: Any) -> Message? {
         guard let body = body as? [String: Any], let document = body["doc"] as? String,
             (1...64).contains(document.count)
@@ -95,6 +111,11 @@ public enum VideoPopOutScript {
             (1...2048).contains(origin.utf8.count)
         {
             return .hop(document: document, token: token, origin: origin)
+        }
+        if body.count == 3, let mode = (body["mode"] as? String).flatMap(PresentationMode.init(rawValue:)),
+            let paused = body["paused"] as? NSNumber, CFGetTypeID(paused) == CFBooleanGetTypeID()
+        {
+            return .presentation(document: document, mode: mode, isPaused: paused.boolValue)
         }
         guard body.count == 7,
             let hasVideo = body["hasVideo"] as? Bool, let isPlaying = body["isPlaying"] as? Bool,
@@ -135,7 +156,7 @@ public enum VideoPopOutScript {
         public var count: Int { entries.count }
         public var isEmpty: Bool { entries.isEmpty }
 
-        /// Takes in a frame's report or `gone`; a `hop` changes nothing.
+        /// Takes in a frame's report or `gone`; a `hop` or a `presentation` changes nothing.
         public mutating func apply(_ message: Message, from frame: Frame) {
             switch message {
             case .report(let report) where report.state.hasVideo:
@@ -150,7 +171,7 @@ public enum VideoPopOutScript {
                 entries[lowest.key] = nil
             case .report(let report): entries[report.document] = nil
             case .gone(let document): entries[document] = nil
-            case .hop: break
+            case .hop, .presentation: break
             }
         }
 
@@ -224,6 +245,11 @@ public enum VideoPopOutScript {
     public static let seekTo = "return window.\(controlName) ? window.\(controlName).seekTo(time) : null;"
     public static let toggleMute = "return window.\(controlName) ? window.\(controlName).toggleMute() : null;"
     public static let next = "return window.\(controlName) ? window.\(controlName).next() : null;"
+
+    /// Function body for `callAsyncJavaScript` in `worldName`, in one frame, argument `mode` (a `PresentationMode` raw
+    /// value): the frame's own best video (the one it reports) gets `webkitSetPresentationMode(mode)` when it
+    /// `webkitSupportsPresentationMode(mode)`; true when it asked, false when the frame has none or cannot.
+    public static let present = "return window.\(controlName) ? window.\(controlName).present(mode) : false;"
 
     /// The filled video's playback, as a control call or `playback` returns it.
     public struct Playback: Equatable, Sendable {
@@ -314,7 +340,8 @@ public enum VideoPopOutScript {
     }
 
     /// Injected at document end, `forMainFrameOnly: false`. Reports are coalesced (100 ms) and sent only on change,
-    /// the first at load; `pagehide` sends `gone` at once, `pageshow` from the back/forward cache reports again.
+    /// the first at load; `pagehide` sends `gone` at once, `pageshow` from the back/forward cache reports again. A
+    /// video's `webkitpresentationmodechanged` sends its mode and paused: at once into PiP, 250 ms later out of it.
     public static let source = """
         (() => {
           const handlers = window.webkit && window.webkit.messageHandlers;
@@ -485,6 +512,28 @@ public enum VideoPopOutScript {
             if (b) { b.click(); }
             return playback();
           };
+          const modes = ['inline', 'picture-in-picture', 'fullscreen'];
+          const present = (mode) => {
+            if (modes.indexOf(mode) < 0) { return false; }
+            const found = best();
+            const v = found && found.video;
+            if (!v || typeof v.webkitSupportsPresentationMode !== 'function'
+              || typeof v.webkitSetPresentationMode !== 'function' || !v.webkitSupportsPresentationMode(mode)) {
+              return false;
+            }
+            v.webkitSetPresentationMode(mode);
+            return true;
+          };
+          const presented = (e) => {
+            const v = e && e.target;
+            if (!v || v.localName !== 'video') { return; }
+            const send = () => {
+              const mode = v.webkitPresentationMode;
+              if (modes.indexOf(mode) < 0) { return; }
+              post({ doc: doc, mode: mode, paused: !!(v.paused || v.ended) });
+            };
+            if (v.webkitPresentationMode === 'picture-in-picture') { send(); } else { setTimeout(send, 250); }
+          };
           const unfill = () => {
             pending.clear();
             if (!filled) { return; }
@@ -512,10 +561,11 @@ public enum VideoPopOutScript {
           for (const type of ['emptied', 'loadstart']) {
             document.addEventListener(type, () => { if (filled) { current(); } }, options);
           }
+          document.addEventListener('webkitpresentationmodechanged', presented, options);
           window.addEventListener('pagehide', () => { last = ''; post({ doc: doc, gone: true }); }, options);
           window.addEventListener('pageshow', (e) => { if (e.persisted) { schedule(); } }, options);
           window.\(controlName) = { fill: fill, pass: pass, unfill: unfill, toggle: toggle, playback: playback,
-            seek: seek, seekTo: seekTo, toggleMute: toggleMute, next: next };
+            seek: seek, seekTo: seekTo, toggleMute: toggleMute, next: next, present: present };
           schedule();
         })();
         """

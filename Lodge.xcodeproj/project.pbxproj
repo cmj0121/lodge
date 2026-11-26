@@ -37,6 +37,13 @@
 			);
 			target = A10000000000000000000401 /* Lodge */;
 		};
+		A10000000000000000000C02 /* Exceptions for "LodgeiOS" folder in "LodgeiOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A10000000000000000000403 /* LodgeiOS */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -55,6 +62,9 @@
 		};
 		A10000000000000000000B03 /* LodgeiOS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A10000000000000000000C02 /* Exceptions for "LodgeiOS" folder in "LodgeiOS" target */,
+			);
 			path = LodgeiOS;
 			sourceTree = "<group>";
 		};
@@ -289,6 +299,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LodgeiOS/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Lodge;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -320,6 +331,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LodgeiOS/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Lodge;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

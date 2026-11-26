@@ -250,6 +250,100 @@ import Testing
         }
     }
 
+    // MARK: Picture in Picture
+
+    @Test func decodesAPresentationAndRejectsAMalformedOne() {
+        #expect(
+            VideoPopOutScript.message(from: ["doc": "d", "mode": "picture-in-picture", "paused": false])
+                == .presentation(document: "d", mode: .pictureInPicture, isPaused: false))
+        #expect(
+            VideoPopOutScript.message(from: ["doc": "d", "mode": "inline", "paused": true] as NSDictionary)
+                == .presentation(document: "d", mode: .inline, isPaused: true))
+        #expect(
+            VideoPopOutScript.message(from: ["doc": "d", "mode": "fullscreen", "paused": false])
+                == .presentation(document: "d", mode: .fullscreen, isPaused: false))
+        for body: [String: Any] in [
+            ["doc": "d", "mode": "pip", "paused": false],
+            ["doc": "d", "mode": "inline", "paused": 1],
+            ["doc": "d", "mode": "inline", "paused": "no"],
+            ["doc": "d", "mode": 1, "paused": false],
+            ["doc": "d", "mode": "inline"],
+            ["doc": "d", "mode": "inline", "paused": false, "x": 1],
+            ["doc": "", "mode": "inline", "paused": false],
+        ] {
+            #expect(VideoPopOutScript.message(from: body) == nil)
+        }
+    }
+
+    @Test func aPresentationChangesNoReports() {
+        var reports = VideoPopOutScript.Reports<Int>()
+        reports.apply(Self.entry("a"), from: 1)
+        reports.apply(.presentation(document: "a", mode: .pictureInPicture, isPaused: false), from: 1)
+        reports.apply(.presentation(document: "b", mode: .inline, isPaused: true), from: 2)
+        #expect(reports.count == 1 && reports.contains("a") && !reports.contains("b"))
+        #expect(reports.best?.frame == 1)
+    }
+
+    @Test func presentAsksTheFramesBestVideoWhenItSupportsTheMode() throws {
+        let page = try VideoPage()
+        page.run(
+            """
+            var asked = [];
+            function presentable(v) {
+              v.webkitSupportsPresentationMode = function (m) { return m !== 'fullscreen'; };
+              v.webkitSetPresentationMode = function (m) { asked.push(m); this.webkitPresentationMode = m; };
+              return v;
+            }
+            var small = presentable(video({ paused: false, box: [200, 200] }));
+            var v = presentable(video({ paused: false }));
+            """)
+        #expect(page.call(VideoPopOutScript.present, ["mode": "picture-in-picture"]) == "true")
+        #expect(page.value("JSON.stringify(asked)") == #"["picture-in-picture"]"#)
+        #expect(page.value("String(v.webkitPresentationMode)") == "picture-in-picture")
+        #expect(page.call(VideoPopOutScript.present, ["mode": "fullscreen"]) == "false")
+        #expect(page.call(VideoPopOutScript.present, ["mode": "bogus"]) == "false")
+        #expect(page.call(VideoPopOutScript.present, ["mode": "inline"]) == "true")
+        #expect(page.value("JSON.stringify(asked)") == #"["picture-in-picture","inline"]"#)
+    }
+
+    @Test func presentIsFalseWithoutAVideoOrItsPresentationModes() throws {
+        let page = try VideoPage()
+        #expect(page.call(VideoPopOutScript.present, ["mode": "picture-in-picture"]) == "false")
+        page.run("video({ paused: false });")
+        #expect(page.call(VideoPopOutScript.present, ["mode": "picture-in-picture"]) == "false")
+    }
+
+    @Test func enteringPictureInPictureIsReportedAtOnceAndLeavingItWithPausedAfterItsDelay() throws {
+        let page = try VideoPage()
+        page.run("var v = video({ paused: false }); runTimers(); posted = [];")
+        page.run("v.webkitPresentationMode = 'picture-in-picture'; fire('webkitpresentationmodechanged', { target: v });")
+        #expect(
+            page.posted.compactMap { VideoPopOutScript.message(from: $0) }
+                == [.presentation(document: "doc-1", mode: .pictureInPicture, isPaused: false)])
+        page.run(
+            """
+            posted = [];
+            v.webkitPresentationMode = 'inline'; fire('webkitpresentationmodechanged', { target: v });
+            """)
+        #expect(page.posted.isEmpty)
+        page.run("v.paused = true; runTimers();")
+        #expect(
+            page.posted.compactMap { VideoPopOutScript.message(from: $0) }
+                == [.presentation(document: "doc-1", mode: .inline, isPaused: true)])
+    }
+
+    @Test func aModeChangeOfANonVideoOrAnUnknownModeIsNotReported() throws {
+        let page = try VideoPage()
+        page.run(
+            """
+            var v = video({ paused: false }); runTimers(); posted = [];
+            fire('webkitpresentationmodechanged', { target: element({ localName: 'div' }) });
+            v.webkitPresentationMode = 'weird'; fire('webkitpresentationmodechanged', { target: v });
+            runTimers();
+            """)
+        #expect(page.posted.isEmpty)
+    }
+
     // MARK: Fill
 
     private static let key = "abcdefghijkl"
