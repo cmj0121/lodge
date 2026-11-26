@@ -146,6 +146,9 @@ final class WebViewRegistry {
     }
 
     #if DEBUG
+        /// Resource Monitor: how many web views are alive.
+        var liveViewCount: Int { views.count }
+
         /// Layout self-checks only: a local scheme every new configuration serves, so a check can send a form with no
         /// network. Never set outside a self-check, and absent from release builds.
         static var selfCheckScheme: (name: String, handler: any WKURLSchemeHandler)?

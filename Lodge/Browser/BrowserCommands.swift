@@ -158,6 +158,12 @@ struct BrowserCommands: Commands {
             Button(ShortcutCatalog[.shortcutHelp].title) { pane?.showShortcutHelp() }
                 .shortcut(.shortcutHelp, enabled: !noPane)
         }
+        #if DEBUG
+            // Dev-only and English only (D6): plain strings, kept out of the string catalog.
+            CommandMenu(String("Debug")) {
+                Button(String("Resource Monitor")) { ResourceMonitor.show(coordinator: coordinator) }
+            }
+        #endif
     }
 
     /// Hands the coordinator this scene's `openWindow` for browser windows, once. It reads only the unobserved

@@ -48,6 +48,8 @@ final class WorkspaceCoordinator: WorkspaceDeletionSteps {
         @ObservationIgnored var bringForwardHook: ((WindowState) -> Void)?
         /// Self-checks only: called in place of bringing the windows forward, so a check never activates the app.
         @ObservationIgnored var bringAllForwardOverride: (() -> Void)?
+        /// Resource Monitor: the workspaces whose model is built.
+        var loadedModels: [BrowserModel] { Array(models.values) }
     #endif
 
     @ObservationIgnored let registry: WebViewRegistry

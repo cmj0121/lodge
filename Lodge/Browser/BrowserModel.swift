@@ -369,6 +369,8 @@ final class BrowserModel {
     #if DEBUG
         /// Layout self-checks: whether the tab's page reports unsent work.
         func hasUnsentWork(_ id: TabID) -> Bool { work[id]?.isHeld == true }
+        /// Resource Monitor: how many tabs a hold known without asking the page keeps (`isHeldNow`).
+        var heldNowCount: Int { tabs.tabs.count { isHeldNow($0.id) } }
     #endif
 
     /// Changes the tab's work, telling `holdStateChanged` when whether it holds changes.
