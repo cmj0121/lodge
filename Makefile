@@ -13,8 +13,9 @@ XCODEBUILD_IOS := xcodebuild -project Lodge.xcodeproj -scheme LodgeiOS -destinat
 		-derivedDataPath $(IOS_DERIVED)
 
 PLATFORM     ?= macos
+ARGS         ?=
 
-.PHONY: all clean test uitest run build install publish upgrade help \
+.PHONY: all clean test uitest run build install publish perf upgrade help \
 	build-macos build-ios run-macos run-ios preflight $(SUBDIR)
 
 all: $(SUBDIR) 		# default action
@@ -50,6 +51,9 @@ install: build-macos	# copy build/Lodge.app into $(PREFIX) (default ~/Applicatio
 publish: preflight test	# check .env and that HEAD is origin/main, run the tests, then ship iOS and macOS
 	bundle exec fastlane ios publish
 	bundle exec fastlane mac publish
+
+perf:				# show CPU and memory of running Lodge and its WebKit helpers (ARGS="--once", "--pid N", "--interval S")
+	swift run --package-path LodgeKit -c release lodge-perf $(ARGS)
 
 build-macos:
 	$(XCODEBUILD) -configuration Release build
